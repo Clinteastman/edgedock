@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>EdgeDock keyboard test</title>
+<style>
+body { font: 20px system-ui; background: #f4f4f4; color: #151515; padding: 32px; }
+input, button { font: inherit; padding: 12px; }
+output { display: block; margin-top: 20px; }
+</style>
+<h1>Keyboard test page</h1>
+<p>Focus the input. F11 should toggle EdgeDock full screen. Escape should reach this page and keep EdgeDock in full screen.</p>
+<label>Page input <input id="input" placeholder="Click here to focus the page"></label>
+<output id="result" aria-live="polite">Escape received: 0</output>
+<script>
+let escapes = 0;
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    document.querySelector('#result').textContent = `Escape received: ${++escapes}`;
+  }
+});
+</script>
+</html>

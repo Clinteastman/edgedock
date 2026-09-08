@@ -7,103 +7,188 @@
     mc:Ignorable="d"
     Title="EdgeDock">
 
-    <Grid x:Name="Root" Background="{StaticResource ShellBrush}" KeyDown="Root_KeyDown" SizeChanged="Root_SizeChanged">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
-
-        <Grid Grid.Row="0">
-            <WebView2 x:Name="DashboardWebView"
-                      DefaultBackgroundColor="#111016"
-                      NavigationStarting="DashboardWebView_NavigationStarting"
-                      NavigationCompleted="DashboardWebView_NavigationCompleted" />
-
-            <Grid x:Name="SetupState" Background="{StaticResource ShellBrush}" Visibility="Collapsed">
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="560" Spacing="14">
-                    <SymbolIcon Symbol="World" Foreground="{StaticResource AccentBrush}" Width="48" Height="48" />
-                    <TextBlock Text="Choose a dashboard" FontSize="32" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                    <TextBlock Text="Add the web address for the page you want EdgeDock to show. Your sign-in stays on this computer."
-                               Foreground="{StaticResource MutedTextBrush}" FontSize="18" TextWrapping="Wrap" TextAlignment="Center" />
-                    <Button Content="Open settings" HorizontalAlignment="Center" Click="OpenSettings_Click" />
-                </StackPanel>
-            </Grid>
-
-            <Grid x:Name="WebStatusState" Background="#E6111016" Visibility="Collapsed">
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="620" Spacing="12">
-                    <ProgressRing x:Name="LoadingRing" IsActive="False" Width="42" Height="42" Foreground="{StaticResource AccentBrush}" />
-                    <TextBlock x:Name="WebStatusTitle" Text="Loading dashboard" FontSize="26" FontWeight="SemiBold" TextAlignment="Center" />
-                    <TextBlock x:Name="WebStatusMessage" Foreground="{StaticResource MutedTextBrush}" FontSize="17" TextWrapping="Wrap" TextAlignment="Center" />
-                    <Button x:Name="RetryButton" Content="Try again" HorizontalAlignment="Center" Click="Reload_Click" Visibility="Collapsed" />
-                </StackPanel>
-            </Grid>
-
-            <Button x:Name="ExitFullScreenButton" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="18"
-                    Click="ExitFullScreen_Click" Visibility="Collapsed" Background="#E6221E2C">
-                <StackPanel Orientation="Horizontal" Spacing="9">
-                    <SymbolIcon Symbol="BackToWindow" />
-                    <TextBlock Text="Exit full screen" />
-                </StackPanel>
-            </Button>
-        </Grid>
-
-        <Grid Grid.Row="1" Background="{StaticResource PanelBrush}" Padding="18,12" ColumnSpacing="20">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
+    <Grid x:Name="Root" Background="Transparent" KeyDown="Root_KeyDown" SizeChanged="Root_SizeChanged">
+        <Grid x:Name="Workspace" Padding="10" ColumnSpacing="10">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" MinWidth="240" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition x:Name="WebColumn" Width="*" />
+                <ColumnDefinition x:Name="MediaColumn" Width="340" />
             </Grid.ColumnDefinitions>
 
-            <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="2">
-                <TextBlock x:Name="TrackTitle" Text="Nothing playing" FontSize="19" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                <TextBlock x:Name="TrackArtist" Text="Start audio in a Windows media app" Foreground="{StaticResource MutedTextBrush}"
-                           FontSize="15" TextTrimming="CharacterEllipsis" />
-                <TextBlock x:Name="MediaStatus" Foreground="#FFFFC2C7" FontSize="13" TextTrimming="CharacterEllipsis" Visibility="Collapsed" />
-            </StackPanel>
+            <Border x:Name="WebSurface" Grid.Column="0" CornerRadius="14" Background="#FF0B0A0E"
+                    Loaded="WebSurface_LayoutChanged" SizeChanged="WebSurface_LayoutChanged">
+                <Grid>
+                    <WebView2 x:Name="DashboardWebView"
+                              DefaultBackgroundColor="#0B0A0E"
+                              NavigationStarting="DashboardWebView_NavigationStarting"
+                              NavigationCompleted="DashboardWebView_NavigationCompleted" />
 
-            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                <Button x:Name="PreviousButton" AutomationProperties.Name="Previous track" ToolTipService.ToolTip="Previous track"
-                        IsEnabled="False" Click="Previous_Click"><SymbolIcon Symbol="Previous" /></Button>
-                <Button x:Name="PlayPauseButton" AutomationProperties.Name="Play" ToolTipService.ToolTip="Play"
-                        IsEnabled="False" Click="PlayPause_Click"><SymbolIcon x:Name="PlayPauseIcon" Symbol="Play" /></Button>
-                <Button x:Name="NextButton" AutomationProperties.Name="Next track" ToolTipService.ToolTip="Next track"
-                        IsEnabled="False" Click="Next_Click"><SymbolIcon Symbol="Next" /></Button>
-            </StackPanel>
+                    <Grid x:Name="SetupState" Background="{StaticResource ShellBrush}" Visibility="Collapsed">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="560" Spacing="14">
+                            <SymbolIcon Symbol="World" Foreground="{StaticResource AccentBrush}" Width="48" Height="48" />
+                            <TextBlock Text="Choose a dashboard" FontSize="32" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                            <TextBlock Text="Add the web address for the page you want EdgeDock to show. Your sign-in stays on this computer."
+                                       Foreground="{StaticResource MutedTextBrush}" FontSize="18" TextWrapping="Wrap" TextAlignment="Center" />
+                            <Button Content="Open settings" HorizontalAlignment="Center" Click="OpenSettings_Click" />
+                        </StackPanel>
+                    </Grid>
 
-            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                <Button Click="OpenSettings_Click">
-                    <StackPanel Orientation="Horizontal" Spacing="8"><SymbolIcon Symbol="Setting" /><TextBlock Text="Settings" /></StackPanel>
-                </Button>
-                <Button x:Name="ReloadButton" Click="Reload_Click" IsEnabled="False">
-                    <StackPanel Orientation="Horizontal" Spacing="8"><SymbolIcon Symbol="Refresh" /><TextBlock Text="Reload" /></StackPanel>
-                </Button>
-                <Button x:Name="FullScreenButton" Click="FullScreen_Click">
-                    <StackPanel Orientation="Horizontal" Spacing="8"><SymbolIcon Symbol="FullScreen" /><TextBlock Text="Full screen" /></StackPanel>
-                </Button>
-            </StackPanel>
+                    <Grid x:Name="WebStatusState" Background="#E6111016" Visibility="Collapsed">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="620" Spacing="12">
+                            <ProgressRing x:Name="LoadingRing" IsActive="False" Width="42" Height="42" Foreground="{StaticResource AccentBrush}" />
+                            <TextBlock x:Name="WebStatusTitle" Text="Loading dashboard" FontSize="26" FontWeight="SemiBold" TextAlignment="Center" />
+                            <TextBlock x:Name="WebStatusMessage" Foreground="{StaticResource MutedTextBrush}" FontSize="17"
+                                       TextWrapping="Wrap" TextAlignment="Center" />
+                            <Button x:Name="RetryButton" Content="Try again" HorizontalAlignment="Center"
+                                    Click="Reload_Click" Visibility="Collapsed" />
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+            </Border>
 
-            <Border x:Name="SettingsPanel" Grid.Row="1" Grid.ColumnSpan="3" Margin="0,12,0,0" Padding="12"
-                    Background="#FF24202E" CornerRadius="10" Visibility="Collapsed">
-                <Grid ColumnSpacing="10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0" Spacing="4">
-                        <TextBlock Text="Dashboard web address" FontWeight="SemiBold" />
-                        <TextBox x:Name="UrlTextBox" PlaceholderText="https://example.com" FontSize="17"
-                                 AutomationProperties.Name="Dashboard web address" KeyDown="UrlTextBox_KeyDown" />
-                        <TextBlock x:Name="UrlErrorText" Foreground="#FFFFC2C7" Visibility="Collapsed" />
+            <Border x:Name="MediaPanel" Grid.Column="1" CornerRadius="14" Padding="20,16"
+                    Background="#B31A1821">
+                <Grid RowSpacing="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition x:Name="ArtworkRow" Height="*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Text="Now playing" FontSize="16" FontWeight="SemiBold"
+                               Foreground="{StaticResource MutedTextBrush}" />
+
+                    <Border x:Name="ArtworkContainer" Grid.Row="1" MinHeight="120" MaxHeight="300" MaxWidth="300"
+                            HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                            Background="#FF292532" CornerRadius="12">
+                        <Grid>
+                            <SymbolIcon x:Name="ArtworkPlaceholder" Symbol="Audio" Width="64" Height="64"
+                                        Foreground="{StaticResource AccentBrush}" />
+                            <Image x:Name="AlbumArtwork" Stretch="UniformToFill" Visibility="Collapsed" />
+                        </Grid>
+                    </Border>
+
+                    <StackPanel Grid.Row="2" Spacing="3">
+                        <TextBlock x:Name="TrackTitle" Text="Nothing playing" FontSize="20" FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" MaxLines="1" />
+                        <TextBlock x:Name="TrackArtist" Text="Start audio in a Windows media app"
+                                   Foreground="{StaticResource MutedTextBrush}" FontSize="16"
+                                   TextTrimming="CharacterEllipsis" MaxLines="1" />
                     </StackPanel>
-                    <Button Grid.Column="1" Content="Save and open" VerticalAlignment="Bottom" Click="SaveSettings_Click" />
-                    <Button Grid.Column="2" Content="Cancel" VerticalAlignment="Bottom" Click="CancelSettings_Click" />
+
+                    <TextBlock x:Name="MediaStatus" Grid.Row="3" Foreground="#FFFFC2C7" FontSize="13"
+                               TextWrapping="Wrap" MaxLines="2" Visibility="Collapsed" />
+
+                    <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
+                        <Button x:Name="PreviousButton" Width="64" AutomationProperties.Name="Previous track"
+                                ToolTipService.ToolTip="Previous track" IsEnabled="False" Click="Previous_Click">
+                            <SymbolIcon Symbol="Previous" />
+                        </Button>
+                        <Button x:Name="PlayPauseButton" Width="72" AutomationProperties.Name="Play"
+                                ToolTipService.ToolTip="Play" IsEnabled="False" Click="PlayPause_Click"
+                                Background="#FF6046B8">
+                            <SymbolIcon x:Name="PlayPauseIcon" Symbol="Play" />
+                        </Button>
+                        <Button x:Name="NextButton" Width="64" AutomationProperties.Name="Next track"
+                                ToolTipService.ToolTip="Next track" IsEnabled="False" Click="Next_Click">
+                            <SymbolIcon Symbol="Next" />
+                        </Button>
+                    </StackPanel>
                 </Grid>
             </Border>
         </Grid>
+
+        <Button x:Name="ExitFullScreenButton" HorizontalAlignment="Right" VerticalAlignment="Top"
+                Margin="0,20,144,0" Height="52" Visibility="Collapsed" Background="#E624202E"
+                AutomationProperties.Name="Exit full screen" ToolTipService.ToolTip="Exit full screen"
+                Click="FullScreen_Click">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <SymbolIcon Symbol="BackToWindow" />
+                <TextBlock Text="Exit full screen" />
+            </StackPanel>
+        </Button>
+
+        <Button x:Name="MediaVisibilityButton" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,20,82,0"
+                Width="52" Height="52" Padding="0" Background="#B31A1821"
+                AutomationProperties.Name="Hide media panel" ToolTipService.ToolTip="Hide media panel"
+                Click="ToggleMediaPanel_Click">
+            <SymbolIcon x:Name="MediaVisibilityIcon" Symbol="Audio" />
+        </Button>
+
+        <Button x:Name="SettingsButton" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,20,20,0"
+                Width="52" Height="52" Padding="0" Background="#B31A1821"
+                AutomationProperties.Name="Settings" ToolTipService.ToolTip="Settings"
+                Click="OpenSettings_Click">
+            <SymbolIcon Symbol="Setting" />
+        </Button>
+
+        <Border x:Name="SettingsPanel" Width="420" HorizontalAlignment="Right" VerticalAlignment="Stretch"
+                Margin="0,80,20,20" Padding="20" Background="#F224202E" CornerRadius="14"
+                Visibility="Collapsed">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+              <StackPanel Spacing="14">
+                <Grid>
+                    <TextBlock Text="Settings" FontSize="24" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <Button HorizontalAlignment="Right" Width="52" Height="52" Padding="0"
+                            AutomationProperties.Name="Close settings" ToolTipService.ToolTip="Close settings"
+                            Click="CancelSettings_Click">
+                        <SymbolIcon Symbol="Cancel" />
+                    </Button>
+                </Grid>
+
+                <StackPanel Spacing="5">
+                    <TextBlock Text="Dashboard web address" FontWeight="SemiBold" />
+                    <TextBox x:Name="UrlTextBox" PlaceholderText="https://example.com" FontSize="17"
+                             AutomationProperties.Name="Dashboard web address" KeyDown="UrlTextBox_KeyDown" />
+                    <TextBlock x:Name="UrlErrorText" Foreground="#FFFFC2C7" TextWrapping="Wrap" Visibility="Collapsed" />
+                </StackPanel>
+
+                <StackPanel Spacing="5">
+                    <TextBlock Text="Media panel" FontWeight="SemiBold" />
+                    <ComboBox x:Name="PlacementComboBox" HorizontalAlignment="Stretch" MinHeight="52"
+                              AutomationProperties.Name="Media panel placement">
+                        <ComboBoxItem Content="Right" />
+                        <ComboBoxItem Content="Left" />
+                        <ComboBoxItem Content="Hidden" />
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Spacing="5">
+                    <Grid>
+                        <TextBlock Text="Panel width" FontWeight="SemiBold" />
+                        <TextBlock x:Name="PanelWidthText" HorizontalAlignment="Right"
+                                   Foreground="{StaticResource MutedTextBrush}" />
+                    </Grid>
+                    <Slider x:Name="PanelWidthSlider" Minimum="240" Maximum="440" StepFrequency="10"
+                            Value="340" ValueChanged="PanelWidthSlider_ValueChanged"
+                            AutomationProperties.Name="Media panel width" />
+                </StackPanel>
+
+                <ToggleSwitch x:Name="ArtworkToggle" Header="Show album artwork" IsOn="True"
+                              AutomationProperties.Name="Show album artwork" />
+
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Button x:Name="ReloadButton" Click="Reload_Click" IsEnabled="False">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <SymbolIcon Symbol="Refresh" />
+                            <TextBlock Text="Reload page" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="FullScreenButton" Click="FullScreen_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <SymbolIcon x:Name="FullScreenIcon" Symbol="FullScreen" />
+                            <TextBlock x:Name="FullScreenText" Text="Full screen" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+                    <Button Content="Cancel" Click="CancelSettings_Click" />
+                    <Button Content="Save and open" Click="SaveSettings_Click" Background="#FF6046B8" />
+                </StackPanel>
+              </StackPanel>
+            </ScrollViewer>
+        </Border>
     </Grid>
 </Window>

@@ -46,6 +46,7 @@ of those. There is no dependency on Corsair iCUE for the app's dashboard UI.
 - [FullScreenPresenter](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.ui.windowing.fullscreenpresenter)
 - [Windows media session manager](https://learn.microsoft.com/en-us/uwp/api/windows.media.control.globalsystemmediatransportcontrolssessionmanager)
 - [App capability declarations](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/app-capability-declarations)
+- [Mica material and content layering](https://learn.microsoft.com/en-us/windows/apps/design/style/mica)
 
 Research checked September 2026. SDK release pages and package feeds can differ;
 the restored package and successful build are the reproducibility authority.

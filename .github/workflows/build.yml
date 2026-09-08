@@ -19,3 +19,5 @@ jobs:
           global-json-file: global.json
       - name: Build Windows app
         run: dotnet build src/EdgeDock/EdgeDock.csproj -c Release -p:Platform=x64
+      - name: Check settings migration
+        run: dotnet run --project tests/EdgeDock.Checks -c Release

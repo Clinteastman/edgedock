@@ -1,7 +1,7 @@
 # EdgeDock
 
-A small Windows dashboard for a wide second screen. Put Home Assistant or another
-web page above a strip of Windows media controls, then switch to full screen.
+A Windows dashboard for a wide second screen. Put Home Assistant or another
+web page beside an artwork-led media panel, with a native Mica backdrop.
 
 Designed for the 2560 × 720 Corsair Xeneon Edge, but usable on a regular monitor.
 Independent community project; not affiliated with Corsair.
@@ -14,8 +14,12 @@ contribute. This is not a signed installer or a finished consumer release.
 - Opens a saved web address in an embedded browser.
 - Keeps your browser sign-in locally between launches.
 - Shows track and artist information from compatible Windows media players.
+- Displays artwork supplied by the current media player, with a neutral fallback.
+- Places the media panel on the right, on the left, or hides it.
+- Offers a quick show/hide button, adjustable panel width and optional artwork.
 - Provides previous, play/pause and next controls when the player supports them.
-- Switches between windowed and full-screen modes, with a visible exit button.
+- Switches between windowed and full-screen modes using F11 or Settings.
+- Keeps an on-screen exit button available while in full screen.
 
 Your other apps stay ordinary Windows windows. Drag a terminal onto the display
 when you need it, then return to EdgeDock. There is no terminal emulator or
@@ -40,9 +44,13 @@ runtime limitations are recorded in [the testing notes](docs/testing.md).
 1. Open **Settings**, enter your dashboard's full `http://` or `https://` address,
    and choose **Save and open**.
 2. Sign in through the web page as normal.
-3. Move the window onto your second display and choose **Full screen**.
-4. Use **Exit full screen** to return to a normal window. F11 and Escape are also
-   implemented; the latest browser-focus fix is awaiting an interactive retest.
+3. Choose the media panel position in **Settings**.
+4. Move the window onto your second display and use **F11** or the full-screen
+   control in **Settings**. Settings stays accessible at the top right.
+
+**Escape belongs to your web page.** EdgeDock does not use it to exit full screen.
+Mica's appearance follows Windows' backdrop behaviour; it falls back to a solid
+material when transparency is unavailable or the window is inactive.
 
 Media controls use the current Windows media session. Some applications do not
 publish one, or do not support every transport action. Controls are disabled when

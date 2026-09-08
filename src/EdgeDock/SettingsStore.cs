@@ -1,16 +1,33 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace EdgeDock;
+
+internal enum MediaPanelPlacement
+{
+    Right,
+    Left,
+    Hidden
+}
+
+internal sealed record EdgeDockSettings(
+    string? DashboardUrl,
+    MediaPanelPlacement MediaPanelPlacement,
+    MediaPanelPlacement LastVisibleMediaPanelPlacement,
+    double MediaPanelWidth,
+    bool ShowArtwork);
 
 internal sealed class SettingsStore
 {
     private readonly string _settingsPath;
+    private Dictionary<string, JsonElement>? _extensionData;
 
     public SettingsStore()
     {
-        var root = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "EdgeDock");
+        var overrideRoot = Environment.GetEnvironmentVariable("EDGEDOCK_DATA_DIR");
+        var root = string.IsNullOrWhiteSpace(overrideRoot)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EdgeDock")
+            : Path.GetFullPath(overrideRoot);
         Directory.CreateDirectory(root);
         _settingsPath = Path.Combine(root, "settings.json");
         WebViewProfilePath = Path.Combine(root, "WebView2");
@@ -18,34 +35,31 @@ internal sealed class SettingsStore
 
     public string WebViewProfilePath { get; }
 
-    public async Task<string?> LoadUrlAsync()
+    public async Task<EdgeDockSettings> LoadAsync()
     {
         try
         {
             if (!File.Exists(_settingsPath))
             {
-                return null;
+                return Defaults();
             }
 
             await using var stream = File.OpenRead(_settingsPath);
-            var settings = await JsonSerializer.DeserializeAsync<StoredSettings>(stream);
-            return IsAllowedUrl(settings?.DashboardUrl, out _) ? settings!.DashboardUrl : null;
+            var stored = await JsonSerializer.DeserializeAsync<StoredSettings>(stream);
+            _extensionData = stored?.ExtensionData;
+            var url = IsAllowedUrl(stored?.DashboardUrl, out _) ? stored!.DashboardUrl : null;
+            var placement = ParsePlacement(stored?.MediaPanelPlacement, MediaPanelPlacement.Right, true);
+            var lastVisible = ParsePlacement(stored?.LastVisibleMediaPanelPlacement, MediaPanelPlacement.Right, false);
+            var width = Math.Clamp(stored?.MediaPanelWidth ?? 340, 240, 440);
+            return new(url, placement, lastVisible, width, stored?.ShowArtwork ?? true);
         }
-        catch (IOException)
+        catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
         {
-            return null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return null;
+            return Defaults();
         }
     }
 
-    public async Task SaveUrlAsync(string dashboardUrl)
+    public async Task SaveAsync(EdgeDockSettings settings)
     {
         var directory = Path.GetDirectoryName(_settingsPath)!;
         Directory.CreateDirectory(directory);
@@ -61,7 +75,15 @@ internal sealed class SettingsStore
                 4096,
                 FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
-                await JsonSerializer.SerializeAsync(stream, new StoredSettings(dashboardUrl));
+                await JsonSerializer.SerializeAsync(stream, new StoredSettings
+                {
+                    DashboardUrl = settings.DashboardUrl,
+                    MediaPanelPlacement = settings.MediaPanelPlacement.ToString(),
+                    LastVisibleMediaPanelPlacement = settings.LastVisibleMediaPanelPlacement.ToString(),
+                    MediaPanelWidth = Math.Clamp(settings.MediaPanelWidth, 240, 440),
+                    ShowArtwork = settings.ShowArtwork,
+                    ExtensionData = _extensionData
+                });
                 await stream.FlushAsync();
             }
 
@@ -73,13 +95,9 @@ internal sealed class SettingsStore
             {
                 File.Delete(temporaryPath);
             }
-            catch (IOException)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                // A successful move removes the temporary file. Cleanup failure is harmless.
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // Saving already reports access errors; preserve the original exception.
+                // Preserve the save exception; a leftover temporary file is harmless.
             }
         }
     }
@@ -103,5 +121,27 @@ internal sealed class SettingsStore
         return true;
     }
 
-    private sealed record StoredSettings(string DashboardUrl);
+    private static MediaPanelPlacement ParsePlacement(string? value, MediaPanelPlacement fallback, bool allowHidden)
+    {
+        return Enum.TryParse<MediaPanelPlacement>(value, true, out var parsed) &&
+               Enum.IsDefined(parsed) &&
+               (allowHidden || parsed != MediaPanelPlacement.Hidden)
+            ? parsed
+            : fallback;
+    }
+
+    private static EdgeDockSettings Defaults() =>
+        new(null, MediaPanelPlacement.Right, MediaPanelPlacement.Right, 340, true);
+
+    private sealed class StoredSettings
+    {
+        public string? DashboardUrl { get; set; }
+        public string? MediaPanelPlacement { get; set; }
+        public string? LastVisibleMediaPanelPlacement { get; set; }
+        public double? MediaPanelWidth { get; set; }
+        public bool? ShowArtwork { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+    }
 }

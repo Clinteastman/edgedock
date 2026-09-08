@@ -17,11 +17,43 @@ Checked on Windows 11 x64 in September 2026:
   the Windows inspection tool failed with a foreground-process error.
 - Source review led to atomic settings saves and media-session generation checks.
 
-Not yet verified: corrected browser-focused shortcuts, restart/login persistence,
+The user subsequently confirmed the first version worked in their own test.
+They requested that Escape remain available to the embedded page; that binding
+is intentionally removed in the next layout iteration.
+
+Not yet verified across devices: restart/login persistence,
 playback commands, offline/error flows, physical Xeneon touch, ARM64 and the full
-display-scaling matrix. Use the visible exit button if a shortcut does not work.
+display-scaling matrix. Use Settings to change full-screen mode if a shortcut does not work.
 
 The executable is a development prototype, not a signed or packaged release.
+
+## Side-panel iteration validation
+
+Checked on Windows 11 x64 on 8 September 2026, using a separate test profile:
+
+- Release build: zero warnings and zero errors.
+- Five settings checks pass: legacy URL migration, layout persistence, invalid
+  enum/width recovery, unknown-field preservation and malformed JSON recovery.
+- F11 entered full screen from web content and returned to windowed mode.
+- The local keyboard fixture received Escape while EdgeDock stayed full screen.
+- The new on-screen Exit full screen button returned to windowed mode.
+- The quick media toggle hid the panel; Settings remained available.
+- Saving Left placement and disabling artwork visibly moved the panel and freed
+  the artwork space. The resulting settings file retained the dashboard URL.
+- Real Windows media metadata and artwork rendered; unsupported transport
+  controls were disabled. Playback commands were not invoked.
+- Native shell and sidebar rendered with no bottom utility strip. Desktop
+  screenshots were inspected locally; no private media screenshots are published.
+- Independent source review checked artwork lifetime, settings migration,
+  Escape handling and Mica exposure. Its touch-exit finding was fixed and retested.
+
+Exact 2560x720 / 150% scaling and physical touch remain unverified. A window-resize
+attempt did not produce the intended shallow viewport, so it is not counted as
+a passing layout test. Browser sign-in and full playback testing also remain open.
+
+Run the settings checks with `dotnet run --project tests/EdgeDock.Checks -c Release`.
+For isolated manual tests, set `EDGEDOCK_DATA_DIR` to a temporary directory before
+launching EdgeDock. `tests/keyboard-fixture.html` provides a local Escape counter.
 
 ## Manual acceptance checks
 
@@ -29,7 +61,12 @@ The executable is a development prototype, not a signed or packaged release.
 - A valid HTTP/HTTPS address loads; an invalid address is rejected.
 - A failed navigation gives a readable error and a retry action.
 - The saved address survives restart. Browser login persistence needs a real login test.
-- Full screen enters and exits through the button, F11 and Escape.
+- Full screen enters and exits through Settings and F11. Escape must leave
+  EdgeDock in full screen and remain available to the embedded page.
+- Right/left/hidden media placement survives restart without changing the URL.
+- Artwork matches the current session, clears when unavailable, and does not
+  cover transport buttons at 150% display scaling.
+- Mica is exposed in the native shell with readable inactive/fallback surfaces.
 - Test keyboard shortcuts with focus inside the web page as well as native controls.
 - Empty media sessions do not crash the app; unsupported actions are disabled.
 - A compatible media player exposes title/artist and responds to transport actions.

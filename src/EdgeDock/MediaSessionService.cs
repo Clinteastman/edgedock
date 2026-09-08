@@ -1,4 +1,5 @@
 using Windows.Media.Control;
+using Windows.Storage.Streams;
 
 namespace EdgeDock;
 
@@ -10,7 +11,9 @@ internal sealed record MediaSnapshot(
     bool CanTogglePlayPause,
     bool CanGoNext,
     bool IsPlaying,
-    string? StatusMessage = null);
+    string? StatusMessage = null,
+    byte[]? Artwork = null,
+    long Version = 0);
 
 internal sealed class MediaSessionService : IDisposable
 {
@@ -19,6 +22,8 @@ internal sealed class MediaSessionService : IDisposable
     private GlobalSystemMediaTransportControlsSession? _session;
     private bool _disposed;
     private int _sessionGeneration;
+    private long _refreshGeneration;
+    private CancellationTokenSource? _artworkCancellation;
 
     public event EventHandler<MediaSnapshot>? SnapshotChanged;
 
@@ -160,15 +165,26 @@ internal sealed class MediaSessionService : IDisposable
     {
         GlobalSystemMediaTransportControlsSession? session;
         int generation;
+        long refreshGeneration;
+        CancellationToken artworkCancellation;
         lock (_gate)
         {
             session = _session;
             generation = _sessionGeneration;
+            refreshGeneration = ++_refreshGeneration;
+            _artworkCancellation?.Cancel();
+            _artworkCancellation?.Dispose();
+            _artworkCancellation = new CancellationTokenSource();
+            artworkCancellation = _artworkCancellation.Token;
         }
 
         if (session is null)
         {
-            Raise(new("Nothing playing", "Start audio in a Windows media app", false, false, false, false, false, statusMessage), generation, session);
+            Raise(
+                new("Nothing playing", "Start audio in a Windows media app", false, false, false, false, false, statusMessage, Version: refreshGeneration),
+                generation,
+                session,
+                refreshGeneration);
             return;
         }
 
@@ -178,6 +194,7 @@ internal sealed class MediaSessionService : IDisposable
             var playback = session.GetPlaybackInfo();
             var controls = playback.Controls;
             var isPlaying = playback.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+            var artwork = await LoadArtworkAsync(properties?.Thumbnail, artworkCancellation);
 
             Raise(new(
                 string.IsNullOrWhiteSpace(properties?.Title) ? "Unknown track" : properties.Title,
@@ -187,12 +204,59 @@ internal sealed class MediaSessionService : IDisposable
                 isPlaying ? controls?.IsPauseEnabled == true : controls?.IsPlayEnabled == true,
                 controls?.IsNextEnabled == true,
                 isPlaying,
-                statusMessage), generation, session);
+                statusMessage,
+                artwork,
+                refreshGeneration), generation, session, refreshGeneration);
+        }
+        catch (OperationCanceledException)
+        {
+            // A newer track/session refresh superseded this result.
         }
         catch (Exception exception) when (exception is InvalidOperationException or System.Runtime.InteropServices.COMException)
         {
             Raise(new("Nothing playing", "The previous media session ended", false, false, false, false, false,
-                statusMessage ?? "Waiting for a media app."), generation, session);
+                statusMessage ?? "Waiting for a media app.", Version: refreshGeneration), generation, session, refreshGeneration);
+        }
+    }
+
+    private static async Task<byte[]?> LoadArtworkAsync(IRandomAccessStreamReference? reference, CancellationToken cancellationToken)
+    {
+        if (reference is null)
+        {
+            return null;
+        }
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(2));
+
+        try
+        {
+            using var stream = await reference.OpenReadAsync().AsTask(timeout.Token);
+            if (stream.Size is 0 or > 4 * 1024 * 1024)
+            {
+                return null;
+            }
+
+            using var input = stream.GetInputStreamAt(0);
+            using var reader = new DataReader(input);
+            var requested = (uint)stream.Size;
+            var loaded = await reader.LoadAsync(requested).AsTask(timeout.Token);
+            if (loaded == 0)
+            {
+                return null;
+            }
+
+            var bytes = new byte[loaded];
+            reader.ReadBytes(bytes);
+            return bytes;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception exception) when (exception is IOException or System.Runtime.InteropServices.COMException)
+        {
+            return null;
         }
     }
 
@@ -204,14 +268,19 @@ internal sealed class MediaSessionService : IDisposable
         }
     }
 
-    private void Raise(MediaSnapshot snapshot, int? expectedGeneration = null, GlobalSystemMediaTransportControlsSession? expectedSession = null)
+    private void Raise(
+        MediaSnapshot snapshot,
+        int? expectedGeneration = null,
+        GlobalSystemMediaTransportControlsSession? expectedSession = null,
+        long? expectedRefreshGeneration = null)
     {
         EventHandler<MediaSnapshot>? handler;
         lock (_gate)
         {
             if (_disposed ||
                 (expectedGeneration.HasValue && expectedGeneration.Value != _sessionGeneration) ||
-                (expectedGeneration.HasValue && !ReferenceEquals(expectedSession, _session)))
+                (expectedGeneration.HasValue && !ReferenceEquals(expectedSession, _session)) ||
+                (expectedRefreshGeneration.HasValue && expectedRefreshGeneration.Value != _refreshGeneration))
             {
                 return;
             }
@@ -233,6 +302,10 @@ internal sealed class MediaSessionService : IDisposable
 
             _disposed = true;
             _sessionGeneration++;
+            _refreshGeneration++;
+            _artworkCancellation?.Cancel();
+            _artworkCancellation?.Dispose();
+            _artworkCancellation = null;
             if (_session is not null)
             {
                 _session.MediaPropertiesChanged -= Session_Changed;
