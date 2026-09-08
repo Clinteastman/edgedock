@@ -17,6 +17,11 @@ pinned in the project and global.json; use those rather than preview SDKs.
 - Windows GlobalSystemMediaTransportControls supplies track information and
   playback actions for applications that publish a media session.
 - AppWindow's FullScreen presenter is true full screen, distinct from maximising.
+- Native widgets use descriptor factories and a FlipView host. Only the selected
+  view is created, with Loaded/Unloaded cleanup. The local library manages bundled
+  widgets; separately installed packages and an online catalogue are future work.
+- PC master volume/mute uses Windows Core Audio on the default multimedia render
+  endpoint. It does not require Home Assistant, a cloud account or administrator access.
 
 WPF remains a sound mature option, but WinUI fits a new Windows-native project.
 Tauri is useful for cross-platform web applications, but would add a second

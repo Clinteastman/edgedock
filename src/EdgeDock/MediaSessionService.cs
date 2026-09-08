@@ -24,8 +24,27 @@ internal sealed class MediaSessionService : IDisposable
     private int _sessionGeneration;
     private long _refreshGeneration;
     private CancellationTokenSource? _artworkCancellation;
+    private MediaSnapshot _currentSnapshot = new(
+        "Nothing playing",
+        "Start audio in a Windows media app",
+        false,
+        false,
+        false,
+        false,
+        false);
 
     public event EventHandler<MediaSnapshot>? SnapshotChanged;
+
+    internal MediaSnapshot CurrentSnapshot
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _currentSnapshot;
+            }
+        }
+    }
 
     public async Task InitializeAsync()
     {
@@ -285,6 +304,7 @@ internal sealed class MediaSessionService : IDisposable
                 return;
             }
 
+            _currentSnapshot = snapshot;
             handler = SnapshotChanged;
         }
 

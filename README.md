@@ -1,7 +1,7 @@
 # EdgeDock
 
 A Windows dashboard for a wide second screen. Put Home Assistant or another
-web page beside an artwork-led media panel, with a native Mica backdrop.
+web page beside native Windows widgets, with a Mica backdrop.
 
 Designed for the 2560 × 720 Corsair Xeneon Edge, but usable on a regular monitor.
 Independent community project; not affiliated with Corsair.
@@ -20,6 +20,9 @@ contribute. This is not a signed installer or a finished consumer release.
 - Provides previous, play/pause and next controls when the player supports them.
 - Switches between windowed and full-screen modes using F11 or Settings.
 - Keeps an on-screen exit button available while in full screen.
+- Supports one to three native widget panels, with an optional web area.
+- Lets each panel switch between its chosen widgets independently.
+- Includes a local library of media, PC volume/mute and Windows Settings shortcuts.
 
 Your other apps stay ordinary Windows windows. Drag a terminal onto the display
 when you need it, then return to EdgeDock. There is no terminal emulator or
@@ -42,11 +45,12 @@ runtime limitations are recorded in [the testing notes](docs/testing.md).
 ## First use
 
 1. Open **Settings**, enter your dashboard's full `http://` or `https://` address,
-   and choose **Save and open**.
+   and choose **Save layout**, or turn off the web dashboard to use only widgets.
 2. Sign in through the web page as normal.
-3. Choose the media panel position in **Settings**.
+3. Choose the panel position and count in **Settings**. In **Widget library**,
+   tick the widgets each panel should contain. Swipe or use its arrows to switch.
 4. Move the window onto your second display and use **F11** or the full-screen
-   control in **Settings**. Settings stays accessible at the top right.
+   control at the top right. Settings stays accessible in full screen.
 
 **Escape belongs to your web page.** EdgeDock does not use it to exit full screen.
 Mica's appearance follows Windows' backdrop behaviour; it falls back to a solid
@@ -70,8 +74,9 @@ kiosk browser.
 ## Development
 
 [Technology decisions](docs/technology.md) · [Contributing](CONTRIBUTING.md) ·
-[MIT licence](LICENSE)
+[Developing widgets](docs/widget-development.md) · [MIT licence](LICENSE)
 
 Useful next steps after trying the prototype: saved page shortcuts, monitor
 placement, a media-session picker and a signed installer. These are ideas, not
-features claimed by this first build.
+features claimed by this build. The widget library currently contains bundled
+widgets; an online catalogue and third-party package installation are future work.

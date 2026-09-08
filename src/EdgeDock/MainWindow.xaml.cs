@@ -1,3 +1,5 @@
+using EdgeDock.Controls;
+using EdgeDock.Widgets;
 using Microsoft.UI;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Windowing;
@@ -37,8 +39,11 @@ public sealed partial class MainWindow : Window
     private bool _isFullScreen;
     private bool _enforcingMinimumSize;
     private bool _keyTransitionPending;
-    private long _displayedMediaVersion = -1;
-    private byte[]? _lastArtwork;
+    private bool _isWebVisible = true;
+    private IReadOnlyList<WidgetSlotSettings> _widgetSlots = [new(["media"], "media")];
+    private readonly WidgetRegistry _registry = WidgetRegistry.CreateBuiltIns();
+    private readonly SemaphoreSlim _saveGate = new(1, 1);
+    private bool _closing;
     private CompositionRoundedRectangleGeometry? _webClipGeometry;
 
     public MainWindow()
@@ -53,17 +58,23 @@ public sealed partial class MainWindow : Window
         InstallMessageHook();
         Closed += MainWindow_Closed;
         Activated += MainWindow_Activated;
-        _media.SnapshotChanged += Media_SnapshotChanged;
+
     }
 
     private async void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
     {
         Activated -= MainWindow_Activated;
+        var scale = Root.XamlRoot?.RasterizationScale ?? 1;
+        if (int.TryParse(Environment.GetEnvironmentVariable("EDGEDOCK_PREVIEW_WIDTH"), out var width) &&
+            int.TryParse(Environment.GetEnvironmentVariable("EDGEDOCK_PREVIEW_HEIGHT"), out var height))
+            AppWindow.ResizeClient(new SizeInt32((int)(Math.Clamp(width, 900, 4000) * scale), (int)(Math.Clamp(height, 420, 2200) * scale)));
         await InitializeAsync();
     }
 
     private void ConfigureWindow()
     {
+        ExtendsContentIntoTitleBar = true;
+        SetTitleBar(AppTitleBar);
         AppWindow.ResizeClient(new SizeInt32(1600, 720));
         AppWindow.TitleBar.BackgroundColor = Windows.UI.Color.FromArgb(0, 0, 0, 0);
         AppWindow.TitleBar.ForegroundColor = Colors.White;
@@ -82,6 +93,9 @@ public sealed partial class MainWindow : Window
         _lastVisiblePlacement = settings.LastVisibleMediaPanelPlacement;
         _configuredPanelWidth = settings.MediaPanelWidth;
         _showArtwork = settings.ShowArtwork;
+        _isWebVisible = settings.IsWebVisible;
+        _widgetSlots = settings.WidgetSlots;
+        BuildWidgetSlots();
         ApplyMediaLayout();
         UpdateSettingsControls();
 
@@ -92,7 +106,8 @@ public sealed partial class MainWindow : Window
         }
 
         UrlTextBox.Text = settings.DashboardUrl;
-        await NavigateAsync(new Uri(settings.DashboardUrl));
+        _dashboardUri = new Uri(settings.DashboardUrl);
+        if (_isWebVisible) await NavigateAsync(_dashboardUri);
     }
 
     private async Task EnsureWebViewAsync()
@@ -280,73 +295,65 @@ public sealed partial class MainWindow : Window
 
     private async Task SaveAndNavigateAsync()
     {
-        if (!SettingsStore.IsAllowedUrl(UrlTextBox.Text, out var uri))
+        Uri? uri = null;
+        if (!string.IsNullOrWhiteSpace(UrlTextBox.Text) && !SettingsStore.IsAllowedUrl(UrlTextBox.Text, out uri))
         {
-            UrlErrorText.Text = "Enter a complete http or https web address.";
+            UrlErrorText.Text = "Enter a complete http or https web address, or leave it empty.";
             UrlErrorText.Visibility = Visibility.Visible;
             return;
         }
-
         var placement = PlacementComboBox.SelectedIndex switch
         {
             1 => MediaPanelPlacement.Left,
             2 => MediaPanelPlacement.Hidden,
             _ => MediaPanelPlacement.Right
         };
-        var lastVisible = placement == MediaPanelPlacement.Hidden ? _lastVisiblePlacement : placement;
-        var settings = new EdgeDockSettings(
-            uri!.AbsoluteUri,
-            placement,
-            lastVisible,
-            PanelWidthSlider.Value,
-            ArtworkToggle.IsOn);
-
-        try
-        {
-            await _settings.SaveAsync(settings);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            UrlErrorText.Text = "EdgeDock could not save these settings. Check access to your local app data folder.";
-            UrlErrorText.Visibility = Visibility.Visible;
-            return;
-        }
-
-        _mediaPlacement = placement;
-        _lastVisiblePlacement = lastVisible;
+        var settings = SettingsStore.Normalize(new EdgeDockSettings(uri?.AbsoluteUri, placement,
+            placement == MediaPanelPlacement.Hidden ? _lastVisiblePlacement : placement,
+            PanelWidthSlider.Value, ArtworkToggle.IsOn, WebVisibleToggle.IsOn, LibraryEditor.GetSlots()));
+        if (!await PersistAsync(settings)) return;
+        _mediaPlacement = settings.MediaPanelPlacement;
+        _lastVisiblePlacement = settings.LastVisibleMediaPanelPlacement;
         _configuredPanelWidth = settings.MediaPanelWidth;
         _showArtwork = settings.ShowArtwork;
+        _isWebVisible = settings.IsWebVisible;
+        _widgetSlots = settings.WidgetSlots;
+        var previousUri = _dashboardUri;
+        _dashboardUri = uri;
+        BuildWidgetSlots();
         ApplyMediaLayout();
         SettingsPanel.Visibility = Visibility.Collapsed;
         UrlErrorText.Visibility = Visibility.Collapsed;
-        await NavigateAsync(uri);
+        if (_dashboardUri is null) ShowSetup();
+        else if (_isWebVisible && (previousUri != uri || DashboardWebView.CoreWebView2 is null)) await NavigateAsync(_dashboardUri);
+    }
+
+    private async Task<bool> PersistAsync(EdgeDockSettings settings, bool alreadyApplied = false)
+    {
+        await _saveGate.WaitAsync();
+        try { await _settings.SaveAsync(settings); return true; }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            if (!_closing)
+            {
+                SettingsPanel.Visibility = Visibility.Visible;
+                UrlErrorText.Text = alreadyApplied
+                    ? "Your change is active but was not saved. It may reset when EdgeDock closes. Check access to local app data."
+                    : "Could not save your layout. Check access to the local app data folder.";
+                UrlErrorText.Visibility = Visibility.Visible;
+            }
+            return false;
+        }
+        finally { _saveGate.Release(); }
     }
 
     private async void ToggleMediaPanel_Click(object sender, RoutedEventArgs args)
     {
-        if (_mediaPlacement == MediaPanelPlacement.Hidden)
-        {
-            _mediaPlacement = _lastVisiblePlacement;
-        }
-        else
-        {
-            _lastVisiblePlacement = _mediaPlacement;
-            _mediaPlacement = MediaPanelPlacement.Hidden;
-        }
-
+        if (!_isWebVisible) return;
+        if (_mediaPlacement == MediaPanelPlacement.Hidden) _mediaPlacement = _lastVisiblePlacement;
+        else { _lastVisiblePlacement = _mediaPlacement; _mediaPlacement = MediaPanelPlacement.Hidden; }
         ApplyMediaLayout();
-        UpdateSettingsControls();
-
-        try
-        {
-            await _settings.SaveAsync(CurrentSettings());
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            SettingsPanel.Visibility = Visibility.Visible;
-            UrlErrorText.Text = "EdgeDock could not save the media panel setting.";
-            UrlErrorText.Visibility = Visibility.Visible;
-        }
+        await PersistAsync(CurrentSettings(), alreadyApplied: true);
     }
 
     private EdgeDockSettings CurrentSettings() => new(
@@ -354,7 +361,9 @@ public sealed partial class MainWindow : Window
         _mediaPlacement,
         _lastVisiblePlacement,
         _configuredPanelWidth,
-        _showArtwork);
+        _showArtwork,
+        _isWebVisible,
+        _widgetSlots);
 
     private void UpdateSettingsControls()
     {
@@ -367,6 +376,8 @@ public sealed partial class MainWindow : Window
         PanelWidthSlider.Value = _configuredPanelWidth;
         PanelWidthText.Text = $"{_configuredPanelWidth:0} px";
         ArtworkToggle.IsOn = _showArtwork;
+        WebVisibleToggle.IsOn = _isWebVisible;
+        LibraryEditor.LoadSlots(_widgetSlots, _registry);
     }
 
     private void PanelWidthSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs args)
@@ -377,52 +388,50 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void ApplyMediaLayout()
+    private void BuildWidgetSlots()
     {
-        var panelWidth = EffectivePanelWidth();
-        var isVisible = _mediaPlacement != MediaPanelPlacement.Hidden;
-        MediaPanel.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
-
-        if (_mediaPlacement == MediaPanelPlacement.Left)
+        WidgetHost.Children.Clear();
+        WidgetHost.ColumnDefinitions.Clear();
+        for (var index = 0; index < _widgetSlots.Count; index++)
         {
-            Grid.SetColumn(MediaPanel, 0);
-            Grid.SetColumn(WebSurface, 1);
-            WebColumn.Width = new GridLength(panelWidth);
-            MediaColumn.Width = new GridLength(1, GridUnitType.Star);
-        }
-        else
-        {
-            Grid.SetColumn(WebSurface, 0);
-            Grid.SetColumn(MediaPanel, 1);
-            WebColumn.Width = new GridLength(1, GridUnitType.Star);
-            MediaColumn.Width = isVisible ? new GridLength(panelWidth) : new GridLength(0);
-        }
-
-        Workspace.ColumnSpacing = isVisible ? 10 : 0;
-        ArtworkRow.Height = _showArtwork ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
-        ArtworkContainer.Visibility = _showArtwork ? Visibility.Visible : Visibility.Collapsed;
-        var quickLabel = isVisible ? "Hide media panel" : "Show media panel";
-        AutomationProperties.SetName(MediaVisibilityButton, quickLabel);
-        ToolTipService.SetToolTip(MediaVisibilityButton, quickLabel);
-        MediaVisibilityIcon.Foreground = isVisible
-            ? (Brush)Application.Current.Resources["AccentBrush"]
-            : (Brush)Application.Current.Resources["MutedTextBrush"];
-
-        if (_showArtwork && _lastArtwork is not null)
-        {
-            _ = ShowArtworkAsync(_lastArtwork, _displayedMediaVersion);
+            var slotIndex = index;
+            WidgetHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var slot = new WidgetSlotView(_registry, _media, _widgetSlots[index], _showArtwork);
+            slot.SelectionChanged += async (_, selectedId) =>
+            {
+                var updated = _widgetSlots.ToArray();
+                updated[slotIndex] = updated[slotIndex] with { SelectedWidgetId = selectedId };
+                _widgetSlots = updated;
+                await PersistAsync(CurrentSettings(), alreadyApplied: true);
+            };
+            Grid.SetColumn(slot, index);
+            WidgetHost.Children.Add(slot);
         }
     }
 
-    private double EffectivePanelWidth()
+    private void ApplyMediaLayout()
     {
-        if (Root.ActualWidth <= 0)
-        {
-            return Math.Clamp(_configuredPanelWidth, MinimumPanelWidth, MaximumPanelWidth);
-        }
-
-        var viewportMaximum = Math.Max(MinimumPanelWidth, (Root.ActualWidth - 30) * 0.42);
-        return Math.Clamp(_configuredPanelWidth, MinimumPanelWidth, Math.Min(MaximumPanelWidth, viewportMaximum));
+        if (WidgetHost is null) return;
+        var widgetsVisible = _mediaPlacement != MediaPanelPlacement.Hidden || !_isWebVisible;
+        WidgetHost.Visibility = widgetsVisible ? Visibility.Visible : Visibility.Collapsed;
+        WebSurface.Visibility = _isWebVisible ? Visibility.Visible : Visibility.Collapsed;
+        var available = Math.Max(800, Root.ActualWidth - 20);
+        var requested = _configuredPanelWidth * _widgetSlots.Count + 10 * (_widgetSlots.Count - 1);
+        var minimumWidgetsWidth = 240 * _widgetSlots.Count + 10 * (_widgetSlots.Count - 1);
+        var width = Math.Max(minimumWidgetsWidth, Math.Min(requested, Math.Max(240, available - 360)));
+        var widgetWidth = !_isWebVisible ? new GridLength(1, GridUnitType.Star) : widgetsVisible ? new GridLength(width) : new GridLength(0);
+        var webWidth = _isWebVisible ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+        var left = _mediaPlacement == MediaPanelPlacement.Left;
+        Grid.SetColumn(WidgetHost, left ? 0 : 1);
+        Grid.SetColumn(WebSurface, left ? 1 : 0);
+        WebColumn.Width = left ? widgetWidth : webWidth;
+        MediaColumn.Width = left ? webWidth : widgetWidth;
+        Workspace.ColumnSpacing = _isWebVisible && widgetsVisible ? 10 : 0;
+        MediaVisibilityButton.IsEnabled = _isWebVisible;
+        var label = widgetsVisible ? "Hide widgets" : "Show widgets";
+        AutomationProperties.SetName(MediaVisibilityButton, label);
+        ToolTipService.SetToolTip(MediaVisibilityButton, _isWebVisible ? label : "Enable the web dashboard before hiding widgets");
+        LayoutSummary.Text = _isWebVisible ? (widgetsVisible ? $"Web + {_widgetSlots.Count} panel{(_widgetSlots.Count == 1 ? "" : "s")}" : "Web dashboard") : "Windows widgets";
     }
 
     private void Reload_Click(object sender, RoutedEventArgs args)
@@ -445,7 +454,7 @@ public sealed partial class MainWindow : Window
         {
             AppWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
             _isFullScreen = false;
-            ExitFullScreenButton.Visibility = Visibility.Collapsed;
+            AppTitleBar.Visibility = Visibility.Visible;
             FullScreenIcon.Symbol = Symbol.FullScreen;
             FullScreenText.Text = "Full screen";
             AutomationProperties.SetName(FullScreenButton, "Enter full screen");
@@ -454,92 +463,14 @@ public sealed partial class MainWindow : Window
         {
             AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
             _isFullScreen = true;
-            ExitFullScreenButton.Visibility = Visibility.Visible;
+            AppTitleBar.Visibility = Visibility.Collapsed;
             FullScreenIcon.Symbol = Symbol.BackToWindow;
             FullScreenText.Text = "Exit full screen";
             AutomationProperties.SetName(FullScreenButton, "Exit full screen");
         }
     }
 
-    private async void Previous_Click(object sender, RoutedEventArgs args) => await _media.PreviousAsync();
-    private async void PlayPause_Click(object sender, RoutedEventArgs args) => await _media.TogglePlayPauseAsync();
-    private async void Next_Click(object sender, RoutedEventArgs args) => await _media.NextAsync();
 
-    private void Media_SnapshotChanged(object? sender, MediaSnapshot snapshot)
-    {
-        DispatcherQueue.TryEnqueue(() => _ = ApplyMediaSnapshotAsync(snapshot));
-    }
-
-    private async Task ApplyMediaSnapshotAsync(MediaSnapshot snapshot)
-    {
-        if (snapshot.Version < _displayedMediaVersion)
-        {
-            return;
-        }
-
-        _displayedMediaVersion = snapshot.Version;
-        _lastArtwork = snapshot.Artwork;
-        TrackTitle.Text = snapshot.Title;
-        TrackArtist.Text = snapshot.Artist;
-        PreviousButton.IsEnabled = snapshot.CanGoPrevious;
-        PlayPauseButton.IsEnabled = snapshot.CanTogglePlayPause;
-        NextButton.IsEnabled = snapshot.CanGoNext;
-        PlayPauseIcon.Symbol = snapshot.IsPlaying ? Symbol.Pause : Symbol.Play;
-        AutomationProperties.SetName(PlayPauseButton, snapshot.IsPlaying ? "Pause" : "Play");
-        ToolTipService.SetToolTip(PlayPauseButton, snapshot.IsPlaying ? "Pause" : "Play");
-        MediaStatus.Text = snapshot.StatusMessage ?? string.Empty;
-        MediaStatus.Visibility = string.IsNullOrEmpty(snapshot.StatusMessage)
-            ? Visibility.Collapsed
-            : Visibility.Visible;
-
-        if (!_showArtwork || snapshot.Artwork is null)
-        {
-            ShowArtworkFallback();
-            return;
-        }
-
-        await ShowArtworkAsync(snapshot.Artwork, snapshot.Version);
-    }
-
-    private async Task ShowArtworkAsync(byte[] artwork, long version)
-    {
-        try
-        {
-            using var stream = new InMemoryRandomAccessStream();
-            using (var writer = new DataWriter(stream))
-            {
-                writer.WriteBytes(artwork);
-                await writer.StoreAsync();
-                writer.DetachStream();
-            }
-
-            stream.Seek(0);
-            var bitmap = new BitmapImage();
-            await bitmap.SetSourceAsync(stream);
-            if (version != _displayedMediaVersion || !_showArtwork)
-            {
-                return;
-            }
-
-            AlbumArtwork.Source = bitmap;
-            AlbumArtwork.Visibility = Visibility.Visible;
-            ArtworkPlaceholder.Visibility = Visibility.Collapsed;
-        }
-        catch (Exception exception) when (exception is ArgumentException or COMException)
-        {
-            if (version == _displayedMediaVersion)
-            {
-                ShowArtworkFallback();
-            }
-        }
-    }
-
-    private void ShowArtworkFallback()
-    {
-        AlbumArtwork.Source = null;
-        AlbumArtwork.Visibility = Visibility.Collapsed;
-        ArtworkPlaceholder.Visibility = Visibility.Visible;
-    }
 
     private void Root_SizeChanged(object sender, SizeChangedEventArgs args)
     {
@@ -560,7 +491,8 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
-        _media.SnapshotChanged -= Media_SnapshotChanged;
+        _closing = true;
+        WidgetHost.Children.Clear();
         _media.Dispose();
         if (DashboardWebView.CoreWebView2 is not null)
         {

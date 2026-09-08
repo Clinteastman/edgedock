@@ -40,3 +40,26 @@ not a requirement to delay the current side-panel iteration.
 
 ## Open decisions
 EdgeDock is a working name selected for the initial folder. First version uses a single saved web page; richer page layouts can follow actual use.
+
+## Widget dashboard iteration
+
+The native area becomes one to three independently swipeable widget panels.
+Each panel has an accessible non-gesture way to change its page. Users can keep
+two native panels beside the web dashboard, or turn off the web area and fill
+the display with native widgets. Settings must prevent an entirely empty layout.
+
+The first widget library contains media, local PC audio volume/mute, and Windows
+Settings shortcuts. Users choose which widgets are available in each panel.
+Widget choices and the selected page survive restart. Existing saved dashboards,
+sign-in profiles, panel placement and artwork preferences must migrate intact.
+
+Widgets should have a small documented registration and lifecycle contract so
+we and contributors can add new native controls independently of the shell.
+An online free widget catalogue and installable third-party packages are future
+work. This iteration must not claim to download or safely sandbox third-party
+code. The local library manages the widgets bundled with EdgeDock.
+
+Preserve the Mica/purple visual identity. Give shell controls their own space so
+they do not cover web content. Check a shallow desktop viewport as well as the
+normal development window. The requested custom windowed title bar may ship in
+this polish pass when it preserves native caption and dragging behaviour.

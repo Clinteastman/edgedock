@@ -55,7 +55,39 @@ Run the settings checks with `dotnet run --project tests/EdgeDock.Checks -c Rele
 For isolated manual tests, set `EDGEDOCK_DATA_DIR` to a temporary directory before
 launching EdgeDock. `tests/keyboard-fixture.html` provides a local Escape counter.
 
-## Manual acceptance checks
+## Widget dashboard validation
+
+Checked on Windows 11 x64 on 8 September 2026:
+
+- Release build completed with zero warnings and errors.
+- Eleven console checks cover old settings, per-panel selections, hidden web,
+  unknown widget IDs, empty layouts, oversized imports and partially null lists.
+- A read-only Core Audio check returned an available named endpoint and a valid
+  volume value. No volume/mute or media playback commands were invoked.
+- A 1707x480 logical preview (150% scale, roughly 2560px wide) showed web plus
+  two native panels. Saving web-hidden mode expanded native panels; changing
+  the count to three created a third panel with a clear empty state.
+- Independent page navigation reached PC shortcuts without changing the other
+  panel. Returning to Media restored the current artwork and metadata.
+- Reopening and saving the library retained the current selected widget ID.
+- Restart retained three panels and hidden web mode in the isolated profile.
+- The initial shallow render exposed clipped media controls. The corrected
+  render kept artwork, title/artist and all playback buttons visible together.
+- Settings scrolls with a fixed Save layout button. The widget library uses
+  readable widget names instead of internal IDs in the selection control.
+- F11 hid the custom title bar; Escape kept full screen active; the on-screen
+  exit restored the title bar and native caption buttons.
+
+Touch swipes use WinUI FlipView but have not yet been exercised on the physical
+Xeneon. Volume writes, OS shortcut launches, HA sign-in and the wider hardware
+compatibility matrix remain untested. Screenshots containing live media stayed
+local. The test app used a separate profile and did not edit the user's layout.
+
+Use EDGEDOCK_PREVIEW_WIDTH and EDGEDOCK_PREVIEW_HEIGHT (logical pixels) with
+EDGEDOCK_DATA_DIR for repeatable development previews; normal launches ignore
+these optional variables when unset.
+
+## Ongoing acceptance checks
 
 - First run gives a clear settings action and does not contact a private server.
 - A valid HTTP/HTTPS address loads; an invalid address is rejected.

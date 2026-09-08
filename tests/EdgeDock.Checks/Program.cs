@@ -50,6 +50,58 @@ try
     var recovered = await new SettingsStore().LoadAsync();
     Check(recovered.DashboardUrl is null && recovered.ShowArtwork,
           "Damaged settings recover without crashing");
+
+    await File.WriteAllTextAsync(file, """{"DashboardUrl":"https://example.com/dashboard","MediaPanelPlacement":"Left","MediaPanelWidth":300,"ShowArtwork":false}""");
+    var upgraded = await new SettingsStore().LoadAsync();
+    Check(upgraded.IsWebVisible && upgraded.WidgetSlots.Count == 1 &&
+          upgraded.WidgetSlots[0].EnabledWidgetIds.Contains("media") &&
+          upgraded.DashboardUrl == "https://example.com/dashboard" && !upgraded.ShowArtwork,
+          "Existing sidebar settings gain a usable widget slot without losing preferences");
+
+    store = new SettingsStore();
+    await store.SaveAsync(upgraded with
+    {
+        IsWebVisible = false,
+        WidgetSlots = new[]
+        {
+            new WidgetSlotSettings(new[] { "media", "audio" }, "audio"),
+            new WidgetSlotSettings(new[] { "system", "future.example.widget" }, "future.example.widget")
+        }
+    });
+    var widgets = await new SettingsStore().LoadAsync();
+    Check(!widgets.IsWebVisible && widgets.WidgetSlots.Count == 2 &&
+          widgets.WidgetSlots[0].SelectedWidgetId == "audio" &&
+          widgets.WidgetSlots[1].SelectedWidgetId == "future.example.widget" &&
+          widgets.DashboardUrl == upgraded.DashboardUrl,
+          "Independent widget choices and hidden web dashboard survive restart");
+    Check(widgets.WidgetSlots[1].EnabledWidgetIds.Contains("future.example.widget"),
+          "Unavailable future widget IDs survive a save and restart");
+
+    var empty = SettingsStore.Normalize(upgraded with
+    {
+        IsWebVisible = false,
+        MediaPanelPlacement = MediaPanelPlacement.Hidden,
+        WidgetSlots = Array.Empty<WidgetSlotSettings>()
+    });
+    Check(empty.IsWebVisible ||
+          (empty.MediaPanelPlacement != MediaPanelPlacement.Hidden &&
+           empty.WidgetSlots.Any(slot => slot.EnabledWidgetIds.Count > 0)),
+          "An all-hidden empty layout always recovers a visible surface");
+
+    var normalized = SettingsStore.Normalize(upgraded with
+    {
+        WidgetSlots = Enumerable.Range(0, 8)
+            .Select(_ => new WidgetSlotSettings(new[] { "audio" }, "missing")).ToArray()
+    });
+    Check(normalized.WidgetSlots.Count is >= 1 and <= 3 &&
+          normalized.WidgetSlots.All(slot => slot.SelectedWidgetId == "audio"),
+          "Oversized imported layouts and missing selections recover consistently");
+
+    await File.WriteAllTextAsync(file, """{"WidgetSlots":[null,{"EnabledWidgetIds":[null,"audio","audio"],"SelectedWidgetId":"missing"}],"IsWebVisible":false}""");
+    var partial = await new SettingsStore().LoadAsync();
+    Check(partial.WidgetSlots.Any(slot => slot.EnabledWidgetIds.Contains("audio")) &&
+          partial.WidgetSlots.All(slot => slot.EnabledWidgetIds.All(id => !string.IsNullOrWhiteSpace(id))),
+          "Partially malformed widget lists preserve usable entries without crashing");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally
