@@ -44,6 +44,7 @@ public sealed partial class MainWindow : Window
     private readonly WidgetRegistry _registry = WidgetRegistry.CreateBuiltIns();
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private bool _closing;
+    private WidgetSlotView? _menuSlot;
     private CompositionRoundedRectangleGeometry? _webClipGeometry;
 
     public MainWindow()
@@ -262,6 +263,7 @@ public sealed partial class MainWindow : Window
 
     private void OpenSettings_Click(object sender, RoutedEventArgs args)
     {
+        AppControlsFlyout.Hide();
         if (SettingsPanel.Visibility == Visibility.Visible)
         {
             SettingsPanel.Visibility = Visibility.Collapsed;
@@ -349,6 +351,7 @@ public sealed partial class MainWindow : Window
 
     private async void ToggleMediaPanel_Click(object sender, RoutedEventArgs args)
     {
+        AppControlsFlyout.Hide();
         if (!_isWebVisible) return;
         if (_mediaPlacement == MediaPanelPlacement.Hidden) _mediaPlacement = _lastVisiblePlacement;
         else { _lastVisiblePlacement = _mediaPlacement; _mediaPlacement = MediaPanelPlacement.Hidden; }
@@ -390,6 +393,8 @@ public sealed partial class MainWindow : Window
 
     private void BuildWidgetSlots()
     {
+        _menuSlot?.SetHeaderActions(null);
+        _menuSlot = null;
         WidgetHost.Children.Clear();
         WidgetHost.ColumnDefinitions.Clear();
         for (var index = 0; index < _widgetSlots.Count; index++)
@@ -431,7 +436,24 @@ public sealed partial class MainWindow : Window
         var label = widgetsVisible ? "Hide widgets" : "Show widgets";
         AutomationProperties.SetName(MediaVisibilityButton, label);
         ToolTipService.SetToolTip(MediaVisibilityButton, _isWebVisible ? label : "Enable the web dashboard before hiding widgets");
-        LayoutSummary.Text = _isWebVisible ? (widgetsVisible ? $"Web + {_widgetSlots.Count} panel{(_widgetSlots.Count == 1 ? "" : "s")}" : "Web dashboard") : "Windows widgets";
+        WidgetVisibilityText.Text = label;
+        MovePanelMenu(widgetsVisible);
+    }
+
+    private void MovePanelMenu(bool widgetsVisible)
+    {
+        var target = widgetsVisible ? WidgetHost.Children.OfType<WidgetSlotView>().FirstOrDefault() : null;
+        if (_menuSlot != target || (target is not null && WebHeaderHost.Content is not null))
+        {
+            _menuSlot?.SetHeaderActions(null);
+            WebHeaderHost.Content = null;
+            _menuSlot = target;
+            if (target is not null) target.SetHeaderActions(PanelMenuButton);
+            else WebHeaderHost.Content = PanelMenuButton;
+        }
+        else if (target is null && WebHeaderHost.Content is null)
+            WebHeaderHost.Content = PanelMenuButton;
+        WebHeaderHost.Visibility = target is null ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void Reload_Click(object sender, RoutedEventArgs args)
@@ -450,6 +472,7 @@ public sealed partial class MainWindow : Window
 
     private void ToggleFullScreen()
     {
+        AppControlsFlyout.Hide();
         if (_isFullScreen)
         {
             AppWindow.SetPresenter(AppWindowPresenterKind.Overlapped);

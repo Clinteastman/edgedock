@@ -7,10 +7,11 @@ large controls. The web page keeps its own appearance.
 ## Shell
 
 A custom 36px windowed title area reveals Mica and retains Windows caption
-buttons and dragging. It disappears in full screen. A separate 52px control
-row keeps widget visibility, full screen and Settings above the content.
-No shell buttons cover the embedded page. F11 toggles full screen; Escape is
-left to active content. The full-screen button always provides a way out.
+buttons and dragging. It disappears in full screen. App controls live in a
+52px menu button in the first visible widget panel's header. The menu contains
+Settings, full screen and widget visibility. In web-only mode it moves into
+the web panel's own header. There is no dashboard-wide utility strip.
+F11 toggles full screen; Escape is left to active content.
 
 ## Layout
 
@@ -21,7 +22,8 @@ area before making native controls narrower than 240px. Outer spacing and gaps
 are 10px. Content corners are 14px.
 
 Each panel shows its widget name, page position and 52px previous/next buttons.
-A native FlipView supplies touch paging. Only the selected widget view is
+A native FlipView supplies touch paging; its duplicate overlay arrows are hidden.
+Only the selected widget view is
 created; switching pages unloads the previous view. Empty and missing widgets
 show an explanation directing the user to Settings.
 

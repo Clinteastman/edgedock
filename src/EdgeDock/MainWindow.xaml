@@ -3,31 +3,38 @@
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:controls="using:EdgeDock.Controls" Title="EdgeDock">
  <Grid x:Name="Root" Background="Transparent" KeyDown="Root_KeyDown" SizeChanged="Root_SizeChanged">
-  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
   <Grid x:Name="AppTitleBar" Height="36" Background="Transparent">
    <StackPanel Orientation="Horizontal" Spacing="10" Margin="18,0,160,0" VerticalAlignment="Center">
     <SymbolIcon Symbol="ViewAll" Foreground="{StaticResource AccentBrush}"/>
     <TextBlock Text="EdgeDock" FontWeight="SemiBold" VerticalAlignment="Center"/>
    </StackPanel>
   </Grid>
-  <Grid Grid.Row="1" Margin="16,4,16,8" Height="52">
-   <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-    <TextBlock Text="Your space" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"/>
-    <TextBlock x:Name="LayoutSummary" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center"/>
-   </StackPanel>
-   <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
-    <Button x:Name="MediaVisibilityButton" Click="ToggleMediaPanel_Click" ToolTipService.ToolTip="Hide widgets" AutomationProperties.Name="Hide widgets" Padding="14,8"><SymbolIcon x:Name="MediaVisibilityIcon" Symbol="ViewAll"/></Button>
-    <Button x:Name="FullScreenButton" Click="FullScreen_Click" AutomationProperties.Name="Enter full screen" ToolTipService.ToolTip="Full screen (F11)">
-     <StackPanel Orientation="Horizontal" Spacing="8"><SymbolIcon x:Name="FullScreenIcon" Symbol="FullScreen"/><TextBlock x:Name="FullScreenText" Text="Full screen"/></StackPanel>
-    </Button>
-    <Button x:Name="SettingsButton" Click="OpenSettings_Click" AutomationProperties.Name="Settings and widget library" ToolTipService.ToolTip="Settings and widget library"><SymbolIcon Symbol="Setting"/></Button>
-   </StackPanel>
-  </Grid>
-  <Grid x:Name="Workspace" Grid.Row="2" Padding="10,0,10,10" ColumnSpacing="10">
+  <Grid x:Name="Workspace" Grid.Row="1" Padding="10" ColumnSpacing="10">
    <Grid.ColumnDefinitions><ColumnDefinition x:Name="WebColumn" Width="*"/><ColumnDefinition x:Name="MediaColumn" Width="340"/></Grid.ColumnDefinitions>
             <Border x:Name="WebSurface" Grid.Column="0" CornerRadius="14" Background="#FF0B0A0E"
                     Loaded="WebSurface_LayoutChanged" SizeChanged="WebSurface_LayoutChanged">
                 <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <ContentControl x:Name="WebHeaderHost" HorizontalContentAlignment="Right" Padding="8,4">
+                        <Button x:Name="PanelMenuButton" Width="52" Height="52" Padding="0" AutomationProperties.Name="App controls" ToolTipService.ToolTip="Settings and full screen">
+                            <SymbolIcon Symbol="Setting"/>
+                            <Button.Flyout>
+                                <Flyout x:Name="AppControlsFlyout" Placement="Bottom">
+                                    <StackPanel Spacing="8">
+                                        <Button x:Name="SettingsButton" Content="Settings and widget library" Click="OpenSettings_Click" HorizontalAlignment="Stretch"/>
+                                        <Button x:Name="FullScreenButton" Click="FullScreen_Click" HorizontalAlignment="Stretch" AutomationProperties.Name="Enter full screen">
+                                            <StackPanel Orientation="Horizontal" Spacing="8"><SymbolIcon x:Name="FullScreenIcon" Symbol="FullScreen"/><TextBlock x:Name="FullScreenText" Text="Full screen"/></StackPanel>
+                                        </Button>
+                                        <Button x:Name="MediaVisibilityButton" Click="ToggleMediaPanel_Click" HorizontalAlignment="Stretch" AutomationProperties.Name="Hide widgets">
+                                            <StackPanel Orientation="Horizontal" Spacing="8"><SymbolIcon x:Name="MediaVisibilityIcon" Symbol="ViewAll"/><TextBlock x:Name="WidgetVisibilityText" Text="Hide widgets"/></StackPanel>
+                                        </Button>
+                                    </StackPanel>
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                    </ContentControl>
+                    <Grid Grid.Row="1">
                     <WebView2 x:Name="DashboardWebView"
                               DefaultBackgroundColor="#0B0A0E"
                               NavigationStarting="DashboardWebView_NavigationStarting"
@@ -53,13 +60,14 @@
                                     Click="Reload_Click" Visibility="Collapsed" />
                         </StackPanel>
                     </Grid>
+                    </Grid>
                 </Grid>
             </Border>
 
 
    <Grid x:Name="WidgetHost" Grid.Column="1" ColumnSpacing="10"/>
   </Grid>
-  <Border x:Name="SettingsPanel" Grid.Row="1" Grid.RowSpan="2" Width="480" HorizontalAlignment="Right" Margin="0,0,10,10" Padding="20" Background="#FA24202E" CornerRadius="14" Visibility="Collapsed">
+  <Border x:Name="SettingsPanel" Grid.Row="1" Width="480" HorizontalAlignment="Right" Margin="0,0,10,10" Padding="20" Background="#FA24202E" CornerRadius="14" Visibility="Collapsed">
    <Grid RowSpacing="12"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <Grid><TextBlock Text="Make it yours" FontSize="24" FontWeight="SemiBold" VerticalAlignment="Center"/><Button HorizontalAlignment="Right" Click="CancelSettings_Click" AutomationProperties.Name="Close settings"><SymbolIcon Symbol="Cancel"/></Button></Grid>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">

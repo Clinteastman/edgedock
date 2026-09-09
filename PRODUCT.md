@@ -63,3 +63,7 @@ Preserve the Mica/purple visual identity. Give shell controls their own space so
 they do not cover web content. Check a shallow desktop viewport as well as the
 normal development window. The requested custom windowed title bar may ship in
 this polish pass when it preserves native caption and dragging behaviour.
+
+The user prefers app controls within the first panel header instead of a separate
+dashboard-wide strip. Keep a single pair of widget navigation arrows per panel;
+hide FlipView's extra overlay arrows while preserving swipe and keyboard paging.

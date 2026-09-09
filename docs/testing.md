@@ -89,6 +89,14 @@ these optional variables when unset.
 
 ## Ongoing acceptance checks
 
+Compact controls update, 9 September 2026: Release build passed with zero
+warnings/errors. Native preview at 1707x480 logical confirmed the separate
+utility strip is gone, the gear menu is inside the first widget header, and
+there are no native FlipView overlay arrows in the accessibility tree. Media
+transport buttons remain visible. Opening Settings and saving rebuilt panels
+kept the menu available; hiding widgets moved it into the web panel's header.
+Physical swipe verification remains pending hardware.
+
 - First run gives a clear settings action and does not contact a private server.
 - A valid HTTP/HTTPS address loads; an invalid address is rejected.
 - A failed navigation gives a readable error and a retry action.

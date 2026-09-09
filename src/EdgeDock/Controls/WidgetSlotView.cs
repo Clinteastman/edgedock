@@ -8,15 +8,19 @@ namespace EdgeDock.Controls;
 
 internal sealed class WidgetSlotView : Grid
 {
-    private readonly FlipView _pages = new();
+    private readonly HeaderNavigationFlipView _pages = new();
     private readonly TextBlock _title = new() { FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
     private readonly TextBlock _position = new() { VerticalAlignment = VerticalAlignment.Center };
+    private readonly ContentControl _headerActions = new() { HorizontalAlignment = HorizontalAlignment.Right };
     private readonly WidgetRegistry _registry;
     private readonly MediaSessionService _media;
     private readonly string[] _ids;
     private readonly bool _showArtwork;
     private readonly List<ContentControl> _containers = [];
     private bool _ready;
+
+    public ContentControl HeaderActions => _headerActions;
+    public void SetHeaderActions(UIElement? content) => _headerActions.Content = content;
 
     public WidgetSlotView(WidgetRegistry registry, MediaSessionService media, WidgetSlotSettings settings, bool showArtwork)
     {
@@ -30,7 +34,8 @@ internal sealed class WidgetSlotView : Grid
         RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var header = new Grid { Margin = new Thickness(10, 8, 10, 4), ColumnSpacing = 4 };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        header.ColumnDefinitions.Add(new ColumnDefinition());
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var previous = new Button { Content = new SymbolIcon(Symbol.Back), Padding = new Thickness(0), Width = 52 };
         var next = new Button { Content = new SymbolIcon(Symbol.Forward), Padding = new Thickness(0), Width = 52 };
@@ -49,7 +54,8 @@ internal sealed class WidgetSlotView : Grid
         heading.Children.Add(_position);
         header.Children.Add(previous);
         Grid.SetColumn(heading, 1); header.Children.Add(heading);
-        Grid.SetColumn(next, 2); header.Children.Add(next);
+        Grid.SetColumn(_headerActions, 2); header.Children.Add(_headerActions);
+        Grid.SetColumn(next, 3); header.Children.Add(next);
         Children.Add(header);
         Grid.SetRow(_pages, 1);
         AutomationProperties.SetName(_pages, "Widget pages");
@@ -107,5 +113,23 @@ internal sealed class WidgetSlotView : Grid
     private void Move(int direction)
     {
         if (_ids.Length > 1) _pages.SelectedIndex = (_pages.SelectedIndex + direction + _ids.Length) % _ids.Length;
+    }
+
+    // Keep native touch/keyboard paging, but use only our panel-header arrows.
+    private sealed class HeaderNavigationFlipView : FlipView
+    {
+        protected override void OnApplyTemplate()
+        {
+            base.OnApplyTemplate();
+            foreach (var name in new[] { "PreviousButtonHorizontal", "NextButtonHorizontal", "PreviousButtonVertical", "NextButtonVertical" })
+            {
+                if (GetTemplateChild(name) is not Button button) continue;
+                button.Visibility = Visibility.Collapsed;
+                button.Width = button.Height = button.MinWidth = button.MinHeight = 0;
+                button.IsHitTestVisible = false;
+                button.IsTabStop = false;
+                AutomationProperties.SetAccessibilityView(button, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
+            }
+        }
     }
 }

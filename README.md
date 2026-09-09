@@ -18,8 +18,8 @@ contribute. This is not a signed installer or a finished consumer release.
 - Places the media panel on the right, on the left, or hides it.
 - Offers a quick show/hide button, adjustable panel width and optional artwork.
 - Provides previous, play/pause and next controls when the player supports them.
-- Switches between windowed and full-screen modes using F11 or Settings.
-- Keeps an on-screen exit button available while in full screen.
+- Switches between windowed and full-screen modes using F11 or the panel menu.
+- Keeps the app menu available while in full screen.
 - Supports one to three native widget panels, with an optional web area.
 - Lets each panel switch between its chosen widgets independently.
 - Includes a local library of media, PC volume/mute and Windows Settings shortcuts.
@@ -50,7 +50,7 @@ runtime limitations are recorded in [the testing notes](docs/testing.md).
 3. Choose the panel position and count in **Settings**. In **Widget library**,
    tick the widgets each panel should contain. Swipe or use its arrows to switch.
 4. Move the window onto your second display and use **F11** or the full-screen
-   control at the top right. Settings stays accessible in full screen.
+   control in the panel's gear menu. The menu stays accessible in full screen.
 
 **Escape belongs to your web page.** EdgeDock does not use it to exit full screen.
 Mica's appearance follows Windows' backdrop behaviour; it falls back to a solid
