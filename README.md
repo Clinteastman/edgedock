@@ -11,7 +11,8 @@ contribute. This is not a signed installer or a finished consumer release.
 
 ## What it does
 
-- Opens a saved web address in an embedded browser.
+- Saves named web cards and shows one or two side by side.
+- Hides web scrollbar bars while retaining page scrolling.
 - Keeps your browser sign-in locally between launches.
 - Shows track and artist information from compatible Windows media players.
 - Displays artwork supplied by the current media player, with a neutral fallback.
@@ -46,10 +47,12 @@ runtime limitations are recorded in [the testing notes](docs/testing.md).
 
 ## First use
 
-1. Open **Settings**, enter your dashboard's full `http://` or `https://` address,
-   and choose **Save layout**, or turn off the web dashboard to use only widgets.
+1. Open **Settings**, add a web card with a name and full `http://` or `https://`
+   address, and choose **Save layout**. Add more cards there when needed.
 2. Sign in through the web page as normal.
-3. Choose the panel count in **EdgeDock controls**, beside the panel selectors.
+3. Choose one or two web panels and the card for each in **EdgeDock controls**.
+   Your existing saved dashboard becomes the first card automatically.
+   Choose the widget panel count beside the widget selectors.
    Choose panel position in **Settings**. In **Widget library**,
    tick the widgets each panel should contain. Swipe to switch, or choose a page
    in the controls drawer.

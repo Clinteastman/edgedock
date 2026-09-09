@@ -22,6 +22,46 @@ try
     Check(legacy.DashboardUrl == "https://example.com/dashboard" && legacy.ShowArtwork &&
           legacy.MediaPanelPlacement == MediaPanelPlacement.Right && legacy.Material == BackdropMaterial.Mica && legacy.BackdropTransparency == 50,
           "Original URL-only settings retain the Mica default");
+    Check(legacy.WebCards is [{ Id: "dashboard", Name: "Dashboard" }] &&
+          legacy.WebPanelCount == 1 && legacy.WebPanelCardIds is ["dashboard"],
+          "Original dashboard URL migrates to a named web card and selected panel");
+
+    var twoCards = SettingsStore.Normalize(legacy with
+    {
+        WebCards =
+        [
+            new WebCardSettings("home", "Home", "https://example.com/home"),
+            new WebCardSettings("energy", "Energy", "http://example.org/energy")
+        ],
+        WebPanelCount = 2,
+        WebPanelCardIds = ["energy", "home"]
+    });
+    await store.SaveAsync(twoCards);
+    var twoCardsRestarted = await new SettingsStore().LoadAsync();
+    Check(twoCardsRestarted.WebCards?.Count == 2 && twoCardsRestarted.WebPanelCount == 2 &&
+          twoCardsRestarted.WebPanelCardIds?.SequenceEqual(["energy", "home"]) == true,
+          "Named web cards, split layout and per-panel choices survive restart");
+
+    var oneVisible = SettingsStore.Normalize(twoCardsRestarted with { WebPanelCount = 1 });
+    Check(oneVisible.WebPanelCount == 1 && oneVisible.WebPanelCardIds?.SequenceEqual(["energy", "home"]) == true,
+          "Hiding the second web panel preserves its selected card");
+
+    var cleanedCards = SettingsStore.Normalize(legacy with
+    {
+        DashboardUrl = null,
+        WebCards =
+        [
+            new WebCardSettings("same", "  First  ", "https://example.com/a"),
+            new WebCardSettings("same", "", "http://example.org/b"),
+            new WebCardSettings("bad", "Blocked", "file:///local/page")
+        ],
+        WebPanelCount = 8,
+        WebPanelCardIds = ["missing", "same"]
+    });
+    Check(cleanedCards.WebCards?.Count == 2 && cleanedCards.WebCards.Select(card => card.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 2 &&
+          cleanedCards.WebCards[0].Name == "First" && cleanedCards.WebCards[1].Name == "example.org" &&
+          cleanedCards.WebPanelCount == 2 && cleanedCards.WebPanelCardIds?.All(id => cleanedCards.WebCards.Any(card => card.Id == id)) == true,
+          "Web card normalization drops unsafe URLs, repairs IDs, names and selections, and limits panels");
 
     await store.SaveAsync(legacy with { Material = BackdropMaterial.Acrylic });
     var acrylic = await new SettingsStore().LoadAsync();
@@ -67,7 +107,7 @@ try
 
     await File.WriteAllTextAsync(file, "{broken");
     var recovered = await new SettingsStore().LoadAsync();
-    Check(recovered.DashboardUrl is null && recovered.ShowArtwork,
+    Check(recovered.DashboardUrl is null && recovered.ShowArtwork && recovered.WebCards is not null && recovered.WebPanelCardIds is not null,
           "Damaged settings recover without crashing");
 
     await File.WriteAllTextAsync(file, """{"DashboardUrl":"https://example.com/dashboard","MediaPanelPlacement":"Left","MediaPanelWidth":300,"ShowArtwork":false}""");

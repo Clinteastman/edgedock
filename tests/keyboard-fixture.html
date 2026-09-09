@@ -3,19 +3,47 @@
 <meta charset="utf-8">
 <title>EdgeDock keyboard test</title>
 <style>
-body { font: 20px system-ui; background: #f4f4f4; color: #151515; padding: 32px; }
+body { font: 20px system-ui; background: #f4f4f4; color: #151515; padding: 32px; min-height: 1800px; }
 input, button { font: inherit; padding: 12px; }
 output { display: block; margin-top: 20px; }
+.scroller { width: min(620px, 80vw); height: 150px; overflow: auto; border: 2px solid #6046b8; background: white; }
+.filler { height: 700px; padding: 12px; background: linear-gradient(#fff, #d8cff9); }
 </style>
 <h1>Keyboard test page</h1>
 <p>Focus the input. F11 should toggle EdgeDock full screen. Escape should reach this page and keep EdgeDock in full screen.</p>
 <label>Page input <input id="input" placeholder="Click here to focus the page"></label>
 <output id="result" aria-live="polite">Escape received: 0</output>
+<p id="document-position">Document scroll: 0</p>
+<h2>Normal overflow area</h2>
+<div id="normal-scroll" class="scroller"><div class="filler">Wheel or touch-scroll inside this area.</div></div>
+<p id="normal-position">Normal area scroll: 0</p>
+<h2>Shadow-root overflow area</h2>
+<shadow-scroll-test id="shadow-test"></shadow-scroll-test>
+<p id="shadow-position">Shadow area scroll: 0</p>
 <script>
 let escapes = 0;
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     document.querySelector('#result').textContent = `Escape received: ${++escapes}`;
+  }
+});
+const normal = document.querySelector('#normal-scroll');
+normal.addEventListener('scroll', () => {
+  document.querySelector('#normal-position').textContent = `Normal area scroll: ${Math.round(normal.scrollTop)}`;
+});
+document.addEventListener('scroll', () => {
+  document.querySelector('#document-position').textContent = `Document scroll: ${Math.round(document.documentElement.scrollTop)}`;
+});
+customElements.define('shadow-scroll-test', class extends HTMLElement {
+  connectedCallback() {
+    const root = this.attachShadow({ mode: 'open' });
+    root.innerHTML = `<style>
+      .scroller { width: min(620px, 80vw); height: 150px; overflow: auto; border: 2px solid #6046b8; background: white; }
+      .filler { height: 700px; padding: 12px; color: #151515; background: linear-gradient(#fff, #d8cff9); }
+    </style><div class="scroller"><div class="filler">This scroll area lives inside an open shadow root.</div></div>`;
+    root.querySelector('.scroller').addEventListener('scroll', event => {
+      document.querySelector('#shadow-position').textContent = `Shadow area scroll: ${Math.round(event.target.scrollTop)}`;
+    });
   }
 });
 </script>

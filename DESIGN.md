@@ -16,11 +16,13 @@ F11 toggles full screen; Escape is left to active content.
 
 ## Layout
 
-The optional web pane sits beside one to three native widget panels, on either
-side. With no web pane, panels divide the available width equally. With web
-content, each panel prefers 240–440 logical pixels; the layout reduces the web
-area before making native controls narrower than 240px. Outer spacing and gaps
-are 10px. Content corners are 14px.
+One or two optional web panels sit beside one to three native widget panels, on
+either side. A web panel shows one named saved card; split web panels may show
+different cards. With no web pane, panels divide the available width equally.
+With web content, each native panel prefers 240–440 logical pixels; the layout
+reduces the web area before making native controls narrower than 240px. Outer
+spacing and gaps are 10px. Content corners are 14px. Hosted page scrollbar
+chrome is hidden without disabling touch, keyboard, or mouse-wheel scrolling.
 
 Panels have no shell header, page counter or navigation arrows. A native
 FlipView supplies touch paging; its overlay arrows are hidden. The drawer's
@@ -48,11 +50,14 @@ Dashboard-only layout controls are unavailable while this mode is active.
 ## Settings and library
 
 Settings is a 480px overlay with a scrollable body and fixed close/save controls.
-It contains web visibility/address, panel placement/width, artwork preference,
-per-panel enabled widgets and selected page. Panel count lives beside the page
-selectors in the controls drawer and applies immediately. The library lists
-bundled widgets and preserves unavailable saved IDs. Save applies the layout;
-Cancel discards draft edits. The layout cannot become entirely empty.
+It contains web visibility and named saved web cards, panel placement/width,
+artwork preference, per-panel enabled widgets and selected page. The controls
+drawer selects one or two visible web panels and their cards; it is the only
+place these quick controls appear. Web cards share the local WebView2 profile,
+so sign-in stays on the computer. Legacy single-address settings migrate to one
+named card. The library lists bundled widgets and preserves unavailable saved
+IDs. Save applies the layout; Cancel discards draft edits. The layout cannot
+become entirely empty.
 
 ## Materials and accessibility
 

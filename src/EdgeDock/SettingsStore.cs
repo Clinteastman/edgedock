@@ -7,6 +7,7 @@ internal enum MediaPanelPlacement { Right, Left, Hidden }
 internal enum BackdropMaterial { Mica, Acrylic }
 
 internal sealed record WidgetSlotSettings(IReadOnlyList<string> EnabledWidgetIds, string? SelectedWidgetId);
+internal sealed record WebCardSettings(string Id, string Name, string Url);
 
 internal sealed record EdgeDockSettings(
     string? DashboardUrl,
@@ -17,7 +18,10 @@ internal sealed record EdgeDockSettings(
     bool IsWebVisible,
     IReadOnlyList<WidgetSlotSettings> WidgetSlots,
     BackdropMaterial Material = BackdropMaterial.Mica,
-    double BackdropTransparency = 50);
+    double BackdropTransparency = 50,
+    IReadOnlyList<WebCardSettings>? WebCards = null,
+    int WebPanelCount = 1,
+    IReadOnlyList<string>? WebPanelCardIds = null);
 
 internal sealed class SettingsStore
 {
@@ -50,6 +54,11 @@ internal sealed class SettingsStore
                 .Where(slot => slot is not null)
                 .Select(slot => new WidgetSlotSettings(slot.EnabledWidgetIds ?? [], slot.SelectedWidgetId))
                 .ToArray() ?? DefaultSlots();
+            var cards = stored?.WebCards is null
+                ? MigrateDashboard(stored?.DashboardUrl)
+                : stored.WebCards.Where(card => card is not null)
+                    .Select(card => new WebCardSettings(card.Id ?? string.Empty, card.Name ?? string.Empty, card.Url ?? string.Empty))
+                    .ToArray();
             return Normalize(new EdgeDockSettings(
                 IsAllowedUrl(stored?.DashboardUrl, out _) ? stored!.DashboardUrl : null,
                 ParsePlacement(stored?.MediaPanelPlacement, MediaPanelPlacement.Right, true),
@@ -58,7 +67,8 @@ internal sealed class SettingsStore
                 stored?.ShowArtwork ?? true,
                 stored?.IsWebVisible ?? true,
                 slots,
-                ParseMaterial(stored?.Material), stored?.BackdropTransparency ?? 50));
+                ParseMaterial(stored?.Material), stored?.BackdropTransparency ?? 50,
+                cards, stored?.WebPanelCount ?? 1, stored?.WebPanelCardIds));
         }
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -85,6 +95,9 @@ internal sealed class SettingsStore
                 IsWebVisible = settings.IsWebVisible,
                 Material = settings.Material.ToString(),
                 BackdropTransparency = settings.BackdropTransparency,
+                WebCards = settings.WebCards!.Select(card => new StoredWebCard { Id = card.Id, Name = card.Name, Url = card.Url }).ToList(),
+                WebPanelCount = settings.WebPanelCount,
+                WebPanelCardIds = settings.WebPanelCardIds!.ToList(),
                 WidgetSlots = settings.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
                 ExtensionData = _extensionData
             };
@@ -104,14 +117,59 @@ internal sealed class SettingsStore
     {
         var slots = (value.WidgetSlots ?? []).Where(slot => slot is not null).Take(3).Select(NormalizeSlot).ToList();
         if (slots.Count == 0) slots.AddRange(DefaultSlots());
+        var cards = NormalizeWebCards(value.WebCards ?? MigrateDashboard(value.DashboardUrl));
+        var panelCount = cards.Count >= 2 ? Math.Clamp(value.WebPanelCount, 1, 2) : 1;
+        var requestedSelections = value.WebPanelCardIds ?? [];
+        // Keep both choices while only one panel is visible, so restoring the split view
+        // also restores the page that was previously shown in its second panel.
+        var selectionCount = cards.Count >= 2 ? 2 : 1;
+        var selections = Enumerable.Range(0, selectionCount)
+            .Select(index => cards.FirstOrDefault(card => string.Equals(card.Id, requestedSelections.ElementAtOrDefault(index), StringComparison.OrdinalIgnoreCase))?.Id
+                ?? cards.ElementAtOrDefault(index)?.Id
+                ?? cards.FirstOrDefault()?.Id
+                ?? string.Empty)
+            .ToArray();
         var hasWidgets = slots.Any(slot => slot.EnabledWidgetIds.Count > 0);
         var placement = value.MediaPanelPlacement;
         if (!value.IsWebVisible && !hasWidgets) slots[0] = new WidgetSlotSettings(["media"], "media");
         if (!value.IsWebVisible && placement == MediaPanelPlacement.Hidden)
             placement = value.LastVisibleMediaPanelPlacement is MediaPanelPlacement.Left or MediaPanelPlacement.Right
                 ? value.LastVisibleMediaPanelPlacement : MediaPanelPlacement.Right;
-        return value with { MediaPanelPlacement = placement, LastVisibleMediaPanelPlacement = value.LastVisibleMediaPanelPlacement is MediaPanelPlacement.Left or MediaPanelPlacement.Right ? value.LastVisibleMediaPanelPlacement : MediaPanelPlacement.Right, MediaPanelWidth = Math.Clamp(value.MediaPanelWidth, 240, 440), WidgetSlots = slots, Material = Enum.IsDefined(value.Material) ? value.Material : BackdropMaterial.Mica, BackdropTransparency = double.IsFinite(value.BackdropTransparency) ? Math.Clamp(value.BackdropTransparency, 0, 100) : 50 };
+        return value with
+        {
+            DashboardUrl = cards.FirstOrDefault()?.Url,
+            MediaPanelPlacement = placement,
+            LastVisibleMediaPanelPlacement = value.LastVisibleMediaPanelPlacement is MediaPanelPlacement.Left or MediaPanelPlacement.Right ? value.LastVisibleMediaPanelPlacement : MediaPanelPlacement.Right,
+            MediaPanelWidth = Math.Clamp(value.MediaPanelWidth, 240, 440),
+            WidgetSlots = slots,
+            Material = Enum.IsDefined(value.Material) ? value.Material : BackdropMaterial.Mica,
+            BackdropTransparency = double.IsFinite(value.BackdropTransparency) ? Math.Clamp(value.BackdropTransparency, 0, 100) : 50,
+            WebCards = cards,
+            WebPanelCount = panelCount,
+            WebPanelCardIds = selections
+        };
     }
+
+    private static IReadOnlyList<WebCardSettings> NormalizeWebCards(IReadOnlyList<WebCardSettings> source)
+    {
+        var cards = new List<WebCardSettings>();
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in source.Where(card => card is not null))
+        {
+            if (!IsAllowedUrl(candidate.Url, out var uri) || uri is null) continue;
+            var baseId = string.IsNullOrWhiteSpace(candidate.Id) ? $"card-{cards.Count + 1}" : candidate.Id.Trim();
+            var id = baseId;
+            for (var suffix = 2; !ids.Add(id); suffix++) id = $"{baseId}-{suffix}";
+            var name = string.IsNullOrWhiteSpace(candidate.Name) ? uri.Host : candidate.Name.Trim();
+            cards.Add(new WebCardSettings(id, name, uri.AbsoluteUri));
+        }
+        return cards;
+    }
+
+    private static IReadOnlyList<WebCardSettings> MigrateDashboard(string? dashboardUrl) =>
+        IsAllowedUrl(dashboardUrl, out var uri) && uri is not null
+            ? [new WebCardSettings("dashboard", "Dashboard", uri.AbsoluteUri)]
+            : [];
 
     private static WidgetSlotSettings NormalizeSlot(WidgetSlotSettings slot)
     {
@@ -130,7 +188,7 @@ internal sealed class SettingsStore
     private static MediaPanelPlacement ParsePlacement(string? value, MediaPanelPlacement fallback, bool allowHidden) => Enum.TryParse<MediaPanelPlacement>(value, true, out var parsed) && Enum.IsDefined(parsed) && (allowHidden || parsed != MediaPanelPlacement.Hidden) ? parsed : fallback;
     private static BackdropMaterial ParseMaterial(string? value) => Enum.TryParse<BackdropMaterial>(value, true, out var parsed) && Enum.IsDefined(parsed) ? parsed : BackdropMaterial.Mica;
     private static WidgetSlotSettings[] DefaultSlots() => [new(["media", "audio", "pc"], "media")];
-    private static EdgeDockSettings Defaults() => new(null, MediaPanelPlacement.Right, MediaPanelPlacement.Right, 340, true, true, DefaultSlots());
+    private static EdgeDockSettings Defaults() => Normalize(new(null, MediaPanelPlacement.Right, MediaPanelPlacement.Right, 340, true, true, DefaultSlots()));
 
     private sealed class StoredSettings
     {
@@ -142,6 +200,9 @@ internal sealed class SettingsStore
         public bool? IsWebVisible { get; set; }
         public string? Material { get; set; }
         public double? BackdropTransparency { get; set; }
+        public List<StoredWebCard>? WebCards { get; set; }
+        public int? WebPanelCount { get; set; }
+        public List<string>? WebPanelCardIds { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }
         [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; }
     }
@@ -150,5 +211,12 @@ internal sealed class SettingsStore
     {
         public List<string>? EnabledWidgetIds { get; set; }
         public string? SelectedWidgetId { get; set; }
+    }
+
+    private sealed class StoredWebCard
+    {
+        public string? Id { get; set; }
+        public string? Name { get; set; }
+        public string? Url { get; set; }
     }
 }

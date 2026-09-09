@@ -14,33 +14,7 @@
    <Grid.ColumnDefinitions><ColumnDefinition x:Name="WebColumn" Width="*"/><ColumnDefinition x:Name="MediaColumn" Width="340"/></Grid.ColumnDefinitions>
             <Border x:Name="WebSurface" Grid.Column="0" CornerRadius="14" Background="#FF0B0A0E"
                     Loaded="WebSurface_LayoutChanged" SizeChanged="WebSurface_LayoutChanged">
-                <Grid>
-                    <WebView2 x:Name="DashboardWebView"
-                              DefaultBackgroundColor="#0B0A0E"
-                              NavigationStarting="DashboardWebView_NavigationStarting"
-                              NavigationCompleted="DashboardWebView_NavigationCompleted" />
-
-                    <Grid x:Name="SetupState" Background="{StaticResource ShellBrush}" Visibility="Collapsed">
-                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="560" Spacing="14">
-                            <SymbolIcon Symbol="World" Foreground="{StaticResource AccentBrush}" Width="48" Height="48" />
-                            <TextBlock Text="Choose a dashboard" FontSize="32" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                            <TextBlock Text="Add the web address for the page you want EdgeDock to show. Your sign-in stays on this computer."
-                                       Foreground="{StaticResource MutedTextBrush}" FontSize="18" TextWrapping="Wrap" TextAlignment="Center" />
-                            <Button Content="Open settings" HorizontalAlignment="Center" Click="OpenSettings_Click" />
-                        </StackPanel>
-                    </Grid>
-
-                    <Grid x:Name="WebStatusState" Background="#E6111016" Visibility="Collapsed">
-                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="620" Spacing="12">
-                            <ProgressRing x:Name="LoadingRing" IsActive="False" Width="42" Height="42" Foreground="{StaticResource AccentBrush}" />
-                            <TextBlock x:Name="WebStatusTitle" Text="Loading dashboard" FontSize="26" FontWeight="SemiBold" TextAlignment="Center" />
-                            <TextBlock x:Name="WebStatusMessage" Foreground="{StaticResource MutedTextBrush}" FontSize="17"
-                                       TextWrapping="Wrap" TextAlignment="Center" />
-                            <Button x:Name="RetryButton" Content="Try again" HorizontalAlignment="Center"
-                                    Click="Reload_Click" Visibility="Collapsed" />
-                        </StackPanel>
-                    </Grid>
-                </Grid>
+                <Grid x:Name="WebHost" ColumnSpacing="10" />
             </Border>
 
 
@@ -90,6 +64,13 @@
         <StackPanel Orientation="Horizontal" Spacing="8"><SymbolIcon x:Name="FullScreenIcon" Symbol="FullScreen"/><TextBlock x:Name="FullScreenText" Text="Full screen"/></StackPanel>
        </Button>
        <StackPanel x:Name="DashboardControls" Spacing="14">
+        <TextBlock Text="Web cards" FontSize="18" FontWeight="SemiBold"/>
+        <ComboBox x:Name="WebPanelCountSelector" Header="Web panels" HorizontalAlignment="Stretch" MinHeight="52"
+                  AutomationProperties.Name="Number of web panels" SelectionChanged="WebPanelCountSelector_SelectionChanged">
+         <ComboBoxItem Content="1"/><ComboBoxItem Content="2"/>
+        </ComboBox>
+        <StackPanel x:Name="WebPanelSelectors" Spacing="12"/>
+        <Button x:Name="ReloadButton" Content="Reload visible web pages" Click="Reload_Click" HorizontalAlignment="Stretch"/>
         <Button x:Name="MediaVisibilityButton" Click="ToggleMediaPanel_Click" HorizontalAlignment="Stretch" MinHeight="52" AutomationProperties.Name="Hide widgets">
          <StackPanel Orientation="Horizontal" Spacing="8"><SymbolIcon x:Name="MediaVisibilityIcon" Symbol="ViewAll"/><TextBlock x:Name="WidgetVisibilityText" Text="Hide widgets"/></StackPanel>
         </Button>
@@ -120,8 +101,9 @@
       <TextBlock x:Name="BackdropHelpText" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
       <TextBlock Text="Dashboard" FontSize="18" FontWeight="SemiBold"/>
       <ToggleSwitch x:Name="WebVisibleToggle" Header="Show web dashboard" AutomationProperties.Name="Show web dashboard"/>
-      <TextBox x:Name="UrlTextBox" Header="Web address" PlaceholderText="https://example.com" AutomationProperties.Name="Dashboard web address" KeyDown="UrlTextBox_KeyDown"/>
-      <Button x:Name="ReloadButton" Content="Reload page" Click="Reload_Click" IsEnabled="False" HorizontalAlignment="Left"/>
+      <TextBlock Text="Save pages by name, then choose what each web panel shows from EdgeDock controls. Scrollbars are hidden inside pages; touch and mouse-wheel scrolling remain available."
+                 TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
+      <controls:WebCardEditor x:Name="WebCardEditor"/>
       <ComboBox x:Name="PlacementComboBox" Header="Widgets beside the web page" MinHeight="52" HorizontalAlignment="Stretch" AutomationProperties.Name="Widget placement"><ComboBoxItem Content="Right"/><ComboBoxItem Content="Left"/><ComboBoxItem Content="Hidden"/></ComboBox>
       <Grid><TextBlock Text="Width of each widget"/><TextBlock x:Name="PanelWidthText" HorizontalAlignment="Right"/></Grid>
       <Slider x:Name="PanelWidthSlider" Minimum="240" Maximum="440" StepFrequency="10" Value="340" ValueChanged="PanelWidthSlider_ValueChanged" AutomationProperties.Name="Widget width"/>

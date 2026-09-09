@@ -13,7 +13,7 @@ A touch dashboard for owners of wide secondary displays, initially the Corsair X
 
 ## Capabilities and constraints
 - Full-screen mode with an obvious way out, usable on any monitor.
-- Embedded user-configured web page, initially Home Assistant; retain sign-in locally.
+- One or two embedded, named user-configured web cards, initially Home Assistant; retain sign-in locally in the shared WebView2 profile.
 - Native Windows media information and playback controls.
 - Main web area beside a media panel with artwork and playback controls, inspired by Android Auto's split-screen arrangement.
 - Media panel placement is configurable: right, left or hidden. Settings is at the top right; utility controls belong in settings rather than a permanent bottom bar.
@@ -39,7 +39,16 @@ accessible controls. It disappears in full screen. This is a later polish pass,
 not a requirement to delay the current side-panel iteration.
 
 ## Open decisions
-EdgeDock is a working name selected for the initial folder. First version uses a single saved web page; richer page layouts can follow actual use.
+EdgeDock is a working name selected for the initial folder. More than two web
+cards at once can follow actual use.
+
+## Web cards
+
+Settings saves HTTP/HTTPS pages by name. The controls drawer selects the card
+in each visible web panel and switches between one and two panels without
+reserving a permanent toolbar. Existing single-dashboard settings migrate to a
+named card. Scrollbar chrome is hidden in hosted pages while normal page
+scrolling remains available.
 
 ## Widget dashboard iteration
 

@@ -1,5 +1,27 @@
 # Testing
 
+## Web cards (9 September 2026)
+
+- Release x64 build completed with zero warnings/errors; 19 settings checks
+  passed.
+- In an isolated local-fixture profile, first run showed the web-card setup;
+  Settings and drawer controls rendered. Two named cards were supplied through
+  the isolated profile and rendered side by side. No permanent toolbar was added.
+- The fixture rendered in both panels. Saved cards and the selected cards are
+  retained by the local profile; legacy single-dashboard settings migrate to a
+  named card.
+- Hosted scrollbar chrome was hidden. Keyboard PageDown moved both the document
+  (0 to 130) and an inner scroller (0 to 150). One mouse-wheel document movement
+  was observed, but the automation input is not reliable enough to count as
+  comprehensive mouse-wheel validation. The user reports normal wheel scrolling
+  working.
+- The final `artifacts/latest` build also hid the late-created shadow-root
+  scrollbar after its contents were replaced; PageDown moved its scroll counter
+  from 0 to 26. Physical Xeneon touch and Home Assistant sign-in remain separate.
+- Full end-to-end card editing and drawer/widget-view return wheel behaviour
+  remain manual follow-up checks; settings migration and selection persistence
+  are covered by the console checks.
+
 ## Controls drawer, Widget view and appearance (9 September 2026)
 
 - Release x64 build passed with zero warnings/errors; 13 settings checks pass.

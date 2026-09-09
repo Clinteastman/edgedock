@@ -29,7 +29,11 @@ public sealed partial class MainWindow : Window
     private readonly SettingsStore _settings = new();
     private readonly MediaSessionService _media = new();
     private readonly GetMessageHookProc _messageHookCallback;
-    private Uri? _dashboardUri;
+    private CoreWebView2Environment? _webEnvironment;
+    private IReadOnlyList<WebCardSettings> _webCards = [];
+    private int _webPanelCount = 1;
+    private IReadOnlyList<string> _webPanelCardIds = [string.Empty];
+    private readonly List<WebPanelView> _webPanels = [];
     private IntPtr _windowHandle;
     private IntPtr _messageHook;
     private MediaPanelPlacement _mediaPlacement = MediaPanelPlacement.Right;
@@ -46,9 +50,11 @@ public sealed partial class MainWindow : Window
     private IReadOnlyList<WidgetSlotSettings> _widgetSlots = [new(["media"], "media")];
     private readonly WidgetRegistry _registry = WidgetRegistry.CreateBuiltIns();
     private readonly SemaphoreSlim _saveGate = new(1, 1);
+    private readonly SemaphoreSlim _webPanelGate = new(1, 1);
     private bool _closing;
     private Control? _controlsFocusReturn;
     private bool _updatingPanelCount;
+    private bool _updatingWebPanelCount;
     private CompositionRoundedRectangleGeometry? _webClipGeometry;
 
     public MainWindow()
@@ -100,97 +106,70 @@ public sealed partial class MainWindow : Window
         _showArtwork = settings.ShowArtwork;
         _isWebVisible = settings.IsWebVisible;
         _widgetSlots = settings.WidgetSlots;
+        _webCards = settings.WebCards!;
+        _webPanelCount = settings.WebPanelCount;
+        _webPanelCardIds = settings.WebPanelCardIds!;
         BuildWidgetSlots();
+        await BuildWebPanelsAsync();
         ApplyMediaLayout();
         UpdateSettingsControls();
-
-        if (settings.DashboardUrl is null)
-        {
-            ShowSetup();
-            return;
-        }
-
-        UrlTextBox.Text = settings.DashboardUrl;
-        _dashboardUri = new Uri(settings.DashboardUrl);
-        if (_isWebVisible) await NavigateAsync(_dashboardUri);
     }
 
-    private async Task EnsureWebViewAsync()
+    private async Task<CoreWebView2Environment> GetWebEnvironmentAsync()
     {
-        if (DashboardWebView.CoreWebView2 is not null)
-        {
-            return;
-        }
-
-        var environment = await CoreWebView2Environment.CreateWithOptionsAsync(null, _settings.WebViewProfilePath, null);
-        await DashboardWebView.EnsureCoreWebView2Async(environment);
-        var core = DashboardWebView.CoreWebView2
-            ?? throw new InvalidOperationException("WebView2 initialization completed without a core instance.");
-        core.Settings.IsStatusBarEnabled = false;
-        core.Settings.AreDevToolsEnabled = false;
-        DashboardWebView.CoreProcessFailed += DashboardWebView_CoreProcessFailed;
+        _webEnvironment ??= await CoreWebView2Environment.CreateWithOptionsAsync(null, _settings.WebViewProfilePath, null);
+        return _webEnvironment;
     }
 
-    private async Task NavigateAsync(Uri uri)
+    private async Task BuildWebPanelsAsync()
     {
-        _dashboardUri = uri;
-        SetupState.Visibility = Visibility.Collapsed;
-        ShowWebStatus("Opening dashboard", uri.Host, true, false);
-
+        await _webPanelGate.WaitAsync();
         try
         {
-            await EnsureWebViewAsync();
-            DashboardWebView.Source = uri;
-            ReloadButton.IsEnabled = true;
+            if (_closing) return;
+            var visibleCount = _isWebVisible ? _webPanelCount : 0;
+            while (_webPanels.Count > visibleCount)
+            {
+                var last = _webPanels[^1];
+                WebHost.Children.Remove(last);
+                WebHost.ColumnDefinitions.RemoveAt(WebHost.ColumnDefinitions.Count - 1);
+                _webPanels.RemoveAt(_webPanels.Count - 1);
+                last.Dispose();
+            }
+            while (_webPanels.Count < visibleCount)
+            {
+                var panel = new WebPanelView(BuildWebPanelsAsync);
+                WebHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                Grid.SetColumn(panel, _webPanels.Count);
+                _webPanels.Add(panel);
+                WebHost.Children.Add(panel);
+            }
+            ReloadButton.IsEnabled = visibleCount > 0 && _webCards.Count > 0;
+            if (visibleCount == 0) return;
+
+            if (_webCards.Count == 0)
+            {
+                foreach (var panel in _webPanels) panel.ShowSetup();
+                return;
+            }
+
+            CoreWebView2Environment environment;
+            try { environment = await GetWebEnvironmentAsync(); }
+            catch (Exception exception) when (exception is InvalidOperationException or UnauthorizedAccessException or COMException)
+            {
+                foreach (var panel in _webPanels) panel.ShowUnavailable();
+                return;
+            }
+            for (var index = 0; index < _webPanels.Count; index++)
+            {
+                var selectedId = _webPanelCardIds.ElementAtOrDefault(index);
+                var card = _webCards.FirstOrDefault(item => string.Equals(item.Id, selectedId, StringComparison.OrdinalIgnoreCase))
+                    ?? _webCards.ElementAtOrDefault(index)
+                    ?? _webCards[0];
+                await _webPanels[index].ShowCardAsync(card, environment);
+            }
         }
-        catch (Exception exception) when (exception is InvalidOperationException or UnauthorizedAccessException or COMException)
-        {
-            ShowWebStatus(
-                "Dashboard could not open",
-                "Check that the Microsoft Edge WebView2 Runtime is installed, then try again.",
-                false,
-                true);
-        }
-    }
-
-    private void DashboardWebView_NavigationStarting(WebView2 sender, CoreWebView2NavigationStartingEventArgs args)
-    {
-        if (!SettingsStore.IsAllowedUrl(args.Uri, out _))
-        {
-            args.Cancel = true;
-            ShowWebStatus("Link blocked", "EdgeDock only opens http and https web addresses.", false, true);
-            return;
-        }
-
-        ShowWebStatus(
-            "Loading dashboard",
-            Uri.TryCreate(args.Uri, UriKind.Absolute, out var uri) ? uri.Host : string.Empty,
-            true,
-            false);
-    }
-
-    private void DashboardWebView_NavigationCompleted(WebView2 sender, CoreWebView2NavigationCompletedEventArgs args)
-    {
-        if (args.IsSuccess)
-        {
-            WebStatusState.Visibility = Visibility.Collapsed;
-            return;
-        }
-
-        ShowWebStatus(
-            "Dashboard did not load",
-            $"WebView reported {args.WebErrorStatus}. Check the address and connection, then try again.",
-            false,
-            true);
-    }
-
-    private void DashboardWebView_CoreProcessFailed(WebView2 sender, CoreWebView2ProcessFailedEventArgs args)
-    {
-        DispatcherQueue.TryEnqueue(() => ShowWebStatus(
-            "Dashboard process stopped",
-            "Reload the page. Your saved address and sign-in have not been removed.",
-            false,
-            true));
+        finally { _webPanelGate.Release(); }
     }
 
     private void InstallMessageHook()
@@ -234,24 +213,6 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void ShowSetup()
-    {
-        _dashboardUri = null;
-        SetupState.Visibility = Visibility.Visible;
-        WebStatusState.Visibility = Visibility.Collapsed;
-        ReloadButton.IsEnabled = false;
-    }
-
-    private void ShowWebStatus(string title, string message, bool loading, bool retry)
-    {
-        WebStatusTitle.Text = title;
-        WebStatusMessage.Text = message;
-        LoadingRing.IsActive = loading;
-        LoadingRing.Visibility = loading ? Visibility.Visible : Visibility.Collapsed;
-        RetryButton.Visibility = retry ? Visibility.Visible : Visibility.Collapsed;
-        WebStatusState.Visibility = Visibility.Visible;
-    }
-
     private void WebSurface_LayoutChanged(object sender, RoutedEventArgs args)
     {
         var visual = ElementCompositionPreview.GetElementVisual(WebSurface);
@@ -275,12 +236,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        UrlTextBox.Text = _dashboardUri?.AbsoluteUri ?? UrlTextBox.Text;
         UrlErrorText.Visibility = Visibility.Collapsed;
         UpdateSettingsControls();
         SettingsPanel.Visibility = Visibility.Visible;
-        UrlTextBox.Focus(FocusState.Programmatic);
-        UrlTextBox.SelectAll();
     }
 
     private void CancelSettings_Click(object sender, RoutedEventArgs args)
@@ -291,21 +249,11 @@ public sealed partial class MainWindow : Window
 
     private async void SaveSettings_Click(object sender, RoutedEventArgs args) => await SaveAndNavigateAsync();
 
-    private async void UrlTextBox_KeyDown(object sender, KeyRoutedEventArgs args)
-    {
-        if (args.Key == VirtualKey.Enter)
-        {
-            args.Handled = true;
-            await SaveAndNavigateAsync();
-        }
-    }
-
     private async Task SaveAndNavigateAsync()
     {
-        Uri? uri = null;
-        if (!string.IsNullOrWhiteSpace(UrlTextBox.Text) && !SettingsStore.IsAllowedUrl(UrlTextBox.Text, out uri))
+        if (!WebCardEditor.TryGetCards(out var cards, out var cardError))
         {
-            UrlErrorText.Text = "Enter a complete http or https web address, or leave it empty.";
+            UrlErrorText.Text = cardError;
             UrlErrorText.Visibility = Visibility.Visible;
             return;
         }
@@ -315,11 +263,11 @@ public sealed partial class MainWindow : Window
             2 => MediaPanelPlacement.Hidden,
             _ => MediaPanelPlacement.Right
         };
-        var settings = SettingsStore.Normalize(new EdgeDockSettings(uri?.AbsoluteUri, placement,
+        var settings = SettingsStore.Normalize(new EdgeDockSettings(cards.FirstOrDefault()?.Url, placement,
             placement == MediaPanelPlacement.Hidden ? _lastVisiblePlacement : placement,
             PanelWidthSlider.Value, ArtworkToggle.IsOn, WebVisibleToggle.IsOn, LibraryEditor.GetSlots(),
             MaterialSelector.SelectedIndex == 1 ? BackdropMaterial.Acrylic : BackdropMaterial.Mica,
-            BackdropTransparencySlider.Value));
+            BackdropTransparencySlider.Value, cards, _webPanelCount, _webPanelCardIds));
         if (!await PersistAsync(settings)) return;
         _material = settings.Material;
         _backdropTransparency = settings.BackdropTransparency;
@@ -330,14 +278,14 @@ public sealed partial class MainWindow : Window
         _showArtwork = settings.ShowArtwork;
         _isWebVisible = settings.IsWebVisible;
         _widgetSlots = settings.WidgetSlots;
-        var previousUri = _dashboardUri;
-        _dashboardUri = uri;
+        _webCards = settings.WebCards!;
+        _webPanelCount = settings.WebPanelCount;
+        _webPanelCardIds = settings.WebPanelCardIds!;
         BuildWidgetSlots();
+        await BuildWebPanelsAsync();
         ApplyMediaLayout();
         SettingsPanel.Visibility = Visibility.Collapsed;
         UrlErrorText.Visibility = Visibility.Collapsed;
-        if (_dashboardUri is null) ShowSetup();
-        else if (_isWebVisible && (previousUri != uri || DashboardWebView.CoreWebView2 is null)) await NavigateAsync(_dashboardUri);
     }
 
     private async Task<bool> PersistAsync(EdgeDockSettings settings, bool alreadyApplied = false)
@@ -370,7 +318,7 @@ public sealed partial class MainWindow : Window
     }
 
     private EdgeDockSettings CurrentSettings() => new(
-        _dashboardUri?.AbsoluteUri,
+        _webCards.FirstOrDefault()?.Url,
         _mediaPlacement,
         _lastVisiblePlacement,
         _configuredPanelWidth,
@@ -378,7 +326,10 @@ public sealed partial class MainWindow : Window
         _isWebVisible,
         _widgetSlots,
         _material,
-        _backdropTransparency);
+        _backdropTransparency,
+        _webCards,
+        _webPanelCount,
+        _webPanelCardIds);
 
     private void ApplyBackdrop()
     {
@@ -404,6 +355,7 @@ public sealed partial class MainWindow : Window
         PanelWidthText.Text = $"{_configuredPanelWidth:0} px";
         ArtworkToggle.IsOn = _showArtwork;
         WebVisibleToggle.IsOn = _isWebVisible;
+        WebCardEditor.LoadCards(_webCards);
         LibraryEditor.LoadSlots(_widgetSlots, _registry);
     }
 
@@ -508,16 +460,83 @@ public sealed partial class MainWindow : Window
     {
         if (ControlsOverlay.Visibility == Visibility.Visible) return;
         _controlsFocusReturn = FocusManager.GetFocusedElement(Root.XamlRoot) as Control;
-        if (!_isWidgetView) BuildPanelSelectors();
+        if (!_isWidgetView)
+        {
+            BuildWebPanelSelectors();
+            BuildPanelSelectors();
+        }
         DashboardControls.Visibility = _isWidgetView ? Visibility.Collapsed : Visibility.Visible;
         WidgetViewText.Text = _isWidgetView ? "Back to dashboard" : "Widget view";
         AutomationProperties.SetName(WidgetViewButton, WidgetViewText.Text);
         ControlsOverlay.Visibility = Visibility.Visible;
         Workspace.IsHitTestVisible = false;
         ControlHandle.IsEnabled = false;
-        DashboardWebView.IsHitTestVisible = false;
-        DashboardWebView.IsTabStop = false;
+        foreach (var panel in _webPanels) panel.SetInteractive(false);
         CloseControlsButton.Focus(FocusState.Programmatic);
+    }
+
+    private void BuildWebPanelSelectors()
+    {
+        _updatingWebPanelCount = true;
+        WebPanelCountSelector.SelectedIndex = _webPanelCount - 1;
+        _updatingWebPanelCount = false;
+        WebPanelCountSelector.IsEnabled = _isWebVisible && _webCards.Count >= 2;
+        WebPanelSelectors.Children.Clear();
+        for (var index = 0; index < _webPanelCount; index++)
+        {
+            var selector = new ComboBox
+            {
+                Header = $"Web panel {index + 1}",
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                MinHeight = 52,
+                Tag = index,
+                IsEnabled = _isWebVisible && _webCards.Count > 1
+            };
+            AutomationProperties.SetName(selector, $"Web card shown in panel {index + 1}");
+            foreach (var card in _webCards)
+                selector.Items.Add(new ComboBoxItem { Content = card.Name, Tag = card.Id });
+            selector.SelectedItem = selector.Items.Cast<ComboBoxItem>().FirstOrDefault(item =>
+                string.Equals(item.Tag as string, _webPanelCardIds.ElementAtOrDefault(index), StringComparison.OrdinalIgnoreCase));
+            selector.SelectionChanged += WebPanelSelector_SelectionChanged;
+            WebPanelSelectors.Children.Add(selector);
+        }
+    }
+
+    private async void WebPanelSelector_SelectionChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (sender is not ComboBox { SelectedItem: ComboBoxItem item, Tag: int index } || item.Tag is not string id) return;
+        var selections = _webPanelCardIds.ToList();
+        while (selections.Count < 2) selections.Add(_webCards.ElementAtOrDefault(selections.Count)?.Id ?? id);
+        if (string.Equals(selections[index], id, StringComparison.OrdinalIgnoreCase)) return;
+        selections[index] = id;
+        var candidate = SettingsStore.Normalize(CurrentSettings() with { WebPanelCardIds = selections });
+        if (!await PersistAsync(candidate))
+        {
+            BuildWebPanelSelectors();
+            CloseControlsDrawer(restoreFocus: false);
+            return;
+        }
+        _webPanelCardIds = candidate.WebPanelCardIds!;
+        await BuildWebPanelsAsync();
+    }
+
+    private async void WebPanelCountSelector_SelectionChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (_updatingWebPanelCount || WebPanelCountSelector.SelectedIndex < 0) return;
+        var count = WebPanelCountSelector.SelectedIndex + 1;
+        if (count == _webPanelCount || count > _webCards.Count) return;
+        var candidate = SettingsStore.Normalize(CurrentSettings() with { WebPanelCount = count });
+        if (!await PersistAsync(candidate))
+        {
+            BuildWebPanelSelectors();
+            CloseControlsDrawer(restoreFocus: false);
+            return;
+        }
+        _webPanelCount = candidate.WebPanelCount;
+        _webPanelCardIds = candidate.WebPanelCardIds!;
+        await BuildWebPanelsAsync();
+        BuildWebPanelSelectors();
+        ApplyMediaLayout();
     }
 
     private void BuildPanelSelectors()
@@ -583,8 +602,7 @@ public sealed partial class MainWindow : Window
         ControlsOverlay.Visibility = Visibility.Collapsed;
         Workspace.IsHitTestVisible = true;
         ControlHandle.IsEnabled = true;
-        DashboardWebView.IsHitTestVisible = !_isWidgetView;
-        DashboardWebView.IsTabStop = !_isWidgetView;
+        foreach (var panel in _webPanels) panel.SetInteractive(!_isWidgetView);
         if (restoreFocus)
         {
             if (_controlsFocusReturn is null || !_controlsFocusReturn.Focus(FocusState.Programmatic))
@@ -641,14 +659,7 @@ public sealed partial class MainWindow : Window
 
     private void Reload_Click(object sender, RoutedEventArgs args)
     {
-        if (DashboardWebView.CoreWebView2 is not null)
-        {
-            DashboardWebView.Reload();
-        }
-        else if (_dashboardUri is not null)
-        {
-            _ = NavigateAsync(_dashboardUri);
-        }
+        foreach (var panel in _webPanels) panel.Reload();
     }
 
     private void FullScreen_Click(object sender, RoutedEventArgs args) => ToggleFullScreen();
@@ -701,11 +712,8 @@ public sealed partial class MainWindow : Window
         WidgetGalleryRow.Children.Clear();
         WidgetHost.Children.Clear();
         _media.Dispose();
-        if (DashboardWebView.CoreWebView2 is not null)
-        {
-            DashboardWebView.CoreProcessFailed -= DashboardWebView_CoreProcessFailed;
-            DashboardWebView.Close();
-        }
+        foreach (var panel in _webPanels) panel.Dispose();
+        _webPanels.Clear();
 
         if (_messageHook != IntPtr.Zero)
         {
