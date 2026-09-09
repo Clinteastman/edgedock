@@ -8,7 +8,7 @@ namespace EdgeDock.Controls;
 
 internal sealed class WidgetSlotView : Grid
 {
-    private readonly HeaderNavigationFlipView _pages = new();
+    private readonly HeaderNavigationFlipView _pages = new() { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
     private readonly WidgetRegistry _registry;
     private readonly MediaSessionService _media;
     private readonly string[] _ids;

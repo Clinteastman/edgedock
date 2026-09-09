@@ -111,9 +111,13 @@
     <Grid><TextBlock Text="Make it yours" FontSize="24" FontWeight="SemiBold" VerticalAlignment="Center"/><Button HorizontalAlignment="Right" Click="CancelSettings_Click" AutomationProperties.Name="Close settings"><SymbolIcon Symbol="Cancel"/></Button></Grid>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
      <StackPanel Spacing="16">
-      <ComboBox x:Name="MaterialSelector" Header="Appearance" HorizontalAlignment="Stretch" MinHeight="52" AutomationProperties.Name="Window appearance">
+      <ComboBox x:Name="MaterialSelector" Header="Appearance" HorizontalAlignment="Stretch" MinHeight="52" AutomationProperties.Name="Window appearance" SelectionChanged="MaterialSelector_SelectionChanged">
        <ComboBoxItem Content="Mica — wallpaper tint"/><ComboBoxItem Content="Acrylic — blur behind the window"/>
       </ComboBox>
+      <Grid><TextBlock Text="Background visibility"/><TextBlock x:Name="BackdropTransparencyText" HorizontalAlignment="Right"/></Grid>
+      <Slider x:Name="BackdropTransparencySlider" Minimum="0" Maximum="100" StepFrequency="5" Value="50"
+              ValueChanged="BackdropTransparencySlider_ValueChanged" AutomationProperties.Name="Background visibility"/>
+      <TextBlock x:Name="BackdropHelpText" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
       <TextBlock Text="Dashboard" FontSize="18" FontWeight="SemiBold"/>
       <ToggleSwitch x:Name="WebVisibleToggle" Header="Show web dashboard" AutomationProperties.Name="Show web dashboard"/>
       <TextBox x:Name="UrlTextBox" Header="Web address" PlaceholderText="https://example.com" AutomationProperties.Name="Dashboard web address" KeyDown="UrlTextBox_KeyDown"/>

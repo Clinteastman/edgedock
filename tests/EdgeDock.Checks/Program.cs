@@ -20,13 +20,22 @@ try
     var store = new SettingsStore();
     var legacy = await store.LoadAsync();
     Check(legacy.DashboardUrl == "https://example.com/dashboard" && legacy.ShowArtwork &&
-          legacy.MediaPanelPlacement == MediaPanelPlacement.Right && legacy.Material == BackdropMaterial.Mica,
+          legacy.MediaPanelPlacement == MediaPanelPlacement.Right && legacy.Material == BackdropMaterial.Mica && legacy.BackdropTransparency == 50,
           "Original URL-only settings retain the Mica default");
 
     await store.SaveAsync(legacy with { Material = BackdropMaterial.Acrylic });
     var acrylic = await new SettingsStore().LoadAsync();
     Check(acrylic.Material == BackdropMaterial.Acrylic,
           "Acrylic backdrop preference survives restart");
+
+    await store.SaveAsync(acrylic with { BackdropTransparency = 73 });
+    Check((await new SettingsStore().LoadAsync()).BackdropTransparency == 73,
+          "Backdrop adjustment survives restart");
+    await File.WriteAllTextAsync(file, """{"BackdropTransparency":999}""");
+    Check((await new SettingsStore().LoadAsync()).BackdropTransparency == 100 &&
+          SettingsStore.Normalize(legacy with { BackdropTransparency = -10 }).BackdropTransparency == 0 &&
+          SettingsStore.Normalize(legacy with { BackdropTransparency = double.NaN }).BackdropTransparency == 50,
+          "Invalid backdrop adjustment recovers to a finite supported value");
 
     await store.SaveAsync(legacy with
     {

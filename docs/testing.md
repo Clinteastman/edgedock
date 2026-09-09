@@ -105,6 +105,22 @@ these optional variables when unset.
 
 ## Ongoing acceptance checks
 
+Backdrop adjustment, 9 September 2026: 15 settings checks pass, including
+the saved background visibility value, legacy default and invalid-value recovery.
+Native testing used an isolated profile at 900x480 logical pixels. Mica revealed
+wallpaper colour across the title bar and widgets after removing the FlipView's
+opaque default background. Changing visibility to 75 and saving persisted the
+value, and restarting retained it. The final runnable build showed the corrected
+dark Mica tint at 75, then switched to Acrylic through Settings and saved it
+without crashing. Release rebuild passed with zero warnings/errors. Physical
+touchscreen testing remains pending hardware.
+
+When refreshing an existing development output folder, use `dotnet build
+src/EdgeDock/EdgeDock.csproj -c Release -p:Platform=x64 -t:Rebuild -o artifacts/latest`.
+Publishing over a previous build can leave stale loose XBF files alongside the
+new assembly, causing a startup XAML parse failure. Test the actual refreshed
+executable, not just a separate build directory.
+
 Compact controls update, 9 September 2026: Release build passed with zero
 warnings/errors. Native preview at 1707x480 logical confirmed the separate
 utility strip is gone, the gear menu is inside the first widget header, and

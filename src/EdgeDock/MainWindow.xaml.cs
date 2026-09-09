@@ -42,6 +42,7 @@ public sealed partial class MainWindow : Window
     private bool _isWebVisible = true;
     private bool _isWidgetView;
     private BackdropMaterial _material = BackdropMaterial.Mica;
+    private double _backdropTransparency = 50;
     private IReadOnlyList<WidgetSlotSettings> _widgetSlots = [new(["media"], "media")];
     private readonly WidgetRegistry _registry = WidgetRegistry.CreateBuiltIns();
     private readonly SemaphoreSlim _saveGate = new(1, 1);
@@ -54,10 +55,7 @@ public sealed partial class MainWindow : Window
     {
         _messageHookCallback = MessageHookCallback;
         InitializeComponent();
-        SystemBackdrop = new MicaBackdrop
-        {
-            Kind = Microsoft.UI.Composition.SystemBackdrops.MicaKind.BaseAlt
-        };
+        ApplyBackdrop();
         ConfigureWindow();
         InstallMessageHook();
         Closed += MainWindow_Closed;
@@ -94,6 +92,7 @@ public sealed partial class MainWindow : Window
         _ = _media.InitializeAsync();
         var settings = await _settings.LoadAsync();
         _material = settings.Material;
+        _backdropTransparency = settings.BackdropTransparency;
         ApplyBackdrop();
         _mediaPlacement = settings.MediaPanelPlacement;
         _lastVisiblePlacement = settings.LastVisibleMediaPanelPlacement;
@@ -319,9 +318,11 @@ public sealed partial class MainWindow : Window
         var settings = SettingsStore.Normalize(new EdgeDockSettings(uri?.AbsoluteUri, placement,
             placement == MediaPanelPlacement.Hidden ? _lastVisiblePlacement : placement,
             PanelWidthSlider.Value, ArtworkToggle.IsOn, WebVisibleToggle.IsOn, LibraryEditor.GetSlots(),
-            MaterialSelector.SelectedIndex == 1 ? BackdropMaterial.Acrylic : BackdropMaterial.Mica));
+            MaterialSelector.SelectedIndex == 1 ? BackdropMaterial.Acrylic : BackdropMaterial.Mica,
+            BackdropTransparencySlider.Value));
         if (!await PersistAsync(settings)) return;
         _material = settings.Material;
+        _backdropTransparency = settings.BackdropTransparency;
         ApplyBackdrop();
         _mediaPlacement = settings.MediaPanelPlacement;
         _lastVisiblePlacement = settings.LastVisibleMediaPanelPlacement;
@@ -376,18 +377,23 @@ public sealed partial class MainWindow : Window
         _showArtwork,
         _isWebVisible,
         _widgetSlots,
-        _material);
+        _material,
+        _backdropTransparency);
 
     private void ApplyBackdrop()
     {
-        SystemBackdrop = _material == BackdropMaterial.Acrylic
-            ? new DesktopAcrylicBackdrop()
-            : new MicaBackdrop { Kind = Microsoft.UI.Composition.SystemBackdrops.MicaKind.BaseAlt };
+        SystemBackdrop = AdjustableBackdrop.IsSupported(_material)
+            ? new AdjustableBackdrop(_material, _backdropTransparency)
+            : _material == BackdropMaterial.Acrylic
+                ? new DesktopAcrylicBackdrop()
+                : new MicaBackdrop();
     }
 
     private void UpdateSettingsControls()
     {
         MaterialSelector.SelectedIndex = _material == BackdropMaterial.Acrylic ? 1 : 0;
+        BackdropTransparencySlider.Value = _backdropTransparency;
+        UpdateBackdropSettingsText();
         PlacementComboBox.SelectedIndex = _mediaPlacement switch
         {
             MediaPanelPlacement.Left => 1,
@@ -466,6 +472,25 @@ public sealed partial class MainWindow : Window
         AutomationProperties.SetName(MediaVisibilityButton, label);
         ToolTipService.SetToolTip(MediaVisibilityButton, _isWebVisible ? label : "Enable the web dashboard before hiding widgets");
         WidgetVisibilityText.Text = label;
+    }
+
+    private void MaterialSelector_SelectionChanged(object sender, SelectionChangedEventArgs args) => UpdateBackdropSettingsText();
+
+    private void BackdropTransparencySlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs args)
+    {
+        if (BackdropTransparencyText is not null)
+        {
+            BackdropTransparencyText.Text = $"{args.NewValue:0}%";
+        }
+    }
+
+    private void UpdateBackdropSettingsText()
+    {
+        if (BackdropHelpText is null) return;
+        BackdropTransparencyText.Text = $"{BackdropTransparencySlider.Value:0}%";
+        BackdropHelpText.Text = MaterialSelector.SelectedIndex == 1
+            ? "Higher values show more of the blurred window behind EdgeDock."
+            : "Mica stays opaque. Higher values show more of the wallpaper colour in its soft tint.";
     }
 
     private void ControlHandle_Click(object sender, RoutedEventArgs args) => OpenControlsDrawer();

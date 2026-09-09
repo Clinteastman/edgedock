@@ -61,6 +61,8 @@ runtime limitations are recorded in [the testing notes](docs/testing.md).
 Mica's appearance follows Windows' backdrop behaviour; it falls back to a solid
 material when transparency is unavailable or the window is inactive.
 Settings also offers **Acrylic**, for a frosted view of what is behind the window.
+Use **Background visibility** to adjust either material, then **Save layout**.
+50 is the default strength; higher values reveal more background.
 This affects native app surfaces; web pages retain their own backgrounds.
 
 Media controls use the current Windows media session. Some applications do not

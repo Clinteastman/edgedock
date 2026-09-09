@@ -60,6 +60,10 @@ Cancel discards draft edits. The layout cannot become entirely empty.
 - Muted text: #C8C2D4; native panels layer translucent #1A1821 over Mica.
 - Appearance settings choose Mica (wallpaper tint) or Acrylic (blur behind the
   window). Windows supplies material fallbacks when transparency is unavailable.
+- Background adjustment changes the material, never the opacity of text or
+  controls. Mica remains opaque; its adjustment reveals more wallpaper colour.
+  Acrylic's adjustment changes the visibility of blurred content behind it.
+  The preference is saved with the layout; Cancel keeps the previous setting.
 - Native widgets use Windows' standard card fill over a transparent host rather
   than stacking dark custom fills. The hosted web page keeps its own background.
 - Use native icons, clear accessible names and 52px minimum button targets.

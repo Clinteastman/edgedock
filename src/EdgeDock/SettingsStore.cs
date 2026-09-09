@@ -16,7 +16,8 @@ internal sealed record EdgeDockSettings(
     bool ShowArtwork,
     bool IsWebVisible,
     IReadOnlyList<WidgetSlotSettings> WidgetSlots,
-    BackdropMaterial Material = BackdropMaterial.Mica);
+    BackdropMaterial Material = BackdropMaterial.Mica,
+    double BackdropTransparency = 50);
 
 internal sealed class SettingsStore
 {
@@ -57,7 +58,7 @@ internal sealed class SettingsStore
                 stored?.ShowArtwork ?? true,
                 stored?.IsWebVisible ?? true,
                 slots,
-                ParseMaterial(stored?.Material)));
+                ParseMaterial(stored?.Material), stored?.BackdropTransparency ?? 50));
         }
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -83,6 +84,7 @@ internal sealed class SettingsStore
                 ShowArtwork = settings.ShowArtwork,
                 IsWebVisible = settings.IsWebVisible,
                 Material = settings.Material.ToString(),
+                BackdropTransparency = settings.BackdropTransparency,
                 WidgetSlots = settings.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
                 ExtensionData = _extensionData
             };
@@ -108,7 +110,7 @@ internal sealed class SettingsStore
         if (!value.IsWebVisible && placement == MediaPanelPlacement.Hidden)
             placement = value.LastVisibleMediaPanelPlacement is MediaPanelPlacement.Left or MediaPanelPlacement.Right
                 ? value.LastVisibleMediaPanelPlacement : MediaPanelPlacement.Right;
-        return value with { MediaPanelPlacement = placement, LastVisibleMediaPanelPlacement = value.LastVisibleMediaPanelPlacement is MediaPanelPlacement.Left or MediaPanelPlacement.Right ? value.LastVisibleMediaPanelPlacement : MediaPanelPlacement.Right, MediaPanelWidth = Math.Clamp(value.MediaPanelWidth, 240, 440), WidgetSlots = slots, Material = Enum.IsDefined(value.Material) ? value.Material : BackdropMaterial.Mica };
+        return value with { MediaPanelPlacement = placement, LastVisibleMediaPanelPlacement = value.LastVisibleMediaPanelPlacement is MediaPanelPlacement.Left or MediaPanelPlacement.Right ? value.LastVisibleMediaPanelPlacement : MediaPanelPlacement.Right, MediaPanelWidth = Math.Clamp(value.MediaPanelWidth, 240, 440), WidgetSlots = slots, Material = Enum.IsDefined(value.Material) ? value.Material : BackdropMaterial.Mica, BackdropTransparency = double.IsFinite(value.BackdropTransparency) ? Math.Clamp(value.BackdropTransparency, 0, 100) : 50 };
     }
 
     private static WidgetSlotSettings NormalizeSlot(WidgetSlotSettings slot)
@@ -139,6 +141,7 @@ internal sealed class SettingsStore
         public bool? ShowArtwork { get; set; }
         public bool? IsWebVisible { get; set; }
         public string? Material { get; set; }
+        public double? BackdropTransparency { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }
         [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; }
     }
