@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 namespace EdgeDock;
 
 internal enum MediaPanelPlacement { Right, Left, Hidden }
+internal enum BackdropMaterial { Mica, Acrylic }
 
 internal sealed record WidgetSlotSettings(IReadOnlyList<string> EnabledWidgetIds, string? SelectedWidgetId);
 
@@ -14,7 +15,8 @@ internal sealed record EdgeDockSettings(
     double MediaPanelWidth,
     bool ShowArtwork,
     bool IsWebVisible,
-    IReadOnlyList<WidgetSlotSettings> WidgetSlots);
+    IReadOnlyList<WidgetSlotSettings> WidgetSlots,
+    BackdropMaterial Material = BackdropMaterial.Mica);
 
 internal sealed class SettingsStore
 {
@@ -54,7 +56,8 @@ internal sealed class SettingsStore
                 Math.Clamp(stored?.MediaPanelWidth ?? 340, 240, 440),
                 stored?.ShowArtwork ?? true,
                 stored?.IsWebVisible ?? true,
-                slots));
+                slots,
+                ParseMaterial(stored?.Material)));
         }
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -79,6 +82,7 @@ internal sealed class SettingsStore
                 MediaPanelWidth = settings.MediaPanelWidth,
                 ShowArtwork = settings.ShowArtwork,
                 IsWebVisible = settings.IsWebVisible,
+                Material = settings.Material.ToString(),
                 WidgetSlots = settings.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
                 ExtensionData = _extensionData
             };
@@ -104,7 +108,7 @@ internal sealed class SettingsStore
         if (!value.IsWebVisible && placement == MediaPanelPlacement.Hidden)
             placement = value.LastVisibleMediaPanelPlacement is MediaPanelPlacement.Left or MediaPanelPlacement.Right
                 ? value.LastVisibleMediaPanelPlacement : MediaPanelPlacement.Right;
-        return value with { MediaPanelPlacement = placement, LastVisibleMediaPanelPlacement = value.LastVisibleMediaPanelPlacement is MediaPanelPlacement.Left or MediaPanelPlacement.Right ? value.LastVisibleMediaPanelPlacement : MediaPanelPlacement.Right, MediaPanelWidth = Math.Clamp(value.MediaPanelWidth, 240, 440), WidgetSlots = slots };
+        return value with { MediaPanelPlacement = placement, LastVisibleMediaPanelPlacement = value.LastVisibleMediaPanelPlacement is MediaPanelPlacement.Left or MediaPanelPlacement.Right ? value.LastVisibleMediaPanelPlacement : MediaPanelPlacement.Right, MediaPanelWidth = Math.Clamp(value.MediaPanelWidth, 240, 440), WidgetSlots = slots, Material = Enum.IsDefined(value.Material) ? value.Material : BackdropMaterial.Mica };
     }
 
     private static WidgetSlotSettings NormalizeSlot(WidgetSlotSettings slot)
@@ -122,6 +126,7 @@ internal sealed class SettingsStore
     }
 
     private static MediaPanelPlacement ParsePlacement(string? value, MediaPanelPlacement fallback, bool allowHidden) => Enum.TryParse<MediaPanelPlacement>(value, true, out var parsed) && Enum.IsDefined(parsed) && (allowHidden || parsed != MediaPanelPlacement.Hidden) ? parsed : fallback;
+    private static BackdropMaterial ParseMaterial(string? value) => Enum.TryParse<BackdropMaterial>(value, true, out var parsed) && Enum.IsDefined(parsed) ? parsed : BackdropMaterial.Mica;
     private static WidgetSlotSettings[] DefaultSlots() => [new(["media", "audio", "pc"], "media")];
     private static EdgeDockSettings Defaults() => new(null, MediaPanelPlacement.Right, MediaPanelPlacement.Right, 340, true, true, DefaultSlots());
 
@@ -133,6 +138,7 @@ internal sealed class SettingsStore
         public double? MediaPanelWidth { get; set; }
         public bool? ShowArtwork { get; set; }
         public bool? IsWebVisible { get; set; }
+        public string? Material { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }
         [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; }
     }

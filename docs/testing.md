@@ -1,5 +1,21 @@
 # Testing
 
+## Controls drawer, Widget view and appearance (9 September 2026)
+
+- Release x64 build passed with zero warnings/errors; 13 settings checks pass.
+- Isolated 900x480 logical desktop preview: drawer opens over the dashboard;
+  keyboard focus cycles to its panel selectors. Changing three panels to two
+  immediately updates the layout and saves the count with existing selections.
+- Widget view hides the web pane, renders all three installed widgets at full
+  height, and its scrollbar moves the whole row. Back to dashboard restores the
+  prior web/panel layout. No media playback or audio volume was changed.
+- Selecting Acrylic in Settings and saving visibly changes the window backdrop;
+  the saved profile records Acrylic. Automated checks cover its persistence and
+  safe fallback from invalid values. Existing profiles default to Mica.
+- The user confirmed the earlier corner-drawer appearance. Physical touchscreen
+  gestures and a fresh fullscreen test for this combined build remain unverified.
+- Test screenshots containing live metadata were not saved or published.
+
 ## Initial prototype validation
 
 Checked on Windows 11 x64 in September 2026:

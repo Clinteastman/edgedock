@@ -20,8 +20,13 @@ try
     var store = new SettingsStore();
     var legacy = await store.LoadAsync();
     Check(legacy.DashboardUrl == "https://example.com/dashboard" && legacy.ShowArtwork &&
-          legacy.MediaPanelPlacement == MediaPanelPlacement.Right,
-          "Original URL-only settings migrate without losing the dashboard");
+          legacy.MediaPanelPlacement == MediaPanelPlacement.Right && legacy.Material == BackdropMaterial.Mica,
+          "Original URL-only settings retain the Mica default");
+
+    await store.SaveAsync(legacy with { Material = BackdropMaterial.Acrylic });
+    var acrylic = await new SettingsStore().LoadAsync();
+    Check(acrylic.Material == BackdropMaterial.Acrylic,
+          "Acrylic backdrop preference survives restart");
 
     await store.SaveAsync(legacy with
     {
@@ -45,6 +50,11 @@ try
     await store.SaveAsync(imported);
     Check((await File.ReadAllTextAsync(file)).Contains("FutureOption"),
           "Saving known settings preserves future fields");
+
+    await File.WriteAllTextAsync(file, """{"Material":"BlurrierThanAcrylic"}""");
+    var invalidMaterial = await new SettingsStore().LoadAsync();
+    Check(invalidMaterial.Material == BackdropMaterial.Mica,
+          "Invalid backdrop preference falls back to Mica");
 
     await File.WriteAllTextAsync(file, "{broken");
     var recovered = await new SettingsStore().LoadAsync();

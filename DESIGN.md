@@ -7,10 +7,11 @@ large controls. The web page keeps its own appearance.
 ## Shell
 
 A custom 36px windowed title area reveals Mica and retains Windows caption
-buttons and dragging. It disappears in full screen. App controls live in a
-52px menu button in the first visible widget panel's header. The menu contains
-Settings, full screen and widget visibility. In web-only mode it moves into
-the web panel's own header. There is no dashboard-wide utility strip.
+buttons and dragging. It disappears in full screen. A small top-right overlay
+handle opens the controls drawer by click or downward swipe. It reserves no
+content row, including in web-only mode. The drawer contains Settings, full
+screen, widget visibility, panel count and per-panel page selection. Configuration appears
+over content only when requested.
 F11 toggles full screen; Escape is left to active content.
 
 ## Layout
@@ -21,13 +22,20 @@ content, each panel prefers 240–440 logical pixels; the layout reduces the web
 area before making native controls narrower than 240px. Outer spacing and gaps
 are 10px. Content corners are 14px.
 
-Each panel shows its widget name, page position and 52px previous/next buttons.
-A native FlipView supplies touch paging; its duplicate overlay arrows are hidden.
+Panels have no shell header, page counter or navigation arrows. A native
+FlipView supplies touch paging; its overlay arrows are hidden. The drawer's
+page selectors provide an alternative for mouse and keyboard users.
 Only the selected widget view is
 created; switching pages unloads the previous view. Empty and missing widgets
 show an explanation directing the user to Settings.
 
 ## Widgets
+
+Widget view is a temporary alternative to the dashboard. All installed widgets
+appear in a horizontally scrollable row with full-height content and the usual
+panel width. The row pans as one surface. A horizontal scrollbar provides mouse
+access. The controls drawer remains available to return to the saved dashboard.
+Dashboard-only layout controls are unavailable while this mode is active.
 
 - Media uses the shared Windows media session: title, artist, artwork and
   supported playback controls. Controls get reserved space; artwork shrinks to
@@ -41,7 +49,8 @@ show an explanation directing the user to Settings.
 
 Settings is a 480px overlay with a scrollable body and fixed close/save controls.
 It contains web visibility/address, panel placement/width, artwork preference,
-panel count, per-panel enabled widgets and selected page. The library lists
+per-panel enabled widgets and selected page. Panel count lives beside the page
+selectors in the controls drawer and applies immediately. The library lists
 bundled widgets and preserves unavailable saved IDs. Save applies the layout;
 Cancel discards draft edits. The layout cannot become entirely empty.
 
@@ -49,7 +58,10 @@ Cancel discards draft edits. The layout cannot become entirely empty.
 
 - Accent: #9B7CFF; primary media/save actions: #6046B8.
 - Muted text: #C8C2D4; native panels layer translucent #1A1821 over Mica.
-- Windows supplies backdrop fallbacks when Mica is unavailable.
+- Appearance settings choose Mica (wallpaper tint) or Acrylic (blur behind the
+  window). Windows supplies material fallbacks when transparency is unavailable.
+- Native widgets use Windows' standard card fill over a transparent host rather
+  than stacking dark custom fills. The hosted web page keeps its own background.
 - Use native icons, clear accessible names and 52px minimum button targets.
 - Trim long names; never hide primary controls behind artwork. Preserve keyboard
   access alongside touch gestures.

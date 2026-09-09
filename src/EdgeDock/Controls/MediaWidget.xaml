@@ -6,7 +6,7 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Border Padding="20,16" CornerRadius="14" Background="#B31A1821">
+    <Border Padding="20,16" CornerRadius="14" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
         <Grid RowSpacing="12">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />

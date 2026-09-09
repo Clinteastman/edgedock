@@ -8,19 +8,13 @@ namespace EdgeDock.Controls;
 internal sealed class WidgetLibraryEditor : UserControl
 {
     private readonly StackPanel _slotsPanel = new() { Spacing = 16 };
-    private readonly ComboBox _slotCount = new() { MinHeight = 52 };
     private readonly List<SlotEditor> _editors = [];
     private IReadOnlyList<WidgetSlotSettings> _source = [];
     private WidgetRegistry? _registry;
 
     public WidgetLibraryEditor()
     {
-        AutomationProperties.SetName(_slotCount, "Number of widget slots");
-        _slotCount.Items.Add("1"); _slotCount.Items.Add("2"); _slotCount.Items.Add("3");
-        _slotCount.SelectionChanged += (_, _) => Rebuild();
-        var root = new StackPanel { Spacing = 10 };
-        _slotCount.Header = "Number of panels";
-        root.Children.Add(_slotCount); root.Children.Add(_slotsPanel); Content = root;
+        Content = _slotsPanel;
     }
 
     internal void LoadSlots(IReadOnlyList<WidgetSlotSettings> slots, WidgetRegistry registry)
@@ -29,7 +23,6 @@ internal sealed class WidgetLibraryEditor : UserControl
         _source = slots.Count == 0 ? [new WidgetSlotSettings(["media"], "media")] : slots.Take(3).ToArray();
         _editors.Clear();
         _slotsPanel.Children.Clear();
-        _slotCount.SelectedIndex = _source.Count - 1;
         Rebuild();
     }
 
@@ -37,10 +30,10 @@ internal sealed class WidgetLibraryEditor : UserControl
 
     private void Rebuild()
     {
-        if (_registry is null || _slotCount.SelectedIndex < 0) return;
+        if (_registry is null) return;
         var previous = _editors.Select(x => x.Get()).ToArray();
         _editors.Clear(); _slotsPanel.Children.Clear();
-        var count = _slotCount.SelectedIndex + 1;
+        var count = _source.Count;
         for (var index = 0; index < count; index++)
         {
             var state = index < previous.Length ? previous[index] : index < _source.Count ? _source[index] : new WidgetSlotSettings([], null);

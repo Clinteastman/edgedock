@@ -59,11 +59,20 @@ An online free widget catalogue and installable third-party packages are future
 work. This iteration must not claim to download or safely sandbox third-party
 code. The local library manages the widgets bundled with EdgeDock.
 
-Preserve the Mica/purple visual identity. Give shell controls their own space so
-they do not cover web content. Check a shallow desktop viewport as well as the
+Preserve the Mica/purple visual identity. Put occasional shell controls in an
+on-demand overlay rather than reserving content space. Check a shallow desktop viewport as well as the
 normal development window. The requested custom windowed title bar may ship in
 this polish pass when it preserves native caption and dragging behaviour.
 
-The user prefers app controls within the first panel header instead of a separate
-dashboard-wide strip. Keep a single pair of widget navigation arrows per panel;
-hide FlipView's extra overlay arrows while preserving swipe and keyboard paging.
+The user wants content to use the shallow screen fully: no utility strip in
+web-only mode and no shell headers or arrows above widgets. A top-right corner
+gesture opens a controls drawer for settings and widget choices. Keep a small
+mouse-accessible handle and keyboard access. Swipe between widgets, with a page
+selector in the drawer as the non-gesture alternative.
+
+## Widget view
+
+A drawer button opens a separate view of all installed widgets in one horizontal
+row, with no web pane. Swiping moves the whole row, so users can find a widget
+and use its controls. Returning to the dashboard restores the existing layout;
+this mode does not overwrite the saved panel count or widget choices.

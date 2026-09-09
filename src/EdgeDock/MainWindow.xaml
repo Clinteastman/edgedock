@@ -15,26 +15,6 @@
             <Border x:Name="WebSurface" Grid.Column="0" CornerRadius="14" Background="#FF0B0A0E"
                     Loaded="WebSurface_LayoutChanged" SizeChanged="WebSurface_LayoutChanged">
                 <Grid>
-                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                    <ContentControl x:Name="WebHeaderHost" HorizontalContentAlignment="Right" Padding="8,4">
-                        <Button x:Name="PanelMenuButton" Width="52" Height="52" Padding="0" AutomationProperties.Name="App controls" ToolTipService.ToolTip="Settings and full screen">
-                            <SymbolIcon Symbol="Setting"/>
-                            <Button.Flyout>
-                                <Flyout x:Name="AppControlsFlyout" Placement="Bottom">
-                                    <StackPanel Spacing="8">
-                                        <Button x:Name="SettingsButton" Content="Settings and widget library" Click="OpenSettings_Click" HorizontalAlignment="Stretch"/>
-                                        <Button x:Name="FullScreenButton" Click="FullScreen_Click" HorizontalAlignment="Stretch" AutomationProperties.Name="Enter full screen">
-                                            <StackPanel Orientation="Horizontal" Spacing="8"><SymbolIcon x:Name="FullScreenIcon" Symbol="FullScreen"/><TextBlock x:Name="FullScreenText" Text="Full screen"/></StackPanel>
-                                        </Button>
-                                        <Button x:Name="MediaVisibilityButton" Click="ToggleMediaPanel_Click" HorizontalAlignment="Stretch" AutomationProperties.Name="Hide widgets">
-                                            <StackPanel Orientation="Horizontal" Spacing="8"><SymbolIcon x:Name="MediaVisibilityIcon" Symbol="ViewAll"/><TextBlock x:Name="WidgetVisibilityText" Text="Hide widgets"/></StackPanel>
-                                        </Button>
-                                    </StackPanel>
-                                </Flyout>
-                            </Button.Flyout>
-                        </Button>
-                    </ContentControl>
-                    <Grid Grid.Row="1">
                     <WebView2 x:Name="DashboardWebView"
                               DefaultBackgroundColor="#0B0A0E"
                               NavigationStarting="DashboardWebView_NavigationStarting"
@@ -60,18 +40,80 @@
                                     Click="Reload_Click" Visibility="Collapsed" />
                         </StackPanel>
                     </Grid>
-                    </Grid>
                 </Grid>
             </Border>
 
 
    <Grid x:Name="WidgetHost" Grid.Column="1" ColumnSpacing="10"/>
+   <ScrollViewer x:Name="WidgetGallery" Grid.ColumnSpan="2" Visibility="Collapsed"
+                 HorizontalScrollMode="Enabled" HorizontalScrollBarVisibility="Auto"
+                 VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled"
+                 VerticalContentAlignment="Stretch" ZoomMode="Disabled"
+                 AutomationProperties.Name="Installed widgets">
+    <StackPanel x:Name="WidgetGalleryRow" Orientation="Horizontal" Spacing="10" VerticalAlignment="Stretch"/>
+   </ScrollViewer>
+  </Grid>
+  <Button x:Name="ControlHandle" Grid.Row="1" Width="52" Height="52" Padding="0"
+          Margin="0,8,8,0" HorizontalAlignment="Right" VerticalAlignment="Top"
+          Click="ControlHandle_Click" ManipulationMode="TranslateY"
+          ManipulationCompleted="ControlHandle_ManipulationCompleted"
+          AutomationProperties.Name="Open EdgeDock controls"
+          ToolTipService.ToolTip="Open EdgeDock controls">
+   <Grid Width="24" Height="16">
+    <Rectangle Height="3" Width="24" RadiusX="1.5" RadiusY="1.5" Fill="{StaticResource AccentBrush}" VerticalAlignment="Top"/>
+    <Rectangle Height="3" Width="16" RadiusX="1.5" RadiusY="1.5" Fill="{StaticResource MutedTextBrush}" VerticalAlignment="Bottom"/>
+   </Grid>
+  </Button>
+  <Grid x:Name="ControlsOverlay" Grid.Row="1" Visibility="Collapsed" TabFocusNavigation="Cycle">
+   <Border x:Name="ControlsScrim" Background="#8A0B0A0E" Tapped="ControlsScrim_Tapped"
+           AutomationProperties.Name="Close EdgeDock controls"/>
+   <Border Width="420" HorizontalAlignment="Right" Margin="0,8,8,8" Padding="20"
+           Background="#FA24202E" CornerRadius="14">
+    <Grid RowSpacing="16">
+     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+     <Grid ColumnSpacing="12">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <TextBlock Text="EdgeDock controls" FontSize="24" FontWeight="SemiBold" VerticalAlignment="Center"/>
+      <Button x:Name="CloseControlsButton" Grid.Column="1" Width="52" Height="52" Padding="0"
+              Click="CloseControls_Click" AutomationProperties.Name="Close EdgeDock controls">
+       <SymbolIcon Symbol="Cancel"/>
+      </Button>
+     </Grid>
+     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Spacing="14">
+       <Button x:Name="SettingsButton" Content="Settings and widget library" Click="OpenSettings_Click" HorizontalAlignment="Stretch" MinHeight="52"/>
+       <Button x:Name="WidgetViewButton" Click="ToggleWidgetView_Click" HorizontalAlignment="Stretch" MinHeight="52"
+               AutomationProperties.Name="Widget view">
+        <StackPanel Orientation="Horizontal" Spacing="8"><SymbolIcon Symbol="ViewAll"/><TextBlock x:Name="WidgetViewText" Text="Widget view"/></StackPanel>
+       </Button>
+       <Button x:Name="FullScreenButton" Click="FullScreen_Click" HorizontalAlignment="Stretch" MinHeight="52" AutomationProperties.Name="Enter full screen">
+        <StackPanel Orientation="Horizontal" Spacing="8"><SymbolIcon x:Name="FullScreenIcon" Symbol="FullScreen"/><TextBlock x:Name="FullScreenText" Text="Full screen"/></StackPanel>
+       </Button>
+       <StackPanel x:Name="DashboardControls" Spacing="14">
+        <Button x:Name="MediaVisibilityButton" Click="ToggleMediaPanel_Click" HorizontalAlignment="Stretch" MinHeight="52" AutomationProperties.Name="Hide widgets">
+         <StackPanel Orientation="Horizontal" Spacing="8"><SymbolIcon x:Name="MediaVisibilityIcon" Symbol="ViewAll"/><TextBlock x:Name="WidgetVisibilityText" Text="Hide widgets"/></StackPanel>
+        </Button>
+        <Rectangle Height="1" Fill="#40C8C2D4" Margin="0,2"/>
+        <TextBlock Text="Panel widgets" FontSize="18" FontWeight="SemiBold"/>
+        <ComboBox x:Name="PanelCountSelector" Header="Number of panels" HorizontalAlignment="Stretch" MinHeight="52"
+                  AutomationProperties.Name="Number of panels" SelectionChanged="PanelCountSelector_SelectionChanged">
+         <ComboBoxItem Content="1"/><ComboBoxItem Content="2"/><ComboBoxItem Content="3"/>
+        </ComboBox>
+        <StackPanel x:Name="PanelSelectors" Spacing="12"/>
+       </StackPanel>
+      </StackPanel>
+     </ScrollViewer>
+    </Grid>
+   </Border>
   </Grid>
   <Border x:Name="SettingsPanel" Grid.Row="1" Width="480" HorizontalAlignment="Right" Margin="0,0,10,10" Padding="20" Background="#FA24202E" CornerRadius="14" Visibility="Collapsed">
    <Grid RowSpacing="12"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <Grid><TextBlock Text="Make it yours" FontSize="24" FontWeight="SemiBold" VerticalAlignment="Center"/><Button HorizontalAlignment="Right" Click="CancelSettings_Click" AutomationProperties.Name="Close settings"><SymbolIcon Symbol="Cancel"/></Button></Grid>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
      <StackPanel Spacing="16">
+      <ComboBox x:Name="MaterialSelector" Header="Appearance" HorizontalAlignment="Stretch" MinHeight="52" AutomationProperties.Name="Window appearance">
+       <ComboBoxItem Content="Mica — wallpaper tint"/><ComboBoxItem Content="Acrylic — blur behind the window"/>
+      </ComboBox>
       <TextBlock Text="Dashboard" FontSize="18" FontWeight="SemiBold"/>
       <ToggleSwitch x:Name="WebVisibleToggle" Header="Show web dashboard" AutomationProperties.Name="Show web dashboard"/>
       <TextBox x:Name="UrlTextBox" Header="Web address" PlaceholderText="https://example.com" AutomationProperties.Name="Dashboard web address" KeyDown="UrlTextBox_KeyDown"/>
@@ -81,7 +123,7 @@
       <Slider x:Name="PanelWidthSlider" Minimum="240" Maximum="440" StepFrequency="10" Value="340" ValueChanged="PanelWidthSlider_ValueChanged" AutomationProperties.Name="Widget width"/>
       <ToggleSwitch x:Name="ArtworkToggle" Header="Show media artwork" IsOn="True" AutomationProperties.Name="Show media artwork"/>
       <TextBlock Text="Widget library" FontSize="18" FontWeight="SemiBold"/>
-      <TextBlock Text="Choose the pages in each panel. Swipe or use the arrows to switch between them." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
+      <TextBlock Text="Choose the pages in each panel. Swipe between them, or select one from EdgeDock controls." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
       <controls:WidgetLibraryEditor x:Name="LibraryEditor"/>
      </StackPanel>
     </ScrollViewer>

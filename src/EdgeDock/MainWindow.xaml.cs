@@ -40,11 +40,14 @@ public sealed partial class MainWindow : Window
     private bool _enforcingMinimumSize;
     private bool _keyTransitionPending;
     private bool _isWebVisible = true;
+    private bool _isWidgetView;
+    private BackdropMaterial _material = BackdropMaterial.Mica;
     private IReadOnlyList<WidgetSlotSettings> _widgetSlots = [new(["media"], "media")];
     private readonly WidgetRegistry _registry = WidgetRegistry.CreateBuiltIns();
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private bool _closing;
-    private WidgetSlotView? _menuSlot;
+    private Control? _controlsFocusReturn;
+    private bool _updatingPanelCount;
     private CompositionRoundedRectangleGeometry? _webClipGeometry;
 
     public MainWindow()
@@ -90,6 +93,8 @@ public sealed partial class MainWindow : Window
     {
         _ = _media.InitializeAsync();
         var settings = await _settings.LoadAsync();
+        _material = settings.Material;
+        ApplyBackdrop();
         _mediaPlacement = settings.MediaPanelPlacement;
         _lastVisiblePlacement = settings.LastVisibleMediaPanelPlacement;
         _configuredPanelWidth = settings.MediaPanelWidth;
@@ -263,7 +268,8 @@ public sealed partial class MainWindow : Window
 
     private void OpenSettings_Click(object sender, RoutedEventArgs args)
     {
-        AppControlsFlyout.Hide();
+        if (_isWidgetView) ExitWidgetView();
+        CloseControlsDrawer(restoreFocus: false);
         if (SettingsPanel.Visibility == Visibility.Visible)
         {
             SettingsPanel.Visibility = Visibility.Collapsed;
@@ -312,8 +318,11 @@ public sealed partial class MainWindow : Window
         };
         var settings = SettingsStore.Normalize(new EdgeDockSettings(uri?.AbsoluteUri, placement,
             placement == MediaPanelPlacement.Hidden ? _lastVisiblePlacement : placement,
-            PanelWidthSlider.Value, ArtworkToggle.IsOn, WebVisibleToggle.IsOn, LibraryEditor.GetSlots()));
+            PanelWidthSlider.Value, ArtworkToggle.IsOn, WebVisibleToggle.IsOn, LibraryEditor.GetSlots(),
+            MaterialSelector.SelectedIndex == 1 ? BackdropMaterial.Acrylic : BackdropMaterial.Mica));
         if (!await PersistAsync(settings)) return;
+        _material = settings.Material;
+        ApplyBackdrop();
         _mediaPlacement = settings.MediaPanelPlacement;
         _lastVisiblePlacement = settings.LastVisibleMediaPanelPlacement;
         _configuredPanelWidth = settings.MediaPanelWidth;
@@ -351,12 +360,12 @@ public sealed partial class MainWindow : Window
 
     private async void ToggleMediaPanel_Click(object sender, RoutedEventArgs args)
     {
-        AppControlsFlyout.Hide();
         if (!_isWebVisible) return;
         if (_mediaPlacement == MediaPanelPlacement.Hidden) _mediaPlacement = _lastVisiblePlacement;
         else { _lastVisiblePlacement = _mediaPlacement; _mediaPlacement = MediaPanelPlacement.Hidden; }
         ApplyMediaLayout();
         await PersistAsync(CurrentSettings(), alreadyApplied: true);
+        CloseControlsDrawer();
     }
 
     private EdgeDockSettings CurrentSettings() => new(
@@ -366,10 +375,19 @@ public sealed partial class MainWindow : Window
         _configuredPanelWidth,
         _showArtwork,
         _isWebVisible,
-        _widgetSlots);
+        _widgetSlots,
+        _material);
+
+    private void ApplyBackdrop()
+    {
+        SystemBackdrop = _material == BackdropMaterial.Acrylic
+            ? new DesktopAcrylicBackdrop()
+            : new MicaBackdrop { Kind = Microsoft.UI.Composition.SystemBackdrops.MicaKind.BaseAlt };
+    }
 
     private void UpdateSettingsControls()
     {
+        MaterialSelector.SelectedIndex = _material == BackdropMaterial.Acrylic ? 1 : 0;
         PlacementComboBox.SelectedIndex = _mediaPlacement switch
         {
             MediaPanelPlacement.Left => 1,
@@ -393,8 +411,7 @@ public sealed partial class MainWindow : Window
 
     private void BuildWidgetSlots()
     {
-        _menuSlot?.SetHeaderActions(null);
-        _menuSlot = null;
+        if (_isWidgetView) return;
         WidgetHost.Children.Clear();
         WidgetHost.ColumnDefinitions.Clear();
         for (var index = 0; index < _widgetSlots.Count; index++)
@@ -417,6 +434,18 @@ public sealed partial class MainWindow : Window
     private void ApplyMediaLayout()
     {
         if (WidgetHost is null) return;
+        if (_isWidgetView)
+        {
+            WebSurface.Visibility = Visibility.Collapsed;
+            WidgetHost.Visibility = Visibility.Collapsed;
+            WidgetGallery.Visibility = Visibility.Visible;
+            Workspace.ColumnSpacing = 0;
+            WebColumn.Width = new GridLength(1, GridUnitType.Star);
+            MediaColumn.Width = new GridLength(0);
+            return;
+        }
+
+        WidgetGallery.Visibility = Visibility.Collapsed;
         var widgetsVisible = _mediaPlacement != MediaPanelPlacement.Hidden || !_isWebVisible;
         WidgetHost.Visibility = widgetsVisible ? Visibility.Visible : Visibility.Collapsed;
         WebSurface.Visibility = _isWebVisible ? Visibility.Visible : Visibility.Collapsed;
@@ -437,23 +466,152 @@ public sealed partial class MainWindow : Window
         AutomationProperties.SetName(MediaVisibilityButton, label);
         ToolTipService.SetToolTip(MediaVisibilityButton, _isWebVisible ? label : "Enable the web dashboard before hiding widgets");
         WidgetVisibilityText.Text = label;
-        MovePanelMenu(widgetsVisible);
     }
 
-    private void MovePanelMenu(bool widgetsVisible)
+    private void ControlHandle_Click(object sender, RoutedEventArgs args) => OpenControlsDrawer();
+
+    private void ControlHandle_ManipulationCompleted(object sender, ManipulationCompletedRoutedEventArgs args)
     {
-        var target = widgetsVisible ? WidgetHost.Children.OfType<WidgetSlotView>().FirstOrDefault() : null;
-        if (_menuSlot != target || (target is not null && WebHeaderHost.Content is not null))
+        if (args.Cumulative.Translation.Y >= 28 &&
+            Math.Abs(args.Cumulative.Translation.Y) > Math.Abs(args.Cumulative.Translation.X))
         {
-            _menuSlot?.SetHeaderActions(null);
-            WebHeaderHost.Content = null;
-            _menuSlot = target;
-            if (target is not null) target.SetHeaderActions(PanelMenuButton);
-            else WebHeaderHost.Content = PanelMenuButton;
+            OpenControlsDrawer();
         }
-        else if (target is null && WebHeaderHost.Content is null)
-            WebHeaderHost.Content = PanelMenuButton;
-        WebHeaderHost.Visibility = target is null ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void OpenControlsDrawer()
+    {
+        if (ControlsOverlay.Visibility == Visibility.Visible) return;
+        _controlsFocusReturn = FocusManager.GetFocusedElement(Root.XamlRoot) as Control;
+        if (!_isWidgetView) BuildPanelSelectors();
+        DashboardControls.Visibility = _isWidgetView ? Visibility.Collapsed : Visibility.Visible;
+        WidgetViewText.Text = _isWidgetView ? "Back to dashboard" : "Widget view";
+        AutomationProperties.SetName(WidgetViewButton, WidgetViewText.Text);
+        ControlsOverlay.Visibility = Visibility.Visible;
+        Workspace.IsHitTestVisible = false;
+        ControlHandle.IsEnabled = false;
+        DashboardWebView.IsHitTestVisible = false;
+        DashboardWebView.IsTabStop = false;
+        CloseControlsButton.Focus(FocusState.Programmatic);
+    }
+
+    private void BuildPanelSelectors()
+    {
+        _updatingPanelCount = true;
+        PanelCountSelector.SelectedIndex = _widgetSlots.Count - 1;
+        _updatingPanelCount = false;
+        PanelSelectors.Children.Clear();
+        var slots = WidgetHost.Children.OfType<WidgetSlotView>().ToArray();
+        for (var index = 0; index < _widgetSlots.Count; index++)
+        {
+            var selector = new ComboBox
+            {
+                Header = $"Panel {index + 1}",
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                MinHeight = 52,
+                Tag = index
+            };
+            AutomationProperties.SetName(selector, $"Widget shown in panel {index + 1}");
+            foreach (var id in _widgetSlots[index].EnabledWidgetIds)
+            {
+                var name = _registry.TryGet(id, out var descriptor) && descriptor is not null
+                    ? descriptor.DisplayName
+                    : $"Unavailable: {id}";
+                selector.Items.Add(new ComboBoxItem { Content = name, Tag = id });
+            }
+
+            selector.SelectedItem = selector.Items.Cast<ComboBoxItem>().FirstOrDefault(item =>
+                string.Equals(item.Tag as string, slots.ElementAtOrDefault(index)?.SelectedWidgetId, StringComparison.OrdinalIgnoreCase));
+            selector.IsEnabled = selector.Items.Count > 1;
+            selector.SelectionChanged += (_, _) =>
+            {
+                if (selector.SelectedItem is ComboBoxItem item && item.Tag is string id)
+                    slots.ElementAtOrDefault((int)selector.Tag)?.SelectWidget(id);
+            };
+            PanelSelectors.Children.Add(selector);
+        }
+    }
+
+    private async void PanelCountSelector_SelectionChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (_updatingPanelCount || PanelCountSelector.SelectedIndex < 0) return;
+        var count = PanelCountSelector.SelectedIndex + 1;
+        if (count == _widgetSlots.Count) return;
+        var slots = _widgetSlots.Take(count).ToList();
+        while (slots.Count < count)
+            slots.Add(new WidgetSlotSettings(["media", "audio", "pc"], "media"));
+        _widgetSlots = slots;
+        BuildWidgetSlots();
+        ApplyMediaLayout();
+        BuildPanelSelectors();
+        UpdateSettingsControls();
+        if (!await PersistAsync(CurrentSettings(), alreadyApplied: true))
+            CloseControlsDrawer(restoreFocus: false);
+    }
+
+    private void CloseControls_Click(object sender, RoutedEventArgs args) => CloseControlsDrawer();
+    private void ControlsScrim_Tapped(object sender, TappedRoutedEventArgs args) => CloseControlsDrawer();
+
+    private void CloseControlsDrawer(bool restoreFocus = true)
+    {
+        if (ControlsOverlay.Visibility != Visibility.Visible) return;
+        ControlsOverlay.Visibility = Visibility.Collapsed;
+        Workspace.IsHitTestVisible = true;
+        ControlHandle.IsEnabled = true;
+        DashboardWebView.IsHitTestVisible = !_isWidgetView;
+        DashboardWebView.IsTabStop = !_isWidgetView;
+        if (restoreFocus)
+        {
+            if (_controlsFocusReturn is null || !_controlsFocusReturn.Focus(FocusState.Programmatic))
+                ControlHandle.Focus(FocusState.Programmatic);
+        }
+        _controlsFocusReturn = null;
+    }
+
+    private void ToggleWidgetView_Click(object sender, RoutedEventArgs args)
+    {
+        if (_isWidgetView) ExitWidgetView();
+        else EnterWidgetView();
+        CloseControlsDrawer();
+    }
+
+    private void EnterWidgetView()
+    {
+        if (_isWidgetView) return;
+        SettingsPanel.Visibility = Visibility.Collapsed;
+        WidgetHost.Children.Clear();
+        WidgetHost.ColumnDefinitions.Clear();
+        _isWidgetView = true;
+        WidgetGalleryRow.Children.Clear();
+        foreach (var descriptor in _registry.Items)
+        {
+            var widget = descriptor.Create();
+            if (widget is MediaWidget mediaWidget)
+            {
+                mediaWidget.Bind(_media);
+                mediaWidget.ShowArtwork = _showArtwork;
+            }
+
+            var card = new Grid
+            {
+                Width = Math.Max(MinimumPanelWidth, _configuredPanelWidth),
+                VerticalAlignment = VerticalAlignment.Stretch
+            };
+            card.Children.Add(widget);
+            AutomationProperties.SetName(card, descriptor.DisplayName);
+            WidgetGalleryRow.Children.Add(card);
+        }
+        ApplyMediaLayout();
+    }
+
+    private void ExitWidgetView()
+    {
+        if (!_isWidgetView) return;
+        WidgetGalleryRow.Children.Clear();
+        WidgetGallery.Visibility = Visibility.Collapsed;
+        _isWidgetView = false;
+        BuildWidgetSlots();
+        ApplyMediaLayout();
     }
 
     private void Reload_Click(object sender, RoutedEventArgs args)
@@ -472,7 +630,7 @@ public sealed partial class MainWindow : Window
 
     private void ToggleFullScreen()
     {
-        AppControlsFlyout.Hide();
+        CloseControlsDrawer();
         if (_isFullScreen)
         {
             AppWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
@@ -515,6 +673,7 @@ public sealed partial class MainWindow : Window
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
         _closing = true;
+        WidgetGalleryRow.Children.Clear();
         WidgetHost.Children.Clear();
         _media.Dispose();
         if (DashboardWebView.CoreWebView2 is not null)

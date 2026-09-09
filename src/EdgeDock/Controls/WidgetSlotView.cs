@@ -9,9 +9,6 @@ namespace EdgeDock.Controls;
 internal sealed class WidgetSlotView : Grid
 {
     private readonly HeaderNavigationFlipView _pages = new();
-    private readonly TextBlock _title = new() { FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-    private readonly TextBlock _position = new() { VerticalAlignment = VerticalAlignment.Center };
-    private readonly ContentControl _headerActions = new() { HorizontalAlignment = HorizontalAlignment.Right };
     private readonly WidgetRegistry _registry;
     private readonly MediaSessionService _media;
     private readonly string[] _ids;
@@ -19,45 +16,14 @@ internal sealed class WidgetSlotView : Grid
     private readonly List<ContentControl> _containers = [];
     private bool _ready;
 
-    public ContentControl HeaderActions => _headerActions;
-    public void SetHeaderActions(UIElement? content) => _headerActions.Content = content;
-
     public WidgetSlotView(WidgetRegistry registry, MediaSessionService media, WidgetSlotSettings settings, bool showArtwork)
     {
         _registry = registry;
         _media = media;
         _showArtwork = showArtwork;
         _ids = settings.EnabledWidgetIds.ToArray();
-        Background = new SolidColorBrush(Windows.UI.Color.FromArgb(150, 26, 24, 33));
+        Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         CornerRadius = new CornerRadius(14);
-        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        var header = new Grid { Margin = new Thickness(10, 8, 10, 4), ColumnSpacing = 4 };
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var previous = new Button { Content = new SymbolIcon(Symbol.Back), Padding = new Thickness(0), Width = 52 };
-        var next = new Button { Content = new SymbolIcon(Symbol.Forward), Padding = new Thickness(0), Width = 52 };
-        AutomationProperties.SetName(previous, "Previous widget");
-        AutomationProperties.SetName(next, "Next widget");
-        ToolTipService.SetToolTip(previous, "Previous widget");
-        ToolTipService.SetToolTip(next, "Next widget");
-        previous.Click += (_, _) => Move(-1);
-        next.Click += (_, _) => Move(1);
-        previous.IsEnabled = next.IsEnabled = _ids.Length > 1;
-        var heading = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
-        heading.Children.Add(_title);
-        _position.FontSize = 12;
-        _position.HorizontalAlignment = HorizontalAlignment.Center;
-        _position.Foreground = (Brush)Application.Current.Resources["MutedTextBrush"];
-        heading.Children.Add(_position);
-        header.Children.Add(previous);
-        Grid.SetColumn(heading, 1); header.Children.Add(heading);
-        Grid.SetColumn(_headerActions, 2); header.Children.Add(_headerActions);
-        Grid.SetColumn(next, 3); header.Children.Add(next);
-        Children.Add(header);
-        Grid.SetRow(_pages, 1);
         AutomationProperties.SetName(_pages, "Widget pages");
         Children.Add(_pages);
         foreach (var id in _ids)
@@ -68,7 +34,6 @@ internal sealed class WidgetSlotView : Grid
         }
         if (_ids.Length == 0)
         {
-            _title.Text = "Choose widgets";
             _pages.Items.Add(new TextBlock { Text = "Open Settings to add widgets to this panel.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(20) });
             return;
         }
@@ -80,6 +45,18 @@ internal sealed class WidgetSlotView : Grid
 
     public event EventHandler<string>? SelectionChanged;
 
+    public string? SelectedWidgetId => _pages.SelectedIndex >= 0 && _pages.SelectedIndex < _ids.Length
+        ? _ids[_pages.SelectedIndex]
+        : null;
+
+    public bool SelectWidget(string id)
+    {
+        var index = Array.FindIndex(_ids, candidate => string.Equals(candidate, id, StringComparison.OrdinalIgnoreCase));
+        if (index < 0) return false;
+        _pages.SelectedIndex = index;
+        return true;
+    }
+
     private void ActivateSelection()
     {
         var index = _pages.SelectedIndex;
@@ -89,7 +66,6 @@ internal sealed class WidgetSlotView : Grid
         var id = _ids[index];
         if (_registry.TryGet(id, out var descriptor) && descriptor is not null)
         {
-            _title.Text = descriptor.DisplayName;
             if (_containers[index].Content is null)
             {
                 var control = descriptor.Create();
@@ -103,19 +79,12 @@ internal sealed class WidgetSlotView : Grid
         }
         else
         {
-            _title.Text = "Unavailable";
             _containers[index].Content = new TextBlock { Text = $"{id} is not installed. Open Settings to choose another widget.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(20) };
         }
-        _position.Text = $"{index + 1} of {_ids.Length}";
         if (_ready) SelectionChanged?.Invoke(this, id);
     }
 
-    private void Move(int direction)
-    {
-        if (_ids.Length > 1) _pages.SelectedIndex = (_pages.SelectedIndex + direction + _ids.Length) % _ids.Length;
-    }
-
-    // Keep native touch/keyboard paging, but use only our panel-header arrows.
+    // Keep native touch and keyboard paging while suppressing the template's overlay arrows.
     private sealed class HeaderNavigationFlipView : FlipView
     {
         protected override void OnApplyTemplate()

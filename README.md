@@ -18,11 +18,13 @@ contribute. This is not a signed installer or a finished consumer release.
 - Places the media panel on the right, on the left, or hides it.
 - Offers a quick show/hide button, adjustable panel width and optional artwork.
 - Provides previous, play/pause and next controls when the player supports them.
-- Switches between windowed and full-screen modes using F11 or the panel menu.
+- Switches between windowed and full-screen modes using F11 or the controls drawer.
 - Keeps the app menu available while in full screen.
 - Supports one to three native widget panels, with an optional web area.
 - Lets each panel switch between its chosen widgets independently.
 - Includes a local library of media, PC volume/mute and Windows Settings shortcuts.
+- Offers **Widget view**: all installed widgets in one horizontally scrolling row,
+  with a button to return to your dashboard layout.
 
 Your other apps stay ordinary Windows windows. Drag a terminal onto the display
 when you need it, then return to EdgeDock. There is no terminal emulator or
@@ -47,14 +49,19 @@ runtime limitations are recorded in [the testing notes](docs/testing.md).
 1. Open **Settings**, enter your dashboard's full `http://` or `https://` address,
    and choose **Save layout**, or turn off the web dashboard to use only widgets.
 2. Sign in through the web page as normal.
-3. Choose the panel position and count in **Settings**. In **Widget library**,
-   tick the widgets each panel should contain. Swipe or use its arrows to switch.
+3. Choose the panel count in **EdgeDock controls**, beside the panel selectors.
+   Choose panel position in **Settings**. In **Widget library**,
+   tick the widgets each panel should contain. Swipe to switch, or choose a page
+   in the controls drawer.
 4. Move the window onto your second display and use **F11** or the full-screen
-   control in the panel's gear menu. The menu stays accessible in full screen.
+   control in the drawer. Click or swipe down on the top-right handle to open it,
+   including in full screen. No utility bar takes space from the dashboard.
 
 **Escape belongs to your web page.** EdgeDock does not use it to exit full screen.
 Mica's appearance follows Windows' backdrop behaviour; it falls back to a solid
 material when transparency is unavailable or the window is inactive.
+Settings also offers **Acrylic**, for a frosted view of what is behind the window.
+This affects native app surfaces; web pages retain their own backgrounds.
 
 Media controls use the current Windows media session. Some applications do not
 publish one, or do not support every transport action. Controls are disabled when
