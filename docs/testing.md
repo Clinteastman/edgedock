@@ -158,8 +158,12 @@ and contains both declarations. Native checks of the rebuilt `artifacts/latest`
 confirmed the context menu opens beside the pointer, including after moving the
 window. In an isolated two-web/two-widget profile, the wheel scrolled each web
 pane independently under the pointer and changed only the hovered widget page.
-The exact Home Assistant/YouTube combination and physical touchscreen remain
-separate user checks.
+Launching the rebuilt executable through Explorer restored the user's normal
+profile (the diagnostic launcher saw a separate profile). In that live layout,
+Home Assistant's context menu opened at the pointer, and Home Assistant and
+YouTube each scrolled independently under the pointer. Pages were returned to
+their starting scroll positions; no dashboard controls or playback were changed.
+Physical touchscreen verification remains separate.
 
 Backdrop adjustment, 9 September 2026: 15 settings checks pass, including
 the saved background visibility value, legacy default and invalid-value recovery.
