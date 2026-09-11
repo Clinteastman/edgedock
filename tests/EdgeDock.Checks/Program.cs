@@ -46,6 +46,28 @@ try
     Check(oneVisible.WebPanelCount == 1 && oneVisible.WebPanelCardIds?.SequenceEqual(["energy", "home"]) == true,
           "Hiding the second web panel preserves its selected card");
 
+    var resized = SettingsStore.Normalize(twoCardsRestarted with { WebSplitRatio = 0.68 });
+    await store.SaveAsync(resized);
+    var resizedRestarted = await new SettingsStore().LoadAsync();
+    Check(resizedRestarted.WebSplitRatio == 0.68 &&
+          SettingsStore.Normalize(resizedRestarted with { WebPanelCount = 1 }).WebSplitRatio == 0.68,
+          "Web split preference survives restart and a temporary single-panel layout");
+    Check(SettingsStore.Normalize(resizedRestarted with { WebSplitRatio = double.NaN }).WebSplitRatio == 0.5 &&
+          SettingsStore.Normalize(resizedRestarted with { WebSplitRatio = -2 }).WebSplitRatio == PanelLayout.MinimumWebSplitRatio,
+          "Invalid web split preferences recover to finite supported values");
+    Check(PanelLayout.EffectiveWebSplitRatio(0.8, 600) == 0.6 &&
+          PanelLayout.EffectiveWebSplitRatio(0.8, 1200) == 0.8,
+          "A narrow view clamps the rendered web split without overwriting its preference");
+    Check(PanelLayout.ResizeSharedWidgetWidth(300, 60, 2, MediaPanelPlacement.Right) == 270 &&
+          PanelLayout.ResizeSharedWidgetWidth(300, 60, 2, MediaPanelPlacement.Left) == 330,
+          "Widget divider distance is shared across panels and follows their side");
+    Check(PanelLayout.EffectiveWidgetGroupWidth(1400, 440, 3, 2) == 900 &&
+          1400 - 10 - PanelLayout.EffectiveWidgetGroupWidth(1400, 440, 3, 2) == 490,
+          "Large widget preferences cannot starve two web panels when their minimums fit");
+    var compressedWidgets = PanelLayout.EffectiveWidgetGroupWidth(900, 440, 3, 2);
+    Check(compressedWidgets > 0 && compressedWidgets < 740 && 900 - 10 - compressedWidgets > 0,
+          "Impossible narrow layouts compress both groups without changing saved preferences");
+
     var cleanedCards = SettingsStore.Normalize(legacy with
     {
         DashboardUrl = null,

@@ -10,16 +10,34 @@
     <TextBlock Text="EdgeDock" FontWeight="SemiBold" VerticalAlignment="Center"/>
    </StackPanel>
   </Grid>
-  <Grid x:Name="Workspace" Grid.Row="1" Padding="10" ColumnSpacing="10">
-   <Grid.ColumnDefinitions><ColumnDefinition x:Name="WebColumn" Width="*"/><ColumnDefinition x:Name="MediaColumn" Width="340"/></Grid.ColumnDefinitions>
+  <Grid x:Name="Workspace" Grid.Row="1" Padding="10">
+   <Grid.ColumnDefinitions><ColumnDefinition x:Name="WebColumn" Width="*"/><ColumnDefinition x:Name="GroupDividerColumn" Width="10"/><ColumnDefinition x:Name="MediaColumn" Width="340"/></Grid.ColumnDefinitions>
             <Border x:Name="WebSurface" Grid.Column="0" CornerRadius="14" Background="#FF0B0A0E"
                     Loaded="WebSurface_LayoutChanged" SizeChanged="WebSurface_LayoutChanged">
-                <Grid x:Name="WebHost" ColumnSpacing="10" />
+                <Grid x:Name="WebHost">
+                 <controls:PanelDivider x:Name="WebDivider" Width="10" MinWidth="10" Padding="0" Background="Transparent" BorderThickness="0"
+                         HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Visibility="Collapsed"
+                         KeyDown="Divider_KeyDown"
+                         AutomationProperties.Name="Resize web panels" AutomationProperties.HelpText="Use left and right arrow keys to resize the two web panels."
+                         ToolTipService.ToolTip="Drag to resize web panels">
+                  <Grid Background="Transparent">
+                   <Rectangle Width="2" Height="44" RadiusX="1" RadiusY="1" Fill="{StaticResource AccentBrush}" Opacity="0.45" IsHitTestVisible="False"/>
+                  </Grid>
+                 </controls:PanelDivider>
+                </Grid>
             </Border>
 
-
-   <Grid x:Name="WidgetHost" Grid.Column="1" ColumnSpacing="10"/>
-   <ScrollViewer x:Name="WidgetGallery" Grid.ColumnSpan="2" Visibility="Collapsed"
+   <controls:PanelDivider x:Name="GroupDivider" Grid.Column="1" Width="10" MinWidth="10" Padding="0" Background="Transparent" BorderThickness="0"
+           HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+           KeyDown="Divider_KeyDown"
+           AutomationProperties.Name="Resize widget panels" AutomationProperties.HelpText="Use left and right arrow keys to resize every widget panel together."
+           ToolTipService.ToolTip="Drag to resize widgets">
+    <Grid Background="Transparent">
+     <Rectangle Width="2" Height="44" RadiusX="1" RadiusY="1" Fill="{StaticResource AccentBrush}" Opacity="0.45" IsHitTestVisible="False"/>
+    </Grid>
+   </controls:PanelDivider>
+   <Grid x:Name="WidgetHost" Grid.Column="2" ColumnSpacing="10"/>
+   <ScrollViewer x:Name="WidgetGallery" Grid.ColumnSpan="3" Visibility="Collapsed"
                  HorizontalScrollMode="Enabled" HorizontalScrollBarVisibility="Auto"
                  VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled"
                  VerticalContentAlignment="Stretch" ZoomMode="Disabled"

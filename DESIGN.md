@@ -13,6 +13,8 @@ content row, including in web-only mode. The drawer contains Settings, full
 screen, widget visibility, panel count and per-panel page selection. Configuration appears
 over content only when requested.
 F11 toggles full screen; Escape is left to active content.
+Full screen removes the title row and outer 10px inset. Dashboard panels meet
+the physical screen with square outside edges; internal 10px divider gaps stay.
 
 ## Layout
 
@@ -23,6 +25,13 @@ With web content, each native panel prefers 240–440 logical pixels; the layout
 reduces the web area before making native controls narrower than 240px. Outer
 spacing and gaps are 10px. Content corners are 14px. Hosted page scrollbar
 chrome is hidden without disabling touch, keyboard, or mouse-wheel scrolling.
+
+When two web panels are visible, their 10px gap is a draggable split handle.
+The web/widget gap resizes every widget panel to the same width; moving it is
+divided across the visible widget count. Handles support pointer and arrow-key
+adjustment, save after an adjustment finishes, and restore the prior size if a
+pointer gesture is cancelled. Viewport constraints clamp only the rendered
+layout, so a preferred split returns when more space is available.
 
 Panels have no shell header, page counter or navigation arrows. A native
 FlipView supplies touch paging; its overlay arrows are hidden. The drawer's

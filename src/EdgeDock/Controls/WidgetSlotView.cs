@@ -15,6 +15,7 @@ internal sealed class WidgetSlotView : Grid
     private readonly bool _showArtwork;
     private readonly List<ContentControl> _containers = [];
     private bool _ready;
+    private bool _edgeToEdge;
 
     public WidgetSlotView(WidgetRegistry registry, MediaSessionService media, WidgetSlotSettings settings, bool showArtwork)
     {
@@ -45,6 +46,31 @@ internal sealed class WidgetSlotView : Grid
 
     public event EventHandler<string>? SelectionChanged;
 
+    public void SetEdgeToEdge(bool edgeToEdge)
+    {
+        _edgeToEdge = edgeToEdge;
+        CornerRadius = new CornerRadius(edgeToEdge ? 0 : 14);
+        foreach (var container in _containers)
+            if (container.Content is DependencyObject content)
+                SetWidgetEdgeToEdge(content, edgeToEdge);
+    }
+
+    internal static void SetWidgetEdgeToEdge(DependencyObject element, bool edgeToEdge)
+    {
+        if (element is Border border)
+        {
+            border.CornerRadius = new CornerRadius(edgeToEdge ? 0 : 14);
+            return;
+        }
+        if (element is ContentControl contentControl && contentControl.Content is DependencyObject content)
+        {
+            SetWidgetEdgeToEdge(content, edgeToEdge);
+            return;
+        }
+        if (element is Panel panel && panel.Children.Count > 0)
+            SetWidgetEdgeToEdge(panel.Children[0], edgeToEdge);
+    }
+
     public string? SelectedWidgetId => _pages.SelectedIndex >= 0 && _pages.SelectedIndex < _ids.Length
         ? _ids[_pages.SelectedIndex]
         : null;
@@ -69,6 +95,7 @@ internal sealed class WidgetSlotView : Grid
             if (_containers[index].Content is null)
             {
                 var control = descriptor.Create();
+                SetWidgetEdgeToEdge(control, _edgeToEdge);
                 if (control is MediaWidget mediaWidget)
                 {
                     mediaWidget.ShowArtwork = _showArtwork;

@@ -13,6 +13,8 @@ A touch dashboard for owners of wide secondary displays, initially the Corsair X
 
 ## Capabilities and constraints
 - Full-screen mode with an obvious way out, usable on any monitor.
+- Full screen uses the whole display edge to edge while keeping internal panel
+  gaps available for resizing.
 - One or two embedded, named user-configured web cards, initially Home Assistant; retain sign-in locally in the shared WebView2 profile.
 - Native Windows media information and playback controls.
 - Main web area beside a media panel with artwork and playback controls, inspired by Android Auto's split-screen arrangement.
@@ -67,6 +69,10 @@ we and contributors can add new native controls independently of the shell.
 An online free widget catalogue and installable third-party packages are future
 work. This iteration must not claim to download or safely sandbox third-party
 code. The local library manages the widgets bundled with EdgeDock.
+
+The gap between two web panels resizes their split. The gap beside the widget
+group changes one shared width used by every visible widget panel. Both choices
+survive restart, while temporary narrow-window limits leave them unchanged.
 
 Preserve the Mica/purple visual identity. Put occasional shell controls in an
 on-demand overlay rather than reserving content space. Check a shallow desktop viewport as well as the

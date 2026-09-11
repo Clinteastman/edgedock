@@ -12,6 +12,8 @@ contribute. This is not a signed installer or a finished consumer release.
 ## What it does
 
 - Saves named web cards and shows one or two side by side.
+- Drag the gaps to resize two web cards or every widget panel together; sizes
+  are saved, and the same widget width is shared across the group.
 - Hides web scrollbar bars while retaining page scrolling.
 - Keeps your browser sign-in locally between launches.
 - Shows track and artist information from compatible Windows media players.

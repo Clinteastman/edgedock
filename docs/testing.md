@@ -127,6 +127,26 @@ these optional variables when unset.
 
 ## Ongoing acceptance checks
 
+Draggable dividers, 11 September 2026: 25 settings and layout checks pass. They
+cover web split migration, persistence, invalid values, narrow-view render
+clamping, shared widget-width conversion and left/right placement direction.
+The dividers use pointer capture, apply changes without rebuilding web views,
+save only when a drag or keyboard step completes, and restore the prior value
+after a cancelled capture. Release x64 rebuild passed with zero warnings/errors.
+Native checks with an isolated two-web/two-widget profile at 150% scaling
+confirmed both mouse drags: the web split changed from 0.5 to 0.6162, and a
+100px logical group drag increased each of two widgets by 50px. Both values
+were saved. Keyboard adjustment was also checked. A full transparent hit area
+inside the divider is essential; the decorative line alone did not receive
+pointer presses. Physical Xeneon touch verification remains separate.
+Full screen removes the outer workspace inset, squares dashboard panel edges
+and immediately refreshes the WebView clip while retaining divider gaps.
+Startup applies the saved root and widget bounds before WebView2 creates its
+child windows. This removes the known 340px-to-690px startup layout transition;
+isolated wheel checks scrolled each web pane independently after resizing.
+This does not yet confirm the user's exact Home Assistant/YouTube combination.
+Native F11 checks confirmed no outer inset or rounded edge gaps in full screen.
+
 Backdrop adjustment, 9 September 2026: 15 settings checks pass, including
 the saved background visibility value, legacy default and invalid-value recovery.
 Native testing used an isolated profile at 900x480 logical pixels. Mica revealed

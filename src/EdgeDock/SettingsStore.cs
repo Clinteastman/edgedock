@@ -21,7 +21,8 @@ internal sealed record EdgeDockSettings(
     double BackdropTransparency = 50,
     IReadOnlyList<WebCardSettings>? WebCards = null,
     int WebPanelCount = 1,
-    IReadOnlyList<string>? WebPanelCardIds = null);
+    IReadOnlyList<string>? WebPanelCardIds = null,
+    double WebSplitRatio = 0.5);
 
 internal sealed class SettingsStore
 {
@@ -68,7 +69,8 @@ internal sealed class SettingsStore
                 stored?.IsWebVisible ?? true,
                 slots,
                 ParseMaterial(stored?.Material), stored?.BackdropTransparency ?? 50,
-                cards, stored?.WebPanelCount ?? 1, stored?.WebPanelCardIds));
+                cards, stored?.WebPanelCount ?? 1, stored?.WebPanelCardIds,
+                stored?.WebSplitRatio ?? 0.5));
         }
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -98,6 +100,7 @@ internal sealed class SettingsStore
                 WebCards = settings.WebCards!.Select(card => new StoredWebCard { Id = card.Id, Name = card.Name, Url = card.Url }).ToList(),
                 WebPanelCount = settings.WebPanelCount,
                 WebPanelCardIds = settings.WebPanelCardIds!.ToList(),
+                WebSplitRatio = settings.WebSplitRatio,
                 WidgetSlots = settings.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
                 ExtensionData = _extensionData
             };
@@ -146,7 +149,8 @@ internal sealed class SettingsStore
             BackdropTransparency = double.IsFinite(value.BackdropTransparency) ? Math.Clamp(value.BackdropTransparency, 0, 100) : 50,
             WebCards = cards,
             WebPanelCount = panelCount,
-            WebPanelCardIds = selections
+            WebPanelCardIds = selections,
+            WebSplitRatio = PanelLayout.NormalizeWebSplitRatio(value.WebSplitRatio)
         };
     }
 
@@ -203,6 +207,7 @@ internal sealed class SettingsStore
         public List<StoredWebCard>? WebCards { get; set; }
         public int? WebPanelCount { get; set; }
         public List<string>? WebPanelCardIds { get; set; }
+        public double? WebSplitRatio { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }
         [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; }
     }

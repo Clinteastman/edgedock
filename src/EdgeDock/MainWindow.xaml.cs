@@ -39,6 +39,7 @@ public sealed partial class MainWindow : Window
     private MediaPanelPlacement _mediaPlacement = MediaPanelPlacement.Right;
     private MediaPanelPlacement _lastVisiblePlacement = MediaPanelPlacement.Right;
     private double _configuredPanelWidth = 340;
+    private double _configuredWebSplitRatio = 0.5;
     private bool _showArtwork = true;
     private bool _isFullScreen;
     private bool _enforcingMinimumSize;
@@ -56,11 +57,18 @@ public sealed partial class MainWindow : Window
     private bool _updatingPanelCount;
     private bool _updatingWebPanelCount;
     private CompositionRoundedRectangleGeometry? _webClipGeometry;
+    private PanelDivider? _activeDivider;
+    private uint _activePointerId;
+    private double _resizeStartX;
+    private double _resizeStartWebSplitRatio;
+    private double _resizeStartPanelWidth;
 
     public MainWindow()
     {
         _messageHookCallback = MessageHookCallback;
         InitializeComponent();
+        RegisterDividerHandlers(WebDivider);
+        RegisterDividerHandlers(GroupDivider);
         ApplyBackdrop();
         ConfigureWindow();
         InstallMessageHook();
@@ -109,10 +117,24 @@ public sealed partial class MainWindow : Window
         _webCards = settings.WebCards!;
         _webPanelCount = settings.WebPanelCount;
         _webPanelCardIds = settings.WebPanelCardIds!;
+        _configuredWebSplitRatio = settings.WebSplitRatio;
         BuildWidgetSlots();
+        // Establish the final native/web bounds before WebView2 creates its child HWNDs.
+        ApplyMediaLayout();
         await BuildWebPanelsAsync();
         ApplyMediaLayout();
         UpdateSettingsControls();
+    }
+
+    private void RegisterDividerHandlers(PanelDivider divider)
+    {
+        // Button handles pointer input internally. Listen to handled events so a
+        // drag still reaches the resize logic, without registering a second XAML handler.
+        divider.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(Divider_PointerPressed), true);
+        divider.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler(Divider_PointerMoved), true);
+        divider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(Divider_PointerReleased), true);
+        divider.AddHandler(UIElement.PointerCanceledEvent, new PointerEventHandler(Divider_PointerCanceled), true);
+        divider.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(Divider_PointerCaptureLost), true);
     }
 
     private async Task<CoreWebView2Environment> GetWebEnvironmentAsync()
@@ -132,18 +154,16 @@ public sealed partial class MainWindow : Window
             {
                 var last = _webPanels[^1];
                 WebHost.Children.Remove(last);
-                WebHost.ColumnDefinitions.RemoveAt(WebHost.ColumnDefinitions.Count - 1);
                 _webPanels.RemoveAt(_webPanels.Count - 1);
                 last.Dispose();
             }
             while (_webPanels.Count < visibleCount)
             {
                 var panel = new WebPanelView(BuildWebPanelsAsync);
-                WebHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                Grid.SetColumn(panel, _webPanels.Count);
                 _webPanels.Add(panel);
                 WebHost.Children.Add(panel);
             }
+            ConfigureWebPanelColumns();
             ReloadButton.IsEnabled = visibleCount > 0 && _webCards.Count > 0;
             if (visibleCount == 0) return;
 
@@ -170,6 +190,36 @@ public sealed partial class MainWindow : Window
             }
         }
         finally { _webPanelGate.Release(); }
+    }
+
+    private void ConfigureWebPanelColumns()
+    {
+        WebHost.ColumnDefinitions.Clear();
+        if (_webPanels.Count < 2)
+        {
+            WebHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            WebDivider.Visibility = Visibility.Collapsed;
+            if (_webPanels.Count == 1) Grid.SetColumn(_webPanels[0], 0);
+            return;
+        }
+
+        WebHost.ColumnDefinitions.Add(new ColumnDefinition());
+        WebHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
+        WebHost.ColumnDefinitions.Add(new ColumnDefinition());
+        Grid.SetColumn(_webPanels[0], 0);
+        Grid.SetColumn(WebDivider, 1);
+        Grid.SetColumn(_webPanels[1], 2);
+        WebDivider.Visibility = Visibility.Visible;
+        ApplyWebSplitLayout();
+    }
+
+    private void ApplyWebSplitLayout()
+    {
+        if (_webPanels.Count != 2 || WebHost.ColumnDefinitions.Count != 3) return;
+        var available = Math.Max(0, WebHost.ActualWidth - 10);
+        var ratio = PanelLayout.EffectiveWebSplitRatio(_configuredWebSplitRatio, available);
+        WebHost.ColumnDefinitions[0].Width = new GridLength(ratio, GridUnitType.Star);
+        WebHost.ColumnDefinitions[2].Width = new GridLength(1 - ratio, GridUnitType.Star);
     }
 
     private void InstallMessageHook()
@@ -267,7 +317,8 @@ public sealed partial class MainWindow : Window
             placement == MediaPanelPlacement.Hidden ? _lastVisiblePlacement : placement,
             PanelWidthSlider.Value, ArtworkToggle.IsOn, WebVisibleToggle.IsOn, LibraryEditor.GetSlots(),
             MaterialSelector.SelectedIndex == 1 ? BackdropMaterial.Acrylic : BackdropMaterial.Mica,
-            BackdropTransparencySlider.Value, cards, _webPanelCount, _webPanelCardIds));
+            BackdropTransparencySlider.Value, cards, _webPanelCount, _webPanelCardIds,
+            _configuredWebSplitRatio));
         if (!await PersistAsync(settings)) return;
         _material = settings.Material;
         _backdropTransparency = settings.BackdropTransparency;
@@ -281,7 +332,9 @@ public sealed partial class MainWindow : Window
         _webCards = settings.WebCards!;
         _webPanelCount = settings.WebPanelCount;
         _webPanelCardIds = settings.WebPanelCardIds!;
+        _configuredWebSplitRatio = settings.WebSplitRatio;
         BuildWidgetSlots();
+        ApplyMediaLayout();
         await BuildWebPanelsAsync();
         ApplyMediaLayout();
         SettingsPanel.Visibility = Visibility.Collapsed;
@@ -329,7 +382,8 @@ public sealed partial class MainWindow : Window
         _backdropTransparency,
         _webCards,
         _webPanelCount,
-        _webPanelCardIds);
+        _webPanelCardIds,
+        _configuredWebSplitRatio);
 
     private void ApplyBackdrop()
     {
@@ -399,7 +453,9 @@ public sealed partial class MainWindow : Window
             WidgetGallery.Visibility = Visibility.Visible;
             Workspace.ColumnSpacing = 0;
             WebColumn.Width = new GridLength(1, GridUnitType.Star);
+            GroupDividerColumn.Width = new GridLength(0);
             MediaColumn.Width = new GridLength(0);
+            GroupDivider.Visibility = Visibility.Collapsed;
             return;
         }
 
@@ -407,23 +463,148 @@ public sealed partial class MainWindow : Window
         var widgetsVisible = _mediaPlacement != MediaPanelPlacement.Hidden || !_isWebVisible;
         WidgetHost.Visibility = widgetsVisible ? Visibility.Visible : Visibility.Collapsed;
         WebSurface.Visibility = _isWebVisible ? Visibility.Visible : Visibility.Collapsed;
-        var available = Math.Max(800, Root.ActualWidth - 20);
-        var requested = _configuredPanelWidth * _widgetSlots.Count + 10 * (_widgetSlots.Count - 1);
-        var minimumWidgetsWidth = 240 * _widgetSlots.Count + 10 * (_widgetSlots.Count - 1);
-        var width = Math.Max(minimumWidgetsWidth, Math.Min(requested, Math.Max(240, available - 360)));
+        var available = Math.Max(800, Root.ActualWidth - Workspace.Padding.Left - Workspace.Padding.Right);
+        var dividerVisible = _isWebVisible && widgetsVisible;
+        var width = dividerVisible
+            ? PanelLayout.EffectiveWidgetGroupWidth(available, _configuredPanelWidth, _widgetSlots.Count, _webPanelCount)
+            : 0;
         var widgetWidth = !_isWebVisible ? new GridLength(1, GridUnitType.Star) : widgetsVisible ? new GridLength(width) : new GridLength(0);
         var webWidth = _isWebVisible ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
         var left = _mediaPlacement == MediaPanelPlacement.Left;
-        Grid.SetColumn(WidgetHost, left ? 0 : 1);
-        Grid.SetColumn(WebSurface, left ? 1 : 0);
+        Grid.SetColumn(WebSurface, left ? 2 : 0);
+        Grid.SetColumn(WidgetHost, left ? 0 : 2);
+        Grid.SetColumn(GroupDivider, 1);
         WebColumn.Width = left ? widgetWidth : webWidth;
         MediaColumn.Width = left ? webWidth : widgetWidth;
-        Workspace.ColumnSpacing = _isWebVisible && widgetsVisible ? 10 : 0;
+        GroupDividerColumn.Width = dividerVisible ? new GridLength(10) : new GridLength(0);
+        GroupDivider.Visibility = dividerVisible ? Visibility.Visible : Visibility.Collapsed;
         MediaVisibilityButton.IsEnabled = _isWebVisible;
         var label = widgetsVisible ? "Hide widgets" : "Show widgets";
         AutomationProperties.SetName(MediaVisibilityButton, label);
         ToolTipService.SetToolTip(MediaVisibilityButton, _isWebVisible ? label : "Enable the web dashboard before hiding widgets");
         WidgetVisibilityText.Text = label;
+    }
+
+    private bool CanResize(PanelDivider divider) =>
+        !_isWidgetView &&
+        ((divider == WebDivider && _isWebVisible && _webPanels.Count == 2) ||
+         (divider == GroupDivider && _isWebVisible && _mediaPlacement != MediaPanelPlacement.Hidden));
+
+    private void Divider_PointerPressed(object sender, PointerRoutedEventArgs args)
+    {
+        if (sender is not PanelDivider divider || !CanResize(divider) || _activeDivider is not null) return;
+        var point = args.GetCurrentPoint(Root);
+        var captured = divider.CapturePointer(args.Pointer);
+        if (!captured) return;
+
+        _activeDivider = divider;
+        _activePointerId = args.Pointer.PointerId;
+        _resizeStartX = point.Position.X;
+        _resizeStartWebSplitRatio = _configuredWebSplitRatio;
+        _resizeStartPanelWidth = _configuredPanelWidth;
+        foreach (var panel in _webPanels) panel.SetInteractive(false);
+        args.Handled = true;
+    }
+
+    private void Divider_PointerMoved(object sender, PointerRoutedEventArgs args)
+    {
+        if (sender is not PanelDivider divider || divider != _activeDivider || args.Pointer.PointerId != _activePointerId) return;
+        var delta = args.GetCurrentPoint(Root).Position.X - _resizeStartX;
+        ApplyResizeDelta(divider, delta);
+        args.Handled = true;
+    }
+
+    private async void Divider_PointerReleased(object sender, PointerRoutedEventArgs args)
+    {
+        if (sender is not PanelDivider divider || divider != _activeDivider || args.Pointer.PointerId != _activePointerId) return;
+        ApplyResizeDelta(divider, args.GetCurrentPoint(Root).Position.X - _resizeStartX);
+        CompleteResize(divider);
+        args.Handled = true;
+        await PersistAsync(CurrentSettings(), alreadyApplied: true);
+    }
+
+    private void Divider_PointerCanceled(object sender, PointerRoutedEventArgs args)
+    {
+        if (sender is PanelDivider divider && divider == _activeDivider && args.Pointer.PointerId == _activePointerId)
+        {
+            RestoreResize(divider);
+            _activeDivider = null;
+            foreach (var panel in _webPanels) panel.SetInteractive(true);
+            args.Handled = true;
+        }
+    }
+
+    private void Divider_PointerCaptureLost(object sender, PointerRoutedEventArgs args)
+    {
+        if (sender is PanelDivider divider && divider == _activeDivider)
+        {
+            RestoreResize(divider);
+            _activeDivider = null;
+            foreach (var panel in _webPanels) panel.SetInteractive(true);
+        }
+    }
+
+    private async void Divider_KeyDown(object sender, KeyRoutedEventArgs args)
+    {
+        if (sender is not PanelDivider divider || !CanResize(divider) ||
+            args.Key is not (VirtualKey.Left or VirtualKey.Right)) return;
+
+        var delta = args.Key == VirtualKey.Right ? 10 : -10;
+        if (divider == WebDivider)
+        {
+            var available = Math.Max(1, WebHost.ActualWidth - 10);
+            _configuredWebSplitRatio = PanelLayout.NormalizeWebSplitRatio(_configuredWebSplitRatio + delta / available);
+            ApplyWebSplitLayout();
+        }
+        else
+        {
+            _configuredPanelWidth = PanelLayout.ResizeSharedWidgetWidth(
+                _configuredPanelWidth, delta, _widgetSlots.Count, _mediaPlacement);
+            ApplyMediaLayout();
+            UpdateSettingsControls();
+        }
+
+        args.Handled = true;
+        await PersistAsync(CurrentSettings(), alreadyApplied: true);
+    }
+
+    private void ApplyResizeDelta(PanelDivider divider, double delta)
+    {
+        if (divider == WebDivider)
+        {
+            var available = Math.Max(1, WebHost.ActualWidth - 10);
+            _configuredWebSplitRatio = PanelLayout.NormalizeWebSplitRatio(_resizeStartWebSplitRatio + delta / available);
+            ApplyWebSplitLayout();
+        }
+        else
+        {
+            _configuredPanelWidth = PanelLayout.ResizeSharedWidgetWidth(
+                _resizeStartPanelWidth, delta, _widgetSlots.Count, _mediaPlacement);
+            ApplyMediaLayout();
+            UpdateSettingsControls();
+        }
+    }
+
+    private void CompleteResize(PanelDivider divider)
+    {
+        _activeDivider = null;
+        divider.ReleasePointerCaptures();
+        foreach (var panel in _webPanels) panel.SetInteractive(true);
+    }
+
+    private void RestoreResize(PanelDivider divider)
+    {
+        if (divider == WebDivider)
+        {
+            _configuredWebSplitRatio = _resizeStartWebSplitRatio;
+            ApplyWebSplitLayout();
+        }
+        else
+        {
+            _configuredPanelWidth = _resizeStartPanelWidth;
+            ApplyMediaLayout();
+            UpdateSettingsControls();
+        }
     }
 
     private void MaterialSelector_SelectionChanged(object sender, SelectionChangedEventArgs args) => UpdateBackdropSettingsText();
@@ -634,6 +815,7 @@ public sealed partial class MainWindow : Window
                 mediaWidget.Bind(_media);
                 mediaWidget.ShowArtwork = _showArtwork;
             }
+            WidgetSlotView.SetWidgetEdgeToEdge(widget, _isFullScreen);
 
             var card = new Grid
             {
@@ -685,13 +867,29 @@ public sealed partial class MainWindow : Window
             FullScreenText.Text = "Exit full screen";
             AutomationProperties.SetName(FullScreenButton, "Exit full screen");
         }
+        ApplyFullscreenLayout();
     }
 
-
+    private void ApplyFullscreenLayout()
+    {
+        Workspace.Padding = _isFullScreen ? new Thickness(0) : new Thickness(10);
+        WebSurface.CornerRadius = new CornerRadius(_isFullScreen ? 0 : 14);
+        if (_webClipGeometry is not null)
+            _webClipGeometry.CornerRadius = new Vector2(_isFullScreen ? 0 : 14);
+        foreach (var slot in WidgetHost.Children.OfType<WidgetSlotView>())
+            slot.SetEdgeToEdge(_isFullScreen);
+        foreach (var card in WidgetGalleryRow.Children.OfType<Grid>())
+            if (card.Children.FirstOrDefault() is DependencyObject widget)
+                WidgetSlotView.SetWidgetEdgeToEdge(widget, _isFullScreen);
+        ApplyMediaLayout();
+        ApplyWebSplitLayout();
+        WebSurface_LayoutChanged(WebSurface, new RoutedEventArgs());
+    }
 
     private void Root_SizeChanged(object sender, SizeChangedEventArgs args)
     {
         ApplyMediaLayout();
+        ApplyWebSplitLayout();
         if (_isFullScreen || _enforcingMinimumSize ||
             (args.NewSize.Width >= MinimumWidth && args.NewSize.Height >= MinimumHeight))
         {
