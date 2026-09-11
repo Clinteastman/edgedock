@@ -154,8 +154,12 @@ clicks still matched the rendered page. The executable had no DPI-awareness
 declaration, so the process used Windows DPI virtualization. EdgeDock now
 declares Per-Monitor V2 awareness in its application manifest, with the older
 system-aware fallback. The published manifest was extracted from the executable
-and contains both declarations. Mouse-wheel and context-menu checks against the
-user's Home Assistant and YouTube cards remain pending on the rebuilt artifact.
+and contains both declarations. Native checks of the rebuilt `artifacts/latest`
+confirmed the context menu opens beside the pointer, including after moving the
+window. In an isolated two-web/two-widget profile, the wheel scrolled each web
+pane independently under the pointer and changed only the hovered widget page.
+The exact Home Assistant/YouTube combination and physical touchscreen remain
+separate user checks.
 
 Backdrop adjustment, 9 September 2026: 15 settings checks pass, including
 the saved background visibility value, legacy default and invalid-value recovery.
