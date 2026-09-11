@@ -147,6 +147,16 @@ isolated wheel checks scrolled each web pane independently after resizing.
 This does not yet confirm the user's exact Home Assistant/YouTube combination.
 Native F11 checks confirmed no outer inset or rounded edge gaps in full screen.
 
+Web input coordinates, 11 September 2026: on a display scaled to 150%, moving
+the window by 302 physical pixels moved a WebView context menu by 453 pixels.
+The menu's screen position was being scaled a second time, while ordinary
+clicks still matched the rendered page. The executable had no DPI-awareness
+declaration, so the process used Windows DPI virtualization. EdgeDock now
+declares Per-Monitor V2 awareness in its application manifest, with the older
+system-aware fallback. The published manifest was extracted from the executable
+and contains both declarations. Mouse-wheel and context-menu checks against the
+user's Home Assistant and YouTube cards remain pending on the rebuilt artifact.
+
 Backdrop adjustment, 9 September 2026: 15 settings checks pass, including
 the saved background visibility value, legacy default and invalid-value recovery.
 Native testing used an isolated profile at 900x480 logical pixels. Mica revealed
