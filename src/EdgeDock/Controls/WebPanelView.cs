@@ -80,6 +80,7 @@ internal sealed class WebPanelView : Grid, IDisposable
     private int _retryAttempt;
     private bool _initialized;
     private bool _browserFailed;
+    private bool _blanking;
     private bool _disposed;
 
     internal WebPanelView(Func<Task>? retryInitialization = null)
@@ -114,6 +115,7 @@ internal sealed class WebPanelView : Grid, IDisposable
     internal async Task ShowCardAsync(WebCardSettings card, CoreWebView2Environment environment)
     {
         if (_disposed) return;
+        StopRetry();
         CardId = card.Id;
         AutomationProperties.SetName(_webView, card.Name);
         _uri = new Uri(card.Url);
@@ -135,10 +137,18 @@ internal sealed class WebPanelView : Grid, IDisposable
 
     internal void ShowSetup()
     {
+        StopRetry();
         CardId = null;
         _uri = null;
         _status.Visibility = Visibility.Collapsed;
         _setup.Visibility = Visibility.Visible;
+        // Unload the removed card so it stops running behind the setup screen
+        // (for example a dashboard holding a live connection to its server).
+        if (_webView.CoreWebView2 is not null && !_browserFailed)
+        {
+            _blanking = true;
+            _webView.CoreWebView2.Navigate("about:blank");
+        }
     }
 
     internal void ShowUnavailable() => ShowStatus(
@@ -181,6 +191,7 @@ internal sealed class WebPanelView : Grid, IDisposable
     private void NavigationStarting(WebView2 sender, CoreWebView2NavigationStartingEventArgs args)
     {
         _retryTimer?.Stop();
+        if (_blanking && args.Uri == "about:blank") return;
         if (!SettingsStore.IsAllowedUrl(args.Uri, out _))
         {
             args.Cancel = true;
@@ -192,6 +203,12 @@ internal sealed class WebPanelView : Grid, IDisposable
 
     private void NavigationCompleted(WebView2 sender, CoreWebView2NavigationCompletedEventArgs args)
     {
+        if (_blanking)
+        {
+            _blanking = false;
+            return;
+        }
+        if (_uri is null) return;
         if (args.IsSuccess)
         {
             _retryAttempt = 0;
@@ -231,7 +248,8 @@ internal sealed class WebPanelView : Grid, IDisposable
             _retryTimer.IsRepeating = false;
             _retryTimer.Tick += (_, _) =>
             {
-                if (!_disposed && !_browserFailed && _webView.CoreWebView2 is not null) _webView.Reload();
+                // A card removed while waiting must never be contacted again.
+                if (!_disposed && !_browserFailed && _uri is not null && _webView.CoreWebView2 is not null) _webView.Reload();
             };
         }
         _retryTimer.Interval = delay;

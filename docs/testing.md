@@ -15,6 +15,11 @@
   Try again then recreated and loaded the card.
 - Web content itself was not screenshotted (browser windows were masked); load
   evidence comes from the test server's request log.
+- After review: removing the last card stops pending retries, the retry timer
+  ignores a panel with no card, and the removed page is unloaded to a blank
+  page behind the setup screen (code only; a UI deletion run was abandoned
+  because test-window focus kept being taken by notifications). A failing
+  card was confirmed to keep retrying (503 every 5, 10, 20 and 40 seconds).
 - Not yet tested: reload after a real sleep and wake, and a real network outage.
 
 ## Web cards (9 September 2026)
