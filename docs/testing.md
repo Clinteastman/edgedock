@@ -2,7 +2,7 @@
 
 ## Start on the Edge (9 October 2026)
 
-- Debug and Release x64 builds: zero warnings/errors. 33 console checks pass, including
+- Debug and Release x64 builds: zero warnings/errors. 34 console checks pass, including
   monitor matching by device path, by model after a port change, by unique
   resolution, refusal to guess, and persistence of the screen and full-screen
   choice.
@@ -16,6 +16,10 @@
   resolution (console check); saving with sign-in start on rewrites an entry
   pointing at another copy; moving the window to the Edge and closing it 0.4
   seconds later still saved the Edge (runtime, isolated profile).
+- Second review: screen and full-screen saves now merge onto the saved file
+  inside the save lock; a data folder spelled with and without a trailing
+  slash shares one instance (runtime: the second spelling handed over). Moves
+  are ignored while the saved screen is disconnected (code only).
 - Not yet tested: unplugging or switching off the Edge while full screen
   (minimise and return), sign-in start after a real reboot, and the Startup
   toggle writing the Run key (only the isolated, disabled state was used).

@@ -47,9 +47,11 @@ internal sealed class SettingsStore
     public static string ResolveDataRoot()
     {
         var overrideRoot = Environment.GetEnvironmentVariable("EDGEDOCK_DATA_DIR");
-        return string.IsNullOrWhiteSpace(overrideRoot)
+        var root = string.IsNullOrWhiteSpace(overrideRoot)
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EdgeDock")
             : Path.GetFullPath(overrideRoot);
+        // "C:\profile" and "C:\profile\" are the same folder and must share one instance key.
+        return Path.TrimEndingDirectorySeparator(root);
     }
 
     public async Task<EdgeDockSettings> LoadAsync()

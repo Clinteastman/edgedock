@@ -203,6 +203,8 @@ try
               edgePreference with { DeviceId = "gone" }) == -1 &&
           DisplayPlacement.FindPreferred([main, edge], null) == -1,
           "A missing or ambiguous screen is never guessed");
+    Check(SettingsStore.ResolveDataRoot() == Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)),
+          "The data folder resolves without a trailing separator");
     var sizeOnly = DisplayPlacement.PreferenceFor(new DisplayInfo("", 2560, 720));
     Check(sizeOnly is { DeviceId: null, HardwareId: null, Width: 2560, Height: 720 } &&
           DisplayPlacement.FindPreferred([main, new DisplayInfo("", 2560, 720)], sizeOnly) == 1 &&

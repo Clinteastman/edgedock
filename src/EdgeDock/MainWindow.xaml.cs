@@ -886,7 +886,26 @@ public sealed partial class MainWindow : Window
         _awaitingPreferredDisplay = false;
         _minimizedForMissingDisplay = false;
         _displayPreference = DisplayPlacement.PreferenceFor(CurrentDisplay()) ?? _displayPreference;
-        await PersistAsync(CurrentSettings(), alreadyApplied: true);
+        await PersistDisplayAsync();
+    }
+
+    /// <summary>
+    /// Saves only the remembered screen and full-screen choice, merged onto the settings
+    /// file inside the save gate. Snapshotting the whole layout here could overwrite a
+    /// newer change that another handler saved but has not applied in memory yet.
+    /// </summary>
+    private async Task PersistDisplayAsync()
+    {
+        await _saveGate.WaitAsync();
+        try { await SaveDisplayOntoStoredAsync(_displayPreference, _openFullScreen); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        finally { _saveGate.Release(); }
+    }
+
+    private async Task SaveDisplayOntoStoredAsync(DisplayPreference? display, bool openFullScreen)
+    {
+        var stored = await _settings.LoadAsync();
+        await _settings.SaveAsync(stored with { Display = display, OpenFullScreen = openFullScreen });
     }
 
     private void SetFullScreen(bool fullScreen)
@@ -1022,7 +1041,7 @@ public sealed partial class MainWindow : Window
     private async Task RememberMovedWindowAsync()
     {
         if (_closing || !CaptureMovedDisplay()) return;
-        await PersistAsync(CurrentSettings(), alreadyApplied: true);
+        await PersistDisplayAsync();
     }
 
     /// <summary>Updates the remembered screen from the window's position; true if it changed.</summary>
@@ -1030,6 +1049,11 @@ public sealed partial class MainWindow : Window
     {
         if (_awaitingPreferredDisplay || _minimizedForMissingDisplay ||
             AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized }) return false;
+        // When the saved screen disconnects, Windows moves the window elsewhere. That is not
+        // the user choosing a new screen, so keep the old one to return to.
+        if (_displayPreference is not null &&
+            DisplayPlacement.FindPreferred(ConnectedDisplays().Select(display => display.Info).ToArray(), _displayPreference) < 0)
+            return false;
         var preference = DisplayPlacement.PreferenceFor(CurrentDisplay());
         if (preference is null || preference == _displayPreference) return false;
         _displayPreference = preference;
@@ -1045,13 +1069,14 @@ public sealed partial class MainWindow : Window
         if (_windowMoveTimer?.IsRunning != true) return;
         _windowMoveTimer.Stop();
         if (!CaptureMovedDisplay()) return;
-        var settings = CurrentSettings();
+        var display = _displayPreference;
+        var openFullScreen = _openFullScreen;
         try
         {
             Task.Run(async () =>
             {
                 await _saveGate.WaitAsync();
-                try { await _settings.SaveAsync(settings); }
+                try { await SaveDisplayOntoStoredAsync(display, openFullScreen); }
                 finally { _saveGate.Release(); }
             }).Wait(TimeSpan.FromSeconds(3));
         }
