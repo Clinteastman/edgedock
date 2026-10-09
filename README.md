@@ -16,6 +16,9 @@ contribute. This is not a signed installer or a finished consumer release.
   are saved, and the same widget width is shared across the group.
 - Hides web scrollbar bars while retaining page scrolling.
 - Keeps your browser sign-in locally between launches.
+- Keeps web cards alive: retries pages that cannot be reached yet (for example
+  at sign-in), reloads them after the PC wakes from a sleep longer than a
+  minute, and restarts them if the browser engine crashes.
 - Shows track and artist information from compatible Windows media players.
 - Displays artwork supplied by the current media player, with a neutral fallback.
 - Places the media panel on the right, on the left, or hides it.

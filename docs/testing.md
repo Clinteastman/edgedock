@@ -1,5 +1,22 @@
 # Testing
 
+## Web card recovery (9 October 2026)
+
+- Debug x64 build: zero warnings/errors. 28 console checks pass, including
+  retry back-off, the resume-reload rule and the crash limit.
+- Isolated profile, card pointing at a local port with nothing listening:
+  the card showed it was waiting, and loaded by itself 19 seconds after a
+  local server started. Refused connections report `Unknown`, so retries now
+  cover every failure except certificate, credential and redirect errors.
+- Killing the page's renderer process reloaded the card in the same second
+  (server log). Killing the shared browser process recreated the card and
+  loaded it in the same second, with a no-cache server proving a real load.
+  The fourth browser crash within ten minutes showed "Web cards stopped";
+  Try again then recreated and loaded the card.
+- Web content itself was not screenshotted (browser windows were masked); load
+  evidence comes from the test server's request log.
+- Not yet tested: reload after a real sleep and wake, and a real network outage.
+
 ## Web cards (9 September 2026)
 
 - Release x64 build completed with zero warnings/errors; 19 settings checks
