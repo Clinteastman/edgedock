@@ -91,6 +91,9 @@ public sealed partial class MainWindow : Window
     {
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
+        var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "EdgeDock.ico");
+        AppWindow.SetIcon(iconPath);
+        AppTitleBarIcon.Source = new BitmapImage(new Uri(iconPath));
         AppWindow.ResizeClient(new SizeInt32(1600, 720));
         AppWindow.TitleBar.BackgroundColor = Windows.UI.Color.FromArgb(0, 0, 0, 0);
         AppWindow.TitleBar.ForegroundColor = Colors.White;
