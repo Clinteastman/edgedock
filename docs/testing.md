@@ -25,7 +25,8 @@
   running, a drag rewrote the full layout (card and left placement kept) plus
   the new screen. A failed screen save shows the "not saved" warning. Closing
   0.4 seconds after a drag holds the close, saves, then closes; the new
-  screen was kept.
+  screen was kept. Closing 1.6 seconds after a drag (debounce fired, save in
+  flight) also waits for the save; the new screen was kept.
 - Not yet tested: unplugging or switching off the Edge while full screen
   (minimise and return), sign-in start after a real reboot, and the Startup
   toggle writing the Run key (only the isolated, disabled state was used).

@@ -69,6 +69,8 @@ public sealed partial class MainWindow : Window
     // or damaged and would then overwrite the whole layout.
     private EdgeDockSettings? _savedSettings;
     private bool _closeAfterPendingSave;
+    // Every screen save started, so closing can wait for one already past its debounce.
+    private Task _displaySaves = Task.CompletedTask;
     private bool _openFullScreen;
     private bool _awaitingPreferredDisplay;
     private bool _minimizedForMissingDisplay;
@@ -908,7 +910,14 @@ public sealed partial class MainWindow : Window
     /// onto the last successfully saved settings. Snapshotting the whole in-memory layout
     /// could overwrite a newer change that another handler saved but has not applied yet.
     /// </summary>
-    private async Task PersistDisplayAsync()
+    private Task PersistDisplayAsync()
+    {
+        var save = PersistDisplayCoreAsync();
+        _displaySaves = Task.WhenAll(_displaySaves, save);
+        return save;
+    }
+
+    private async Task PersistDisplayCoreAsync()
     {
         await _saveGate.WaitAsync();
         try { await SaveDisplayOntoSavedAsync(_displayPreference, _openFullScreen); }
@@ -1081,17 +1090,24 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Closing straight after a drag would otherwise lose the move. Hold the close, finish
-    /// the save normally on this thread (a blocking wait could stall behind another save
+    /// Closing straight after a drag, or while its save is still writing, would otherwise lose
+    /// the move. Hold the close, finish the save normally on this thread (a blocking wait could stall behind another save
     /// that needs this dispatcher), then close for real.
     /// </summary>
     private async void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (_closeAfterPendingSave || _windowMoveTimer?.IsRunning != true) return;
+        var movePending = _windowMoveTimer?.IsRunning == true;
+        if (_closeAfterPendingSave || (!movePending && _displaySaves.IsCompleted)) return;
         args.Cancel = true;
         _closeAfterPendingSave = true;
-        _windowMoveTimer.Stop();
-        if (CaptureMovedDisplay()) await PersistDisplayAsync();
+        if (movePending)
+        {
+            _windowMoveTimer!.Stop();
+            if (CaptureMovedDisplay()) _ = PersistDisplayAsync();
+        }
+        // Covers saves started by the timer that are still waiting for the gate or the disk.
+        try { await _displaySaves; }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
         Close();
     }
 
