@@ -20,6 +20,12 @@
   inside the save lock; a data folder spelled with and without a trailing
   slash shares one instance (runtime: the second spelling handed over). Moves
   are ignored while the saved screen is disconnected (code only).
+- Third pass: screen saves merge onto the last successfully saved settings,
+  never a re-read of the file. Runtime: with settings.json damaged while
+  running, a drag rewrote the full layout (card and left placement kept) plus
+  the new screen. A failed screen save shows the "not saved" warning. Closing
+  0.4 seconds after a drag holds the close, saves, then closes; the new
+  screen was kept.
 - Not yet tested: unplugging or switching off the Edge while full screen
   (minimise and return), sign-in start after a real reboot, and the Startup
   toggle writing the Run key (only the isolated, disabled state was used).

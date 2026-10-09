@@ -64,6 +64,11 @@ public sealed partial class MainWindow : Window
     private double _resizeStartWebSplitRatio;
     private double _resizeStartPanelWidth;
     private DisplayPreference? _displayPreference;
+    // The settings as last written (or loaded) successfully. Display-only saves merge onto
+    // this rather than re-reading settings.json, which yields defaults if the file is locked
+    // or damaged and would then overwrite the whole layout.
+    private EdgeDockSettings? _savedSettings;
+    private bool _closeAfterPendingSave;
     private bool _openFullScreen;
     private bool _awaitingPreferredDisplay;
     private bool _minimizedForMissingDisplay;
@@ -116,6 +121,7 @@ public sealed partial class MainWindow : Window
     {
         _ = _media.InitializeAsync();
         var settings = await _settings.LoadAsync();
+        _savedSettings = settings;
         _material = settings.Material;
         _backdropTransparency = settings.BackdropTransparency;
         ApplyBackdrop();
@@ -369,20 +375,28 @@ public sealed partial class MainWindow : Window
     private async Task<bool> PersistAsync(EdgeDockSettings settings, bool alreadyApplied = false)
     {
         await _saveGate.WaitAsync();
-        try { await _settings.SaveAsync(settings); return true; }
+        try
+        {
+            await _settings.SaveAsync(settings);
+            _savedSettings = SettingsStore.Normalize(settings);
+            return true;
+        }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            if (!_closing)
-            {
-                SettingsPanel.Visibility = Visibility.Visible;
-                UrlErrorText.Text = alreadyApplied
-                    ? "Your change is active but was not saved. It may reset when EdgeDock closes. Check access to local app data."
-                    : "Could not save your layout. Check access to the local app data folder.";
-                UrlErrorText.Visibility = Visibility.Visible;
-            }
+            ShowSaveFailure(alreadyApplied);
             return false;
         }
         finally { _saveGate.Release(); }
+    }
+
+    private void ShowSaveFailure(bool alreadyApplied)
+    {
+        if (_closing) return;
+        SettingsPanel.Visibility = Visibility.Visible;
+        UrlErrorText.Text = alreadyApplied
+            ? "Your change is active but was not saved. It may reset when EdgeDock closes. Check access to local app data."
+            : "Could not save your layout. Check access to the local app data folder.";
+        UrlErrorText.Visibility = Visibility.Visible;
     }
 
     private async void ToggleMediaPanel_Click(object sender, RoutedEventArgs args)
@@ -890,22 +904,27 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Saves only the remembered screen and full-screen choice, merged onto the settings
-    /// file inside the save gate. Snapshotting the whole layout here could overwrite a
-    /// newer change that another handler saved but has not applied in memory yet.
+    /// Saves only the remembered screen and full-screen choice, merged inside the save gate
+    /// onto the last successfully saved settings. Snapshotting the whole in-memory layout
+    /// could overwrite a newer change that another handler saved but has not applied yet.
     /// </summary>
     private async Task PersistDisplayAsync()
     {
         await _saveGate.WaitAsync();
-        try { await SaveDisplayOntoStoredAsync(_displayPreference, _openFullScreen); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        try { await SaveDisplayOntoSavedAsync(_displayPreference, _openFullScreen); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            ShowSaveFailure(alreadyApplied: true);
+        }
         finally { _saveGate.Release(); }
     }
 
-    private async Task SaveDisplayOntoStoredAsync(DisplayPreference? display, bool openFullScreen)
+    /// <summary>Call only while holding the save gate.</summary>
+    private async Task SaveDisplayOntoSavedAsync(DisplayPreference? display, bool openFullScreen)
     {
-        var stored = await _settings.LoadAsync();
-        await _settings.SaveAsync(stored with { Display = display, OpenFullScreen = openFullScreen });
+        var merged = (_savedSettings ?? CurrentSettings()) with { Display = display, OpenFullScreen = openFullScreen };
+        await _settings.SaveAsync(merged);
+        _savedSettings = SettingsStore.Normalize(merged);
     }
 
     private void SetFullScreen(bool fullScreen)
@@ -965,6 +984,7 @@ public sealed partial class MainWindow : Window
         _windowMoveTimer.IsRepeating = false;
         _windowMoveTimer.Tick += async (_, _) => await RememberMovedWindowAsync();
         AppWindow.Changed += AppWindow_Changed;
+        AppWindow.Closing += AppWindow_Closing;
 
         _displayWatcher = DisplayArea.CreateWatcher();
         _displayWatcher.Added += DisplayWatcher_Changed;
@@ -1061,26 +1081,18 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Closing straight after a drag would otherwise lose the move. The window is closing,
-    /// so save synchronously off the UI thread (awaiting here would deadlock its dispatcher).
+    /// Closing straight after a drag would otherwise lose the move. Hold the close, finish
+    /// the save normally on this thread (a blocking wait could stall behind another save
+    /// that needs this dispatcher), then close for real.
     /// </summary>
-    private void SavePendingMoveBeforeClose()
+    private async void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (_windowMoveTimer?.IsRunning != true) return;
+        if (_closeAfterPendingSave || _windowMoveTimer?.IsRunning != true) return;
+        args.Cancel = true;
+        _closeAfterPendingSave = true;
         _windowMoveTimer.Stop();
-        if (!CaptureMovedDisplay()) return;
-        var display = _displayPreference;
-        var openFullScreen = _openFullScreen;
-        try
-        {
-            Task.Run(async () =>
-            {
-                await _saveGate.WaitAsync();
-                try { await SaveDisplayOntoStoredAsync(display, openFullScreen); }
-                finally { _saveGate.Release(); }
-            }).Wait(TimeSpan.FromSeconds(3));
-        }
-        catch (AggregateException exception) when (exception.InnerException is IOException or UnauthorizedAccessException) { }
+        if (CaptureMovedDisplay()) await PersistDisplayAsync();
+        Close();
     }
 
     private DisplayInfo? CurrentDisplay()
@@ -1151,11 +1163,11 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
-        SavePendingMoveBeforeClose();
         _closing = true;
         _displayChangeTimer?.Stop();
         _windowMoveTimer?.Stop();
         AppWindow.Changed -= AppWindow_Changed;
+        AppWindow.Closing -= AppWindow_Closing;
         if (_displayWatcher is not null)
         {
             _displayWatcher.Added -= DisplayWatcher_Changed;
