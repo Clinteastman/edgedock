@@ -6,3 +6,4 @@ artifacts/
 *.suo
 .impeccable/
 TestResults/
+.tmp-input-fixture/
