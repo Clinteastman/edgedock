@@ -1,5 +1,21 @@
 # Testing
 
+## Start on the Edge (9 October 2026)
+
+- Debug x64 build: zero warnings/errors. 32 console checks pass, including
+  monitor matching by device path, by model after a port change, by unique
+  resolution, refusal to guess, and persistence of the screen and full-screen
+  choice.
+- Isolated profile on Windows 11 with three monitors (Xeneon Edge 2560x720 at
+  150%, plus two others). A profile remembering the Edge in full screen opened
+  full screen on the Edge by itself. A second launch exited and left one copy.
+- F11 saved full screen off together with the Edge's device path as read by
+  EdgeDock itself; the next launch opened windowed, centred on the Edge.
+  Moving the window to the main screen updated the remembered screen.
+- Not yet tested: unplugging or switching off the Edge while full screen
+  (minimise and return), sign-in start after a real reboot, and the Startup
+  toggle writing the Run key (only the isolated, disabled state was used).
+
 ## Web cards (9 September 2026)
 
 - Release x64 build completed with zero warnings/errors; 19 settings checks

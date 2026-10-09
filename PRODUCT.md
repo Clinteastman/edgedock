@@ -13,6 +13,7 @@ A touch dashboard for owners of wide secondary displays, initially the Corsair X
 
 ## Capabilities and constraints
 - Full-screen mode with an obvious way out, usable on any monitor.
+- Reopens on its own screen, in its last full-screen state, and can start at sign-in.
 - Full screen uses the whole display edge to edge while keeping internal panel
   gaps available for resizing.
 - One or two embedded, named user-configured web cards, initially Home Assistant; retain sign-in locally in the shared WebView2 profile.

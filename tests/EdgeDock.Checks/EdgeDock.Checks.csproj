@@ -8,5 +8,6 @@
   <ItemGroup>
     <Compile Include="../../src/EdgeDock/SettingsStore.cs" Link="SettingsStore.cs" />
     <Compile Include="../../src/EdgeDock/PanelLayout.cs" Link="PanelLayout.cs" />
+    <Compile Include="../../src/EdgeDock/DisplayPlacement.cs" Link="DisplayPlacement.cs" />
   </ItemGroup>
 </Project>

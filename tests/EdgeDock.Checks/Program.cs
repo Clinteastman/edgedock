@@ -183,6 +183,37 @@ try
     Check(partial.WidgetSlots.Any(slot => slot.EnabledWidgetIds.Contains("audio")) &&
           partial.WidgetSlots.All(slot => slot.EnabledWidgetIds.All(id => !string.IsNullOrWhiteSpace(id))),
           "Partially malformed widget lists preserve usable entries without crashing");
+    const string edgePath = @"\\?\DISPLAY#CRX0A1B#5&1a2b3c&0&UID4352#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    const string edgeOtherPortPath = @"\\?\DISPLAY#CRX0A1B#5&9f8e7d&0&UID4356#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    const string mainPath = @"\\?\DISPLAY#GSM5B7F#5&1a2b3c&0&UID4353#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    var edge = new DisplayInfo(edgePath, 2560, 720);
+    var main = new DisplayInfo(mainPath, 3840, 2160);
+    var edgePreference = DisplayPlacement.PreferenceFor(edge);
+    Check(DisplayPlacement.HardwareIdFrom(edgePath) == "CRX0A1B" && DisplayPlacement.HardwareIdFrom("not-a-path") is null &&
+          edgePreference?.HardwareId == "CRX0A1B",
+          "Monitor model code is read from its device path");
+    Check(DisplayPlacement.FindPreferred([main, edge], edgePreference) == 1,
+          "The saved screen is found again by its device path");
+    Check(DisplayPlacement.FindPreferred([main, new DisplayInfo(edgeOtherPortPath, 2560, 720)], edgePreference) == 1,
+          "The saved screen is found by model after moving it to another port");
+    Check(DisplayPlacement.FindPreferred([main, new DisplayInfo("", 2560, 720)], edgePreference) == 1,
+          "A screen without a readable path is matched by its unique resolution");
+    Check(DisplayPlacement.FindPreferred([main], edgePreference) == -1 &&
+          DisplayPlacement.FindPreferred([main, new DisplayInfo(edgeOtherPortPath, 2560, 720), new DisplayInfo(edgeOtherPortPath.Replace("UID4356", "UID4357"), 2560, 720)],
+              edgePreference with { DeviceId = "gone" }) == -1 &&
+          DisplayPlacement.FindPreferred([main, edge], null) == -1,
+          "A missing or ambiguous screen is never guessed");
+
+    store = new SettingsStore();
+    await store.SaveAsync(upgraded with { Display = edgePreference, OpenFullScreen = true });
+    var placed = await new SettingsStore().LoadAsync();
+    Check(placed.Display == edgePreference && placed.OpenFullScreen &&
+          placed.DashboardUrl == upgraded.DashboardUrl,
+          "Saved screen and full-screen choice survive restart without changing the layout");
+    await File.WriteAllTextAsync(file, """{"Display":{"DeviceId":"  ","Width":-5,"Height":99999999}}""");
+    var badDisplay = await new SettingsStore().LoadAsync();
+    Check(badDisplay.Display is null && !badDisplay.OpenFullScreen,
+          "An unusable saved screen is ignored and full screen stays off");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally
