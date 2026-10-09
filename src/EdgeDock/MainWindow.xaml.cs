@@ -324,8 +324,9 @@ public sealed partial class MainWindow : Window
             UrlErrorText.Visibility = Visibility.Visible;
             return;
         }
-        if (StartupToggle.IsEnabled && StartupToggle.IsOn != StartupRegistration.IsEnabled() &&
-            !StartupRegistration.SetEnabled(StartupToggle.IsOn))
+        // Saving with the toggle on also repairs an entry left pointing at a moved or older copy.
+        var startupNeedsChange = StartupToggle.IsOn ? !StartupRegistration.PointsHere() : StartupRegistration.IsEnabled();
+        if (StartupToggle.IsEnabled && startupNeedsChange && !StartupRegistration.SetEnabled(StartupToggle.IsOn))
         {
             UrlErrorText.Text = "Windows did not allow EdgeDock to change its sign-in setting. Your layout was not saved.";
             UrlErrorText.Visibility = Visibility.Visible;
@@ -1020,12 +1021,41 @@ public sealed partial class MainWindow : Window
     /// <summary>Dragging the window to another screen makes that screen the one to reopen on.</summary>
     private async Task RememberMovedWindowAsync()
     {
-        if (_closing || _awaitingPreferredDisplay || _minimizedForMissingDisplay ||
-            AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized }) return;
-        var preference = DisplayPlacement.PreferenceFor(CurrentDisplay());
-        if (preference is null || preference == _displayPreference) return;
-        _displayPreference = preference;
+        if (_closing || !CaptureMovedDisplay()) return;
         await PersistAsync(CurrentSettings(), alreadyApplied: true);
+    }
+
+    /// <summary>Updates the remembered screen from the window's position; true if it changed.</summary>
+    private bool CaptureMovedDisplay()
+    {
+        if (_awaitingPreferredDisplay || _minimizedForMissingDisplay ||
+            AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized }) return false;
+        var preference = DisplayPlacement.PreferenceFor(CurrentDisplay());
+        if (preference is null || preference == _displayPreference) return false;
+        _displayPreference = preference;
+        return true;
+    }
+
+    /// <summary>
+    /// Closing straight after a drag would otherwise lose the move. The window is closing,
+    /// so save synchronously off the UI thread (awaiting here would deadlock its dispatcher).
+    /// </summary>
+    private void SavePendingMoveBeforeClose()
+    {
+        if (_windowMoveTimer?.IsRunning != true) return;
+        _windowMoveTimer.Stop();
+        if (!CaptureMovedDisplay()) return;
+        var settings = CurrentSettings();
+        try
+        {
+            Task.Run(async () =>
+            {
+                await _saveGate.WaitAsync();
+                try { await _settings.SaveAsync(settings); }
+                finally { _saveGate.Release(); }
+            }).Wait(TimeSpan.FromSeconds(3));
+        }
+        catch (AggregateException exception) when (exception.InnerException is IOException or UnauthorizedAccessException) { }
     }
 
     private DisplayInfo? CurrentDisplay()
@@ -1096,6 +1126,7 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
+        SavePendingMoveBeforeClose();
         _closing = true;
         _displayChangeTimer?.Stop();
         _windowMoveTimer?.Stop();

@@ -12,16 +12,24 @@ internal static class StartupRegistration
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string ValueName = "EdgeDock";
 
-    public static bool IsEnabled()
+    public static bool IsEnabled() => !string.IsNullOrWhiteSpace(StoredCommand());
+
+    /// <summary>True when the sign-in entry exists and starts this copy of EdgeDock.</summary>
+    public static bool PointsHere() =>
+        string.Equals(StoredCommand(), CurrentCommand, StringComparison.OrdinalIgnoreCase);
+
+    private static string CurrentCommand => $"\"{Environment.ProcessPath}\" {StartupArgument}";
+
+    private static string? StoredCommand()
     {
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath);
-            return key?.GetValue(ValueName) is string command && !string.IsNullOrWhiteSpace(command);
+            return key?.GetValue(ValueName) as string;
         }
         catch (Exception exception) when (exception is System.Security.SecurityException or UnauthorizedAccessException or IOException)
         {
-            return false;
+            return null;
         }
     }
 
@@ -35,7 +43,7 @@ internal static class StartupRegistration
             {
                 // Always point at the copy being configured, so moving or rebuilding EdgeDock
                 // and saving again repairs a stale path.
-                key.SetValue(ValueName, $"\"{Environment.ProcessPath}\" {StartupArgument}", RegistryValueKind.String);
+                key.SetValue(ValueName, CurrentCommand, RegistryValueKind.String);
             }
             else
             {

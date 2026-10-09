@@ -20,10 +20,17 @@ internal static class DisplayPlacement
         return parts.Length >= 3 && !string.IsNullOrWhiteSpace(parts[1]) ? parts[1] : null;
     }
 
-    public static DisplayPreference? PreferenceFor(DisplayInfo? display) =>
-        display is null || string.IsNullOrWhiteSpace(display.DeviceId)
-            ? null
-            : new DisplayPreference(display.DeviceId, HardwareIdFrom(display.DeviceId), display.Width, display.Height);
+    /// <summary>
+    /// Some drivers do not report a device path; the resolution alone is still worth keeping
+    /// so the unique-resolution match can find the screen again.
+    /// </summary>
+    public static DisplayPreference? PreferenceFor(DisplayInfo? display)
+    {
+        if (display is null) return null;
+        var deviceId = string.IsNullOrWhiteSpace(display.DeviceId) ? null : display.DeviceId;
+        if (deviceId is null && (display.Width <= 0 || display.Height <= 0)) return null;
+        return new DisplayPreference(deviceId, HardwareIdFrom(deviceId), display.Width, display.Height);
+    }
 
     /// <summary>
     /// Finds the saved monitor: the same device path first, then the only connected monitor of the

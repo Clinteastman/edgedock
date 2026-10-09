@@ -2,7 +2,7 @@
 
 ## Start on the Edge (9 October 2026)
 
-- Debug x64 build: zero warnings/errors. 32 console checks pass, including
+- Debug and Release x64 builds: zero warnings/errors. 33 console checks pass, including
   monitor matching by device path, by model after a port change, by unique
   resolution, refusal to guess, and persistence of the screen and full-screen
   choice.
@@ -12,6 +12,10 @@
 - F11 saved full screen off together with the Edge's device path as read by
   EdgeDock itself; the next launch opened windowed, centred on the Edge.
   Moving the window to the main screen updated the remembered screen.
+- After review: a screen whose device path cannot be read is remembered by
+  resolution (console check); saving with sign-in start on rewrites an entry
+  pointing at another copy; moving the window to the Edge and closing it 0.4
+  seconds later still saved the Edge (runtime, isolated profile).
 - Not yet tested: unplugging or switching off the Edge while full screen
   (minimise and return), sign-in start after a real reboot, and the Startup
   toggle writing the Run key (only the isolated, disabled state was used).

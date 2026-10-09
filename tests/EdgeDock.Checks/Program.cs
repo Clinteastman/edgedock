@@ -203,6 +203,11 @@ try
               edgePreference with { DeviceId = "gone" }) == -1 &&
           DisplayPlacement.FindPreferred([main, edge], null) == -1,
           "A missing or ambiguous screen is never guessed");
+    var sizeOnly = DisplayPlacement.PreferenceFor(new DisplayInfo("", 2560, 720));
+    Check(sizeOnly is { DeviceId: null, HardwareId: null, Width: 2560, Height: 720 } &&
+          DisplayPlacement.FindPreferred([main, new DisplayInfo("", 2560, 720)], sizeOnly) == 1 &&
+          DisplayPlacement.PreferenceFor(new DisplayInfo("", 0, 0)) is null,
+          "A screen without a readable path is remembered and found by resolution");
 
     store = new SettingsStore();
     await store.SaveAsync(upgraded with { Display = edgePreference, OpenFullScreen = true });
