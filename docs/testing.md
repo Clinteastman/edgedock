@@ -35,6 +35,9 @@
   a later drag replaces a missing screen even after EdgeDock stepped aside.
   Runtime: with the saved screen missing, a move right after restoring was
   ignored and a move 13 seconds later was saved.
+- With no saved screen (first run or older settings), the screen the window
+  opened on is saved 1.5 seconds after launch (runtime: saved without any move,
+  card kept).
 - Not yet tested: unplugging or switching off the Edge while full screen
   (minimise and return), sign-in start after a real reboot, and the Startup
   toggle writing the Run key (only the isolated, disabled state was used).

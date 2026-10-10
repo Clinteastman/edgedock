@@ -1081,6 +1081,9 @@ public sealed partial class MainWindow : Window
         _displayWatcher.Removed += DisplayWatcher_Changed;
         _displayWatcher.Updated += DisplayWatcher_Changed;
         _displayWatcher.Start();
+        // First run, or settings from before screens were remembered: record where the window
+        // opened once placement settles, so the next launch returns to the same screen.
+        if (_displayPreference is null) _windowMoveTimer.Start();
     }
 
     // Watcher events arrive on a background thread, often several per change; settle them first.
