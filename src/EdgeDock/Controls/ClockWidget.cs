@@ -36,8 +36,11 @@ internal sealed class ClockWidget : UserControl
         Visibility = Visibility.Collapsed
     };
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _timer;
-    private DateTime _lastWeatherAttempt = DateTime.MinValue;
+    // When to ask for weather next (UTC): 15 minutes after the forecast was fetched, or
+    // sooner after a failure.
+    private DateTime _nextWeatherAt = DateTime.MinValue;
     private bool _loadingWeather;
+    private static readonly TimeSpan RetryAfterFailure = TimeSpan.FromMinutes(2);
 
     public ClockWidget(Func<ClockOptions> options)
     {
@@ -97,7 +100,7 @@ internal sealed class ClockWidget : UserControl
         _time.Text = now.ToString("t");
         _date.Text = now.ToString("dddd d MMMM");
         AutomationProperties.SetHelpText(this, $"{_time.Text}, {_date.Text}");
-        if (DateTime.UtcNow - _lastWeatherAttempt >= WeatherService.RefreshInterval) _ = RefreshWeatherAsync();
+        if (DateTime.UtcNow >= _nextWeatherAt) _ = RefreshWeatherAsync();
     }
 
     private async Task RefreshWeatherAsync()
@@ -108,12 +111,12 @@ internal sealed class ClockWidget : UserControl
         {
             _weather.Visibility = Visibility.Collapsed;
             _hint.Visibility = Visibility.Visible;
-            _lastWeatherAttempt = DateTime.UtcNow;
+            _nextWeatherAt = DateTime.UtcNow + WeatherService.RefreshInterval;
             return;
         }
         _hint.Visibility = Visibility.Collapsed;
         _loadingWeather = true;
-        _lastWeatherAttempt = DateTime.UtcNow;
+        _nextWeatherAt = DateTime.UtcNow + RetryAfterFailure;
         try
         {
             var (snapshot, fetchedAt) = await WeatherService.GetAsync(location, options.Fahrenheit);
@@ -122,11 +125,17 @@ internal sealed class ClockWidget : UserControl
                 // Keep showing an earlier reading if there was one; otherwise say why it is empty.
                 if (_weather.Visibility != Visibility.Visible)
                 {
-                    _hint.Text = "Weather is unavailable right now. EdgeDock will try again in 15 minutes.";
+                    _hint.Text = "Weather is unavailable right now. EdgeDock will try again shortly.";
                     _hint.Visibility = Visibility.Visible;
                 }
                 return;
             }
+            // A cached forecast may already be minutes old, so refresh relative to when it was
+            // fetched; but when offline the service returns the last one, so never retry sooner
+            // than the failure back-off.
+            var dueFromFetch = fetchedAt + WeatherService.RefreshInterval;
+            var earliest = DateTime.UtcNow + RetryAfterFailure;
+            _nextWeatherAt = dueFromFetch > earliest ? dueFromFetch : earliest;
             Show(snapshot, location, fetchedAt);
         }
         finally { _loadingWeather = false; }

@@ -40,8 +40,9 @@ contribute. This is not a signed installer or a finished consumer release.
 - **Clock and weather** shows a large clock (following your Windows 12/24-hour
   setting) and the date. Add a town in Settings to see the weather now, today's
   high and low, and the next six hours. Weather comes from Open-Meteo, free and
-  without an account; only the chosen place's position is sent, and only while
-  the clock is on screen.
+  without an account. Finding a place sends the typed town to Open-Meteo; after
+  that only the chosen place's position is sent, and only while the clock is on
+  screen.
 - **PC activity** shows processor, memory, graphics, disk and network use, each
   with a one-minute graph. It reads Windows' own counters: no admin rights,
   drivers or extra software. Temperatures are not shown, because reading them

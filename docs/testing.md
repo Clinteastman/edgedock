@@ -11,6 +11,10 @@
   matched the parser.
 - Captured EdgeDock window (test place: Manchester) showed 20:10, the date,
   overcast 11°, high 13° and low 10°, six hourly cells and the update time.
+- After review: the next weather refresh is scheduled from when the forecast
+  was fetched (never sooner than 2 minutes, so offline retries do not spin);
+  Settings and README now say that Find sends the typed town to Open-Meteo.
+  Capture repeated and live.
 - Not tested yet: the Settings search and save flow (needs real input).
 
 ## PC activity widget (10 October 2026)
