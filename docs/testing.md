@@ -23,6 +23,9 @@
   window, so a card scrolled out of view in Widget view stops sampling (code
   only; Widget view needs input to open). Repeat CPU check: 563 ms visible,
   16 ms hidden over 20 seconds.
+- Fourth review: coming back into view re-primes the counters and clears the
+  graphs, so no reading averages the hidden gap. Capture still live; a
+  minimised window used 47 ms of CPU over 15 seconds.
 - Sampling checks real visibility each second. EdgeDock's CPU time over 20
   seconds: 625 ms with the widget showing, 109 ms with widgets hidden.
 

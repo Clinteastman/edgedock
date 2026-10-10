@@ -113,6 +113,8 @@ internal sealed class SampleHistory(int capacity)
 
     public IReadOnlyList<double> Values => _values.ToArray();
 
+    public void Clear() => _values.Clear();
+
     public void Add(double value)
     {
         _values.Enqueue(double.IsFinite(value) ? value : 0);

@@ -55,6 +55,19 @@ internal sealed class SystemStatsService : IDisposable
         PdhCollectQueryData(_query);
     }
 
+    /// <summary>
+    /// Starts fresh baselines. After a gap (widget hidden), the next reading would otherwise
+    /// average the whole gap instead of the last second.
+    /// </summary>
+    public void Prime()
+    {
+        _lastTimes = null;
+        _lastNetwork = null;
+        CpuPercent();
+        NetworkRates();
+        if (_query != IntPtr.Zero) PdhCollectQueryData(_query);
+    }
+
     public SystemStatsSnapshot Sample()
     {
         var counters = _query != IntPtr.Zero && PdhCollectQueryData(_query) == 0;

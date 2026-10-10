@@ -25,6 +25,8 @@ internal sealed class PcStatsWidget : UserControl
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _timer;
     private SystemStatsService? _stats;
     private bool _sampleRunning;
+    // Starts true so the first visible tick primes fresh baselines rather than showing a gap.
+    private bool _needsPrime = true;
 
     public PcStatsWidget()
     {
@@ -70,14 +72,28 @@ internal sealed class PcStatsWidget : UserControl
     /// <summary>Checks real visibility before doing any work; see <see cref="WidgetVisibility"/>.</summary>
     private void SampleIfOnScreen()
     {
-        if (_sampleRunning || _timer is null || !IsOnScreen()) return;
+        if (_sampleRunning || _timer is null) return;
+        if (!IsOnScreen())
+        {
+            _needsPrime = true;
+            return;
+        }
         _sampleRunning = true;
         var stats = _stats;
+        var prime = _needsPrime;
+        _needsPrime = false;
+        if (prime) foreach (var row in Rows) row.Clear();
         // Opening and reading performance counters can take tens of milliseconds, so both
         // happen on the thread pool. Only one sample runs at a time.
         _ = Task.Run(() =>
         {
             stats ??= new SystemStatsService();
+            if (prime)
+            {
+                // Coming back into view: reset baselines now and show the next full second.
+                stats.Prime();
+                return (Stats: stats, Snapshot: (SystemStatsSnapshot?)null);
+            }
             return (Stats: stats, Snapshot: stats.Sample());
         }).ContinueWith(task =>
         {
@@ -87,7 +103,7 @@ internal sealed class PcStatsWidget : UserControl
                 if (task.Status == TaskStatus.RanToCompletion)
                 {
                     _stats = task.Result.Stats;
-                    if (_timer is not null) Show(task.Result.Snapshot);
+                    if (_timer is not null && task.Result.Snapshot is { } snapshot) Show(snapshot);
                 }
                 if (_timer is null) DisposeStats();
             });
@@ -101,6 +117,8 @@ internal sealed class PcStatsWidget : UserControl
         _stats?.Dispose();
         _stats = null;
     }
+
+    private IEnumerable<StatRow> Rows => [_cpu, _memory, _gpu, _disk, _network];
 
     private void Show(SystemStatsSnapshot snapshot)
     {
@@ -160,6 +178,13 @@ internal sealed class PcStatsWidget : UserControl
             Root.Children.Add(_graph);
             AutomationProperties.SetName(Root, label);
             _value.Text = "…";
+        }
+
+        internal void Clear()
+        {
+            _history.Clear();
+            _secondHistory?.Clear();
+            Draw();
         }
 
         internal void Show(double? value, Func<double, string> format, string? detail, double? second = null)
