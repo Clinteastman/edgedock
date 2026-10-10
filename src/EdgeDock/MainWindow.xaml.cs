@@ -600,7 +600,9 @@ public sealed partial class MainWindow : Window
         // An isolated test profile must not rewrite the real sign-in entry.
         StartupToggle.IsEnabled = !SettingsStore.IsIsolatedProfile;
         StartupToggle.IsOn = StartupRegistration.IsEnabled();
-        ProfileEditor.LoadProfiles(_profiles);
+        // Never while Settings is open: a divider drag or similar refresh would otherwise wipe
+        // unsaved name and program edits. Settings loads them as it opens.
+        if (SettingsPanel.Visibility != Visibility.Visible) ProfileEditor.LoadProfiles(_profiles);
         LoadWeatherPlaces(_weatherLocation, []);
         FahrenheitToggle.IsOn = _fahrenheit;
         WeatherSearchStatus.Visibility = Visibility.Collapsed;
@@ -897,7 +899,8 @@ public sealed partial class MainWindow : Window
             {
                 Content = profile.WhenRunning is { } app ? $"{profile.Name}  ·  with {app}" : profile.Name,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Left
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                MinHeight = 52
             };
             if (active) button.Background = (Brush)Application.Current.Resources["AccentBrush"];
             AutomationProperties.SetName(button, active ? $"{profile.Name}, current layout" : $"Switch to the {profile.Name} layout");
@@ -1054,7 +1057,9 @@ public sealed partial class MainWindow : Window
 
     private async Task SwitchForRunningProgramsAsync(IReadOnlySet<string> running)
     {
-        if (_closing) return;
+        // Mid-drag the layout is an unsaved preview: wait for the next check rather than capture
+        // it or switch under the user's finger.
+        if (_closing || _activeDivider is not null) return;
         // Hand-chosen overrides end once their own program stops, whatever else is running.
         var suppressed = LayoutProfiles.StillSuppressed(_suppressedProfileIds, _profiles, running);
         if (!suppressed.SequenceEqual(_suppressedProfileIds))
