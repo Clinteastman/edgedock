@@ -36,6 +36,11 @@
   one is really written; saving unrelated settings no longer rewrites the level;
   closing waits for any in-flight blank or wake to finish completely before
   restoring.
+- Next review (build and console checks only, same reason): the scheduled
+  level is reapplied whenever full screen or the monitor changes, so returning
+  to full screen on another monitor before the next tick still applies it (and
+  puts the first monitor back first); a restore whose removal from settings.json
+  failed to save is retried each tick and on close.
 
 ## Audio widget (10 October 2026)
 

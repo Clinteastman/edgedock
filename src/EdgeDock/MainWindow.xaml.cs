@@ -81,6 +81,12 @@ public sealed partial class MainWindow : Window
     private bool _screenBusy;
     // The screen update in progress, awaited in full before closing restores brightness.
     private Task _screenWork = Task.CompletedTask;
+    // Where the scheduled level was last applied: full screen on which monitor. A change (such
+    // as leaving full screen, moving and returning before the next tick) means it must be
+    // applied again, to the monitor EdgeDock is on now.
+    private (bool FullScreen, IntPtr Monitor) _scheduleTarget;
+    // A restore that reached the monitor but whose removal from settings.json is not yet saved.
+    private bool _restoreClearUnsaved;
     // The settings as last written (or loaded) successfully. Display-only saves merge onto
     // this rather than re-reading settings.json, which yields defaults if the file is locked
     // or damaged and would then overwrite the whole layout.
@@ -1130,6 +1136,13 @@ public sealed partial class MainWindow : Window
         try
         {
             if (!_screenBlank && _brightnessBeforeBlank is not null) await RestoreBlankedBrightnessAsync();
+            if (_restoreClearUnsaved && _brightnessRestore is null && await PersistBrightnessRestoreAsync()) _restoreClearUnsaved = false;
+            var target = (_isFullScreen, MonitorBrightness.MonitorOf(_windowHandle));
+            if (target != _scheduleTarget)
+            {
+                _scheduleTarget = target;
+                _appliedScheduleBrightness = null;
+            }
             var state = _isFullScreen
                 ? ScreenSchedule.Evaluate(_screenSettings, DateTime.Now, IdleTime())
                 : new ScreenState(null, false);
@@ -1218,7 +1231,9 @@ public sealed partial class MainWindow : Window
         if (_brightnessRestore is not { } restore) return true;
         if (!await SetOnMonitorAsync(restore.Monitor, restore.Brightness)) return false;
         _brightnessRestore = null;
-        await PersistBrightnessRestoreAsync();
+        // If the removal is not saved, keep trying: a stale restore point on disk would
+        // otherwise overwrite a later change made on the monitor's buttons at next launch.
+        _restoreClearUnsaved = !await PersistBrightnessRestoreAsync();
         return true;
     }
 
@@ -1237,7 +1252,11 @@ public sealed partial class MainWindow : Window
             if (!await RestoreOriginalBrightnessAsync() || _brightnessRestore is not null) return false;
         }
         _brightnessRestore = new BrightnessRestore(monitor, brightness);
-        if (await PersistBrightnessRestoreAsync()) return true;
+        if (await PersistBrightnessRestoreAsync())
+        {
+            _restoreClearUnsaved = false;
+            return true;
+        }
         _brightnessRestore = null; // Not saved: leave the monitor alone and try again later.
         return false;
     }
@@ -1536,6 +1555,7 @@ public sealed partial class MainWindow : Window
         _brightnessBeforeBlank = null;
         _blankedMonitor = null;
         await RestoreOriginalBrightnessAsync();
+        if (_restoreClearUnsaved && _brightnessRestore is null) await PersistBrightnessRestoreAsync();
     }
 
     private DisplayInfo? CurrentDisplay()
