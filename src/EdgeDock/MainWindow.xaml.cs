@@ -38,6 +38,7 @@ public sealed partial class MainWindow : Window
     private IntPtr _windowHandle;
     private IntPtr _messageHook;
     private ActivationGuard? _activationGuard;
+    private bool _windowActive;
     private MediaPanelPlacement _mediaPlacement = MediaPanelPlacement.Right;
     private MediaPanelPlacement _lastVisiblePlacement = MediaPanelPlacement.Right;
     private double _configuredPanelWidth = 340;
@@ -79,6 +80,8 @@ public sealed partial class MainWindow : Window
         ConfigureWindow();
         InstallMessageHook();
         _activationGuard = new ActivationGuard(_windowHandle, ShouldSkipActivation);
+        Activated += (_, args) => _windowActive = args.WindowActivationState != WindowActivationState.Deactivated;
+        Root.GettingFocus += Root_GettingFocus;
         PowerManager.SystemSuspendStatusChanged += PowerManager_SystemSuspendStatusChanged;
         Closed += MainWindow_Closed;
         Activated += MainWindow_Activated;
@@ -351,6 +354,26 @@ public sealed partial class MainWindow : Window
         var position = new Windows.Foundation.Point(clientPoint.X / scale, clientPoint.Y / scale);
         if (Contains(ControlHandle, position) || Contains(SettingsPanel, position)) return false;
         return Contains(WidgetHost, position) || Contains(WidgetGallery, position);
+    }
+
+    /// <summary>
+    /// Skipping activation is not enough on its own: tapping a slider or button would move
+    /// XAML focus to it, and that gives the window Win32 focus anyway. While EdgeDock is
+    /// inactive, refuse pointer-driven focus changes inside the widgets. Keyboard focus
+    /// (Tab) is unaffected, and the tap itself still reaches the control.
+    /// </summary>
+    private void Root_GettingFocus(UIElement sender, GettingFocusEventArgs args)
+    {
+        if (_windowActive || args.InputDevice is not (FocusInputDeviceKind.Mouse or FocusInputDeviceKind.Touch or FocusInputDeviceKind.Pen))
+            return;
+        for (var element = args.NewFocusedElement; element is not null; element = VisualTreeHelper.GetParent(element))
+        {
+            if (element == WidgetHost || element == WidgetGallery)
+            {
+                args.TryCancel();
+                return;
+            }
+        }
     }
 
     private static bool Contains(FrameworkElement element, Windows.Foundation.Point position)
