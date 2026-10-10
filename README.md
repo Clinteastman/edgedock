@@ -41,6 +41,10 @@ contribute. This is not a signed installer or a finished consumer release.
   with a one-minute graph. It reads Windows' own counters: no admin rights,
   drivers or extra software. Temperatures are not shown, because reading them
   needs a kernel driver.
+- Saves **layouts** (web panels, widgets and their sizes) by name from EdgeDock
+  controls and switches with one tap. A layout can switch on by itself while a
+  chosen program runs, such as a game, and EdgeDock returns to the previous
+  layout when it closes.
 - Offers **Widget view**: all installed widgets in one horizontally scrolling row,
   with a button to return to your dashboard layout.
 

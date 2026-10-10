@@ -65,6 +65,15 @@ public sealed partial class MainWindow : Window
     private double _resizeStartWebSplitRatio;
     private double _resizeStartPanelWidth;
     private DisplayPreference? _displayPreference;
+    private IReadOnlyList<LayoutProfile> _profiles = [];
+    private string? _activeProfileId;
+    // Automatic switching: the layout to return to, the profile switched on for a running
+    // program, and one the user overrode by hand (left alone until its program restarts).
+    private ProfileLayout? _layoutBeforeAuto;
+    private string? _autoProfileId;
+    private string? _suppressedAutoProfileId;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _profileTimer;
+    private bool _checkingPrograms;
     // The settings as last written (or loaded) successfully. Display-only saves merge onto
     // this rather than re-reading settings.json, which yields defaults if the file is locked
     // or damaged and would then overwrite the whole layout.
@@ -148,10 +157,12 @@ public sealed partial class MainWindow : Window
         _configuredWebSplitRatio = settings.WebSplitRatio;
         _displayPreference = settings.Display;
         _openFullScreen = settings.OpenFullScreen;
+        _profiles = settings.Profiles ?? [];
         // Move to the saved screen before WebView2 creates its child HWNDs, so pages
         // render once at the right size and scale.
         RestorePreferredDisplay();
         StartDisplayTracking();
+        StartProfileWatch();
         BuildWidgetSlots();
         // Establish the final native/web bounds before WebView2 creates its child HWNDs.
         ApplyMediaLayout();
@@ -411,6 +422,12 @@ public sealed partial class MainWindow : Window
             UrlErrorText.Visibility = Visibility.Visible;
             return;
         }
+        if (!ProfileEditor.TryGetProfiles(out var profiles, out var profileError))
+        {
+            UrlErrorText.Text = profileError;
+            UrlErrorText.Visibility = Visibility.Visible;
+            return;
+        }
         // Saving with the toggle on also repairs an entry left pointing at a moved or older copy.
         var startupNeedsChange = StartupToggle.IsOn ? !StartupRegistration.PointsHere() : StartupRegistration.IsEnabled();
         if (StartupToggle.IsEnabled && startupNeedsChange && !StartupRegistration.SetEnabled(StartupToggle.IsOn))
@@ -430,7 +447,8 @@ public sealed partial class MainWindow : Window
             PanelWidthSlider.Value, ArtworkToggle.IsOn, WebVisibleToggle.IsOn, LibraryEditor.GetSlots(),
             MaterialSelector.SelectedIndex == 1 ? BackdropMaterial.Acrylic : BackdropMaterial.Mica,
             BackdropTransparencySlider.Value, cards, _webPanelCount, _webPanelCardIds,
-            _configuredWebSplitRatio, _displayPreference, _openFullScreen));
+            _configuredWebSplitRatio, _displayPreference, _openFullScreen,
+            Profiles: profiles));
         if (!await PersistAsync(settings)) return;
         _material = settings.Material;
         _backdropTransparency = settings.BackdropTransparency;
@@ -445,6 +463,7 @@ public sealed partial class MainWindow : Window
         _webPanelCount = settings.WebPanelCount;
         _webPanelCardIds = settings.WebPanelCardIds!;
         _configuredWebSplitRatio = settings.WebSplitRatio;
+        _profiles = settings.Profiles ?? [];
         BuildWidgetSlots();
         ApplyMediaLayout();
         await BuildWebPanelsAsync();
@@ -505,7 +524,8 @@ public sealed partial class MainWindow : Window
         _webPanelCardIds,
         _configuredWebSplitRatio,
         _displayPreference,
-        _openFullScreen);
+        _openFullScreen,
+        Profiles: _profiles);
 
     private void ApplyBackdrop()
     {
@@ -536,6 +556,7 @@ public sealed partial class MainWindow : Window
         // An isolated test profile must not rewrite the real sign-in entry.
         StartupToggle.IsEnabled = !SettingsStore.IsIsolatedProfile;
         StartupToggle.IsOn = StartupRegistration.IsEnabled();
+        ProfileEditor.LoadProfiles(_profiles);
     }
 
     private void PanelWidthSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs args)
@@ -764,6 +785,128 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>One button per saved layout; the active one is highlighted.</summary>
+    private void BuildProfileButtons()
+    {
+        ProfileButtons.Children.Clear();
+        foreach (var profile in _profiles)
+        {
+            var active = profile.Id == _activeProfileId;
+            var button = new Button
+            {
+                Content = profile.WhenRunning is { } app ? $"{profile.Name}  ·  with {app}" : profile.Name,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left
+            };
+            if (active) button.Background = (Brush)Application.Current.Resources["AccentBrush"];
+            AutomationProperties.SetName(button, active ? $"{profile.Name}, current layout" : $"Switch to the {profile.Name} layout");
+            button.Click += async (_, _) =>
+            {
+                await ApplyProfileAsync(profile.Layout, profile.Id, manual: true);
+                CloseControlsDrawer();
+            };
+            ProfileButtons.Children.Add(button);
+        }
+        ProfileButtons.Visibility = _profiles.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        SaveProfileButton.IsEnabled = _profiles.Count < LayoutProfiles.Maximum;
+    }
+
+    private async void SaveProfile_Click(object sender, RoutedEventArgs args)
+    {
+        var name = ProfileNameBox.Text.Trim();
+        if (name.Length == 0)
+        {
+            ProfileNameBox.Focus(FocusState.Programmatic);
+            return;
+        }
+        // Saving under an existing name replaces that layout and keeps its program trigger.
+        var existing = _profiles.FirstOrDefault(profile => string.Equals(profile.Name, name, StringComparison.CurrentCultureIgnoreCase));
+        var saved = new LayoutProfile(existing?.Id ?? Guid.NewGuid().ToString("N"), name, existing?.WhenRunning, LayoutProfiles.Capture(CurrentSettings()));
+        var updated = existing is null ? _profiles.Append(saved).ToArray() : _profiles.Select(profile => profile.Id == existing.Id ? saved : profile).ToArray();
+        var candidate = SettingsStore.Normalize(CurrentSettings() with { Profiles = updated });
+        if (!await PersistAsync(candidate)) return;
+        _profiles = candidate.Profiles!;
+        _activeProfileId = saved.Id;
+        ProfileNameBox.Text = string.Empty;
+        BuildProfileButtons();
+    }
+
+    /// <summary>Switches the dashboard to a saved layout and saves it as the current one.</summary>
+    private async Task ApplyProfileAsync(ProfileLayout layout, string? profileId, bool manual)
+    {
+        if (manual && _autoProfileId is not null)
+        {
+            // The user chose by hand while a program's layout was on; respect that until the
+            // program next starts.
+            _suppressedAutoProfileId = _autoProfileId;
+            _autoProfileId = null;
+            _layoutBeforeAuto = null;
+        }
+        var settings = LayoutProfiles.Apply(CurrentSettings(), layout);
+        if (!await PersistAsync(settings, alreadyApplied: false)) return;
+        _mediaPlacement = settings.MediaPanelPlacement;
+        _lastVisiblePlacement = settings.LastVisibleMediaPanelPlacement;
+        _configuredPanelWidth = settings.MediaPanelWidth;
+        _isWebVisible = settings.IsWebVisible;
+        _widgetSlots = settings.WidgetSlots;
+        _webPanelCount = settings.WebPanelCount;
+        _webPanelCardIds = settings.WebPanelCardIds!;
+        _configuredWebSplitRatio = settings.WebSplitRatio;
+        _activeProfileId = profileId;
+        BuildWidgetSlots();
+        ApplyMediaLayout();
+        await BuildWebPanelsAsync();
+        ApplyMediaLayout();
+        UpdateSettingsControls();
+    }
+
+    private void StartProfileWatch()
+    {
+        _profileTimer = DispatcherQueue.CreateTimer();
+        _profileTimer.Interval = TimeSpan.FromSeconds(5);
+        _profileTimer.Tick += async (_, _) => await CheckProgramsAsync();
+        _profileTimer.Start();
+    }
+
+    /// <summary>
+    /// Switches to a layout while its program runs and back afterwards. Only process names are
+    /// read, on the thread pool, and only when some layout has a program set.
+    /// </summary>
+    private async Task CheckProgramsAsync()
+    {
+        if (_closing || _checkingPrograms || !_profiles.Any(profile => profile.WhenRunning is not null)) return;
+        _checkingPrograms = true;
+        try
+        {
+            var running = await Task.Run(() =>
+            {
+                var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var process in System.Diagnostics.Process.GetProcesses())
+                {
+                    using (process) names.Add(process.ProcessName);
+                }
+                return names;
+            });
+            var target = LayoutProfiles.Automatic(_profiles, running);
+            if (target is null)
+            {
+                _suppressedAutoProfileId = null;
+                if (_autoProfileId is not null && _layoutBeforeAuto is { } previous)
+                {
+                    _autoProfileId = null;
+                    _layoutBeforeAuto = null;
+                    await ApplyProfileAsync(previous, null, manual: false);
+                }
+                return;
+            }
+            if (target.Id == _autoProfileId || target.Id == _suppressedAutoProfileId) return;
+            _layoutBeforeAuto ??= LayoutProfiles.Capture(CurrentSettings());
+            _autoProfileId = target.Id;
+            await ApplyProfileAsync(target.Layout, target.Id, manual: false);
+        }
+        finally { _checkingPrograms = false; }
+    }
+
     private void OpenControlsDrawer()
     {
         if (ControlsOverlay.Visibility == Visibility.Visible) return;
@@ -772,6 +915,7 @@ public sealed partial class MainWindow : Window
         {
             BuildWebPanelSelectors();
             BuildPanelSelectors();
+            BuildProfileButtons();
         }
         DashboardControls.Visibility = _isWidgetView ? Visibility.Collapsed : Visibility.Visible;
         WidgetViewText.Text = _isWidgetView ? "Back to dashboard" : "Widget view";

@@ -289,6 +289,42 @@ try
     await File.WriteAllTextAsync(file, """{"WebCards":[{"Id":"old","Name":"Old","Url":"https://example.com/"}]}""");
     Check((await new SettingsStore().LoadAsync()).WebCards?[0].Zoom == 1.0,
           "Cards saved before zoom existed open at 100%");
+    var workLayout = LayoutProfiles.Capture(twoCards);
+    var gamingLayout = workLayout with
+    {
+        IsWebVisible = false,
+        WidgetSlots = [new WidgetSlotSettings(["stats"], "stats"), new WidgetSlotSettings(["media"], "media")],
+        WebPanelCount = 1
+    };
+    var withProfiles = SettingsStore.Normalize(twoCards with
+    {
+        Profiles =
+        [
+            new LayoutProfile("work", " Work ", null, workLayout),
+            new LayoutProfile("game", "Gaming", "cs2.exe", gamingLayout),
+            new LayoutProfile("bad", "  ", null, workLayout),
+            new LayoutProfile("game", "Copy", @"C:\Games\x.exe --wipe", workLayout)
+        ]
+    });
+    Check(withProfiles.Profiles is [{ Name: "Work", WhenRunning: null }, { Name: "Gaming", WhenRunning: "cs2" }, { Id: "game-2", WhenRunning: null }],
+          "Layout profiles keep clean names and single program names, and repair IDs");
+    var applied = LayoutProfiles.Apply(withProfiles, gamingLayout);
+    Check(!applied.IsWebVisible && applied.WidgetSlots.Count == 2 && applied.WidgetSlots[0].SelectedWidgetId == "stats" &&
+          applied.WebCards!.Count == 2 && applied.Profiles!.Count == 3,
+          "Applying a profile changes the layout and keeps web cards and the other profiles");
+    var running = new HashSet<string>(["explorer", "cs2"], StringComparer.OrdinalIgnoreCase);
+    Check(LayoutProfiles.Automatic(withProfiles.Profiles!, running)?.Name == "Gaming" &&
+          LayoutProfiles.Automatic(withProfiles.Profiles!, new HashSet<string>(["explorer"])) is null,
+          "A profile switches on while its program is running");
+    store = new SettingsStore();
+    await store.SaveAsync(withProfiles);
+    var profilesSaved = await new SettingsStore().LoadAsync();
+    Check(profilesSaved.Profiles?.Count == 3 && profilesSaved.Profiles[1].Layout.WidgetSlots[0].SelectedWidgetId == "stats" &&
+          !profilesSaved.Profiles[1].Layout.IsWebVisible && profilesSaved.Profiles[1].WhenRunning == "cs2",
+          "Layout profiles survive restart");
+    Check(LayoutProfiles.NormalizeProcessName("Game.EXE") == "Game" && LayoutProfiles.NormalizeProcessName("cmd /c x") is null &&
+          LayoutProfiles.NormalizeProcessName(@"C:\x.exe") is null && LayoutProfiles.NormalizeProcessName(" ") is null,
+          "Program triggers accept a name only");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally

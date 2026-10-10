@@ -24,7 +24,8 @@ internal sealed record EdgeDockSettings(
     IReadOnlyList<string>? WebPanelCardIds = null,
     double WebSplitRatio = 0.5,
     DisplayPreference? Display = null,
-    bool OpenFullScreen = false);
+    bool OpenFullScreen = false,
+    IReadOnlyList<LayoutProfile>? Profiles = null);
 
 internal sealed class SettingsStore
 {
@@ -85,7 +86,21 @@ internal sealed class SettingsStore
                 stored?.Display is { } display
                     ? new DisplayPreference(display.DeviceId, display.HardwareId, display.Width ?? 0, display.Height ?? 0)
                     : null,
-                stored?.OpenFullScreen ?? false));
+                stored?.OpenFullScreen ?? false,
+                Profiles: stored?.Profiles?.Where(profile => profile?.Layout is not null).Select(profile => new LayoutProfile(
+                    profile.Id ?? string.Empty,
+                    profile.Name ?? string.Empty,
+                    profile.WhenRunning,
+                    new ProfileLayout(
+                        ParsePlacement(profile.Layout!.Placement, MediaPanelPlacement.Right, true),
+                        ParsePlacement(profile.Layout.LastVisiblePlacement, MediaPanelPlacement.Right, false),
+                        profile.Layout.PanelWidth ?? 340,
+                        profile.Layout.IsWebVisible ?? true,
+                        profile.Layout.WidgetSlots?.Where(slot => slot is not null)
+                            .Select(slot => new WidgetSlotSettings(slot.EnabledWidgetIds ?? [], slot.SelectedWidgetId)).ToArray() ?? DefaultSlots(),
+                        profile.Layout.WebPanelCount ?? 1,
+                        profile.Layout.WebPanelCardIds ?? [],
+                        profile.Layout.WebSplitRatio ?? 0.5))).ToArray()));
         }
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -120,6 +135,23 @@ internal sealed class SettingsStore
                     ? new StoredDisplay { DeviceId = display.DeviceId, HardwareId = display.HardwareId, Width = display.Width, Height = display.Height }
                     : null,
                 OpenFullScreen = settings.OpenFullScreen,
+                Profiles = settings.Profiles!.Select(profile => new StoredProfile
+                {
+                    Id = profile.Id,
+                    Name = profile.Name,
+                    WhenRunning = profile.WhenRunning,
+                    Layout = new StoredLayout
+                    {
+                        Placement = profile.Layout.Placement.ToString(),
+                        LastVisiblePlacement = profile.Layout.LastVisiblePlacement.ToString(),
+                        PanelWidth = profile.Layout.PanelWidth,
+                        IsWebVisible = profile.Layout.IsWebVisible,
+                        WidgetSlots = profile.Layout.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
+                        WebPanelCount = profile.Layout.WebPanelCount,
+                        WebPanelCardIds = profile.Layout.WebPanelCardIds.ToList(),
+                        WebSplitRatio = profile.Layout.WebSplitRatio
+                    }
+                }).ToList(),
                 WidgetSlots = settings.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
                 ExtensionData = _extensionData
             };
@@ -170,7 +202,8 @@ internal sealed class SettingsStore
             WebPanelCount = panelCount,
             WebPanelCardIds = selections,
             WebSplitRatio = PanelLayout.NormalizeWebSplitRatio(value.WebSplitRatio),
-            Display = NormalizeDisplay(value.Display)
+            Display = NormalizeDisplay(value.Display),
+            Profiles = LayoutProfiles.Normalize(value.Profiles, value with { Profiles = [] })
         };
     }
 
@@ -247,6 +280,7 @@ internal sealed class SettingsStore
         public double? WebSplitRatio { get; set; }
         public StoredDisplay? Display { get; set; }
         public bool? OpenFullScreen { get; set; }
+        public List<StoredProfile>? Profiles { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }
         [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; }
     }
@@ -255,6 +289,26 @@ internal sealed class SettingsStore
     {
         public List<string>? EnabledWidgetIds { get; set; }
         public string? SelectedWidgetId { get; set; }
+    }
+
+    private sealed class StoredProfile
+    {
+        public string? Id { get; set; }
+        public string? Name { get; set; }
+        public string? WhenRunning { get; set; }
+        public StoredLayout? Layout { get; set; }
+    }
+
+    private sealed class StoredLayout
+    {
+        public string? Placement { get; set; }
+        public string? LastVisiblePlacement { get; set; }
+        public double? PanelWidth { get; set; }
+        public bool? IsWebVisible { get; set; }
+        public List<StoredSlot>? WidgetSlots { get; set; }
+        public int? WebPanelCount { get; set; }
+        public List<string>? WebPanelCardIds { get; set; }
+        public double? WebSplitRatio { get; set; }
     }
 
     private sealed class StoredDisplay

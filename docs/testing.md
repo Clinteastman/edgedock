@@ -1,5 +1,18 @@
 # Testing
 
+## Layout profiles (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 55 console checks pass, including
+  name and program clean-up (paths and options rejected), ID repair, applying
+  a layout without losing web cards or other layouts, choosing the automatic
+  layout from running programs, and persistence.
+- Runtime, isolated profile, with a layout set to switch on while a hidden
+  test program runs: captures showed the normal web-and-media layout, then the
+  full-width PC activity layout while the program ran, then the original
+  layout again after it exited (and saved as such).
+- Not tested yet: the drawer's layout buttons and "Save this layout as", and
+  editing layouts in Settings (need real input).
+
 ## PC activity widget (10 October 2026)
 
 - Debug x64 build: zero warnings/errors. 35 console checks pass, including
