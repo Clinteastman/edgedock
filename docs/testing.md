@@ -29,6 +29,10 @@
   muted both (the row reads muted only when every session is). Output switching
   now refuses to start unless all three current defaults were read, so a failed
   switch can always be undone (not exercised: needs Windows to refuse a role).
+- Output switching keeps IPolicyConfig (owner's decision, 10 October 2026),
+  with a supported fallback: when Windows refuses, an "Open Sound settings"
+  button appears under the message. Build only; the refusal path needs Windows
+  to refuse a switch, so it was not exercised.
 
 ## Clock and weather widget (10 October 2026)
 

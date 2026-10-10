@@ -77,7 +77,7 @@ Dashboard-only layout controls are unavailable while this mode is active.
   the remaining height and is capped at 180px.
 - Audio has an output picker (sets the Windows default for every role, using
   the long-standing IPolicyConfig interface; if Windows refuses, it says so and
-  points to Sound settings), master volume with a mute button, a microphone
+  offers an Open Sound settings button), master volume with a mute button, a microphone
   button for the default communications microphone (red when muted), and one
   row per app with a sound session: icon, name, level, slider and mute. Apps
   with several sessions or processes (browsers) get one row that sets all of them. Playing

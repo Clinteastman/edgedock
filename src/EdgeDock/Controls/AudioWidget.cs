@@ -35,6 +35,8 @@ internal sealed class AudioWidget : UserControl
         TextWrapping = TextWrapping.Wrap
     };
     private readonly TextBlock _status = new() { Foreground = Warning, FontSize = 14, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+    // Shown when Windows refuses a switch: Sound settings is the supported way to choose.
+    private readonly Button _soundSettings = new() { Content = "Open Sound settings", Visibility = Visibility.Collapsed };
     private readonly Dictionary<string, AppRow> _appRows = [];
     private readonly Dictionary<string, ImageSource?> _icons = new(StringComparer.OrdinalIgnoreCase);
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _timer;
@@ -90,6 +92,9 @@ internal sealed class AudioWidget : UserControl
         content.Children.Add(new TextBlock { Text = "PC audio", FontSize = 20, FontWeight = FontWeights.SemiBold });
         content.Children.Add(outputRow);
         content.Children.Add(_status);
+        AutomationProperties.SetName(_soundSettings, "Open Sound settings to choose the output");
+        _soundSettings.Click += async (_, _) => await Windows.System.Launcher.LaunchUriAsync(new Uri("ms-settings:sound"));
+        content.Children.Add(_soundSettings);
         content.Children.Add(volumeRow);
         content.Children.Add(_microphone);
         content.Children.Add(appsArea);
@@ -225,6 +230,7 @@ internal sealed class AudioWidget : UserControl
             return;
         }
         _switchError = null;
+        ShowStatus(null);
         ShowMaster(_audio.GetSnapshot());
     }
 
@@ -295,6 +301,7 @@ internal sealed class AudioWidget : UserControl
     {
         _status.Text = message ?? string.Empty;
         _status.Visibility = string.IsNullOrEmpty(message) ? Visibility.Collapsed : Visibility.Visible;
+        _soundSettings.Visibility = _switchError is not null ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>One app: icon, name and level on top; volume slider and mute below.</summary>
