@@ -363,8 +363,11 @@ try
     Check(autoSaved.AutoSwitch?.ProfileId == "game" && autoSaved.AutoSwitch.Before.IsWebVisible == workLayout.IsWebVisible &&
           autoSaved.AutoSwitch.Before.WebPanelCount == workLayout.WebPanelCount,
           "The layout to return to after a program closes survives restart");
-    await store.SaveAsync(withProfiles with { SuppressedProfileIds = ["game", "chat"] });
-    Check((await new SettingsStore().LoadAsync()).SuppressedProfileIds is ["game", "chat"], "Layouts switched off by hand stay off across restart");
+    var overriddenAt = new DateTime(2026, 10, 11, 9, 0, 0, DateTimeKind.Utc);
+    await store.SaveAsync(withProfiles with { SuppressedProfileIds = ["game", "chat"], SuppressedSince = new Dictionary<string, DateTime> { ["game"] = overriddenAt } });
+    var suppressedLoaded = await new SettingsStore().LoadAsync();
+    Check(suppressedLoaded.SuppressedProfileIds is ["game", "chat"] && suppressedLoaded.SuppressedSince?["game"] == overriddenAt,
+          "Layouts switched off by hand, and when, stay off across restart");
     var gameAndChat = new HashSet<string>(["game", "chat"], StringComparer.OrdinalIgnoreCase);
     LayoutProfile[] watched = [new("a", "A", "game", workLayout), new("b", "B", "chat", workLayout)];
     Check(LayoutProfiles.StillSuppressed(["a"], watched, gameAndChat) is ["a"] &&
@@ -373,6 +376,11 @@ try
           LayoutProfiles.StillSuppressed(["a", "b"], watched, gameAndChat) is ["a", "b"] &&
           LayoutProfiles.Automatic(watched, gameAndChat, ["a", "b"]) is null,
           "A hand override ends when its own program stops, even while another layout's program runs");
+    var since = new Dictionary<string, DateTime> { ["a"] = overriddenAt };
+    Check(LayoutProfiles.StillSuppressed(["a"], watched, gameAndChat, since, new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase) { ["game"] = overriddenAt.AddMinutes(-5) }) is ["a"] &&
+          LayoutProfiles.StillSuppressed(["a"], watched, gameAndChat, since, new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase) { ["game"] = overriddenAt.AddMinutes(5) }).Count == 0 &&
+          LayoutProfiles.StillSuppressed(["a"], watched, gameAndChat, since, new Dictionary<string, DateTime>()) is ["a"],
+          "A hand override ends when its program has restarted, even while EdgeDock was closed");
     Check(LayoutProfiles.NormalizeProcessName("Game.EXE") == "Game" && LayoutProfiles.NormalizeProcessName("cmd /c x") is null &&
           LayoutProfiles.NormalizeProcessName(@"C:\x.exe") is null && LayoutProfiles.NormalizeProcessName(" ") is null,
           "Program triggers accept a name only");

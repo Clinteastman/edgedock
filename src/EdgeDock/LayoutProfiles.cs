@@ -116,10 +116,23 @@ internal static class LayoutProfiles
             profile.WhenRunning is { } app && runningProcesses.Contains(app));
 
     /// <summary>
-    /// Layouts the user switched away from by hand stay off until their own program stops; then
-    /// the next start of that program switches again. Every overridden layout is kept, so turning
-    /// off one does not bring back another that is still running. Returns those still to keep off.
+    /// Layouts the user switched away from by hand stay off until their own program stops or
+    /// starts again; then the next start switches again. A restart is seen even if it happened
+    /// while EdgeDock was closed: every running copy then started after the override was made.
+    /// Every overridden layout is kept, so turning off one does not bring back another that is
+    /// still running. Returns those still to keep off.
     /// </summary>
-    public static IReadOnlyList<string> StillSuppressed(IReadOnlyList<string> suppressedIds, IReadOnlyList<LayoutProfile> profiles, IReadOnlySet<string> runningProcesses) =>
-        suppressedIds.Where(id => profiles.Any(profile => profile.Id == id && profile.WhenRunning is { } app && runningProcesses.Contains(app))).ToArray();
+    /// <param name="sinceUtc">When each layout was overridden; unknown means no restart check.</param>
+    /// <param name="earliestStartUtc">Per running program, when its oldest copy started; missing means unknown.</param>
+    public static IReadOnlyList<string> StillSuppressed(
+        IReadOnlyList<string> suppressedIds,
+        IReadOnlyList<LayoutProfile> profiles,
+        IReadOnlySet<string> runningProcesses,
+        IReadOnlyDictionary<string, DateTime>? sinceUtc = null,
+        IReadOnlyDictionary<string, DateTime>? earliestStartUtc = null) =>
+        suppressedIds.Where(id => profiles.FirstOrDefault(profile => profile.Id == id)?.WhenRunning is { } app &&
+            runningProcesses.Contains(app) &&
+            !(sinceUtc?.TryGetValue(id, out var since) == true &&
+              earliestStartUtc?.TryGetValue(app, out var started) == true &&
+              started > since)).ToArray();
 }

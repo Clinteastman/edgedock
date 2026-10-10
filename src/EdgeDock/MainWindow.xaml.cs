@@ -73,6 +73,9 @@ public sealed partial class MainWindow : Window
     private ProfileLayout? _layoutBeforeAuto;
     private string? _autoProfileId;
     private IReadOnlyList<string> _suppressedProfileIds = [];
+    // When each override was made (UTC), so a program restarted while EdgeDock was closed counts
+    // as a new start.
+    private IReadOnlyDictionary<string, DateTime> _suppressedSince = new Dictionary<string, DateTime>();
     // One layout change at a time, from start to finish: a hand choice, an automatic switch and
     // a Settings save each read the current layout and must not interleave.
     private readonly SemaphoreSlim _profileGate = new(1, 1);
@@ -166,6 +169,7 @@ public sealed partial class MainWindow : Window
         _autoProfileId = settings.AutoSwitch?.ProfileId;
         _layoutBeforeAuto = settings.AutoSwitch?.Before;
         _suppressedProfileIds = settings.SuppressedProfileIds ?? [];
+        _suppressedSince = settings.SuppressedSince ?? new Dictionary<string, DateTime>();
         _weatherLocation = settings.Weather;
         _fahrenheit = settings.Fahrenheit;
         // Move to the saved screen before WebView2 creates its child HWNDs, so pages
@@ -476,6 +480,7 @@ public sealed partial class MainWindow : Window
             Profiles: profiles,
             AutoSwitch: null,
             SuppressedProfileIds: suppressedIds,
+            SuppressedSince: SinceFor(suppressedIds),
             Weather: WeatherPlaceSelector.SelectedItem is ComboBoxItem { Tag: WeatherLocation place } ? place : null,
             Fahrenheit: FahrenheitToggle.IsOn));
         if (!await PersistAsync(settings)) return;
@@ -494,6 +499,7 @@ public sealed partial class MainWindow : Window
         _configuredWebSplitRatio = settings.WebSplitRatio;
         _profiles = settings.Profiles ?? [];
         _suppressedProfileIds = settings.SuppressedProfileIds ?? [];
+        _suppressedSince = settings.SuppressedSince ?? new Dictionary<string, DateTime>();
         _autoProfileId = null;
         _layoutBeforeAuto = null;
         _weatherLocation = settings.Weather;
@@ -568,6 +574,7 @@ public sealed partial class MainWindow : Window
         Profiles: _profiles,
         AutoSwitch: _autoProfileId is { } autoId && _layoutBeforeAuto is { } before ? new AutoLayoutSwitch(autoId, before) : null,
         SuppressedProfileIds: _suppressedProfileIds,
+        SuppressedSince: _suppressedSince,
         Weather: _weatherLocation,
         Fahrenheit: _fahrenheit);
 
@@ -968,6 +975,14 @@ public sealed partial class MainWindow : Window
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
+    /// <summary>Override times for these IDs: kept for existing overrides, now for new ones.</summary>
+    private IReadOnlyDictionary<string, DateTime> SinceFor(IReadOnlyList<string> ids)
+    {
+        var now = DateTime.UtcNow;
+        return ids.Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(id => id, id => _suppressedSince.TryGetValue(id, out var since) ? since : now);
+    }
+
     /// <summary>The automatic-switch bookkeeping that goes with a layout change.</summary>
     private sealed record AutoState(string? AutoProfileId, ProfileLayout? Before, IReadOnlyList<string> SuppressedIds);
 
@@ -981,12 +996,14 @@ public sealed partial class MainWindow : Window
         var settings = LayoutProfiles.Apply(CurrentSettings(), layout) with
         {
             AutoSwitch = auto is { AutoProfileId: { } autoId, Before: { } before } ? new AutoLayoutSwitch(autoId, before) : null,
-            SuppressedProfileIds = auto.SuppressedIds
+            SuppressedProfileIds = auto.SuppressedIds,
+            SuppressedSince = SinceFor(auto.SuppressedIds)
         };
         if (!await PersistAsync(settings, alreadyApplied: false)) return false;
         _autoProfileId = auto.AutoProfileId;
         _layoutBeforeAuto = auto.Before;
         _suppressedProfileIds = auto.SuppressedIds;
+        _suppressedSince = settings.SuppressedSince!;
         _mediaPlacement = settings.MediaPanelPlacement;
         _lastVisiblePlacement = settings.LastVisibleMediaPanelPlacement;
         _configuredPanelWidth = settings.MediaPanelWidth;
@@ -1032,40 +1049,71 @@ public sealed partial class MainWindow : Window
         _checkingPrograms = true;
         try
         {
-            var running = await Task.Run(() =>
-            {
-                var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var process in System.Diagnostics.Process.GetProcesses())
-                {
-                    // A process can exit while the list is read; skip it.
-                    using (process)
-                    {
-                        try { names.Add(process.ProcessName); }
-                        catch (InvalidOperationException) { }
-                    }
-                }
-                return names;
-            });
+            // Start times are read only for programs with an override, to see a restart.
+            var watched = new HashSet<string>(_profiles
+                .Where(profile => _suppressedProfileIds.Contains(profile.Id) && profile.WhenRunning is not null)
+                .Select(profile => profile.WhenRunning!), StringComparer.OrdinalIgnoreCase);
+            var scan = await Task.Run(() => ScanProcesses(watched));
+            // Windows could not list processes this time: try again on the next tick.
+            if (scan is not { } found) return;
             // Decide and switch under the gate, so the layout to return to is read only after any
             // hand choice or Settings save in progress has finished.
             await _profileGate.WaitAsync();
-            try { await SwitchForRunningProgramsAsync(running); }
+            try { await SwitchForRunningProgramsAsync(found.Names, found.EarliestStart); }
             finally { _profileGate.Release(); }
         }
         finally { _checkingPrograms = false; }
     }
 
-    private async Task SwitchForRunningProgramsAsync(IReadOnlySet<string> running)
+    /// <summary>Running process names, and for watched names when the oldest copy started (UTC).</summary>
+    private static (HashSet<string> Names, Dictionary<string, DateTime> EarliestStart)? ScanProcesses(IReadOnlySet<string> watched)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var earliest = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        System.Diagnostics.Process[] processes;
+        try { processes = System.Diagnostics.Process.GetProcesses(); }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException) { return null; }
+        var unknown = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var process in processes)
+        {
+            // A process can exit while the list is read; skip it.
+            using (process)
+            {
+                string name;
+                try { name = process.ProcessName; }
+                catch (InvalidOperationException) { continue; }
+                names.Add(name);
+                if (!watched.Contains(name)) continue;
+                try
+                {
+                    var started = process.StartTime.ToUniversalTime();
+                    if (!earliest.TryGetValue(name, out var known) || started < known) earliest[name] = started;
+                }
+                // Not readable (for example an elevated program): its age is unknown.
+                catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException)
+                {
+                    unknown.Add(name);
+                }
+            }
+        }
+        // One copy of unknown age could be the original: do not treat that program as restarted.
+        foreach (var name in unknown) earliest.Remove(name);
+        return (names, earliest);
+    }
+
+    private async Task SwitchForRunningProgramsAsync(IReadOnlySet<string> running, IReadOnlyDictionary<string, DateTime> earliestStart)
     {
         // Mid-drag the layout is an unsaved preview: wait for the next check rather than capture
         // it or switch under the user's finger.
         if (_closing || _activeDivider is not null) return;
         // Hand-chosen overrides end once their own program stops, whatever else is running.
-        var suppressed = LayoutProfiles.StillSuppressed(_suppressedProfileIds, _profiles, running);
+        var suppressed = LayoutProfiles.StillSuppressed(_suppressedProfileIds, _profiles, running, _suppressedSince, earliestStart);
         if (!suppressed.SequenceEqual(_suppressedProfileIds))
         {
-            if (!await PersistAsync(CurrentSettings() with { SuppressedProfileIds = suppressed }, alreadyApplied: false)) return;
+            var since = SinceFor(suppressed);
+            if (!await PersistAsync(CurrentSettings() with { SuppressedProfileIds = suppressed, SuppressedSince = since }, alreadyApplied: false)) return;
             _suppressedProfileIds = suppressed;
+            _suppressedSince = since;
         }
         var target = LayoutProfiles.Automatic(_profiles, running, suppressed);
         if (target is null)

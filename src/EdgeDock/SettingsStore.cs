@@ -28,6 +28,7 @@ internal sealed record EdgeDockSettings(
     IReadOnlyList<LayoutProfile>? Profiles = null,
     AutoLayoutSwitch? AutoSwitch = null,
     IReadOnlyList<string>? SuppressedProfileIds = null,
+    IReadOnlyDictionary<string, DateTime>? SuppressedSince = null,
     WeatherLocation? Weather = null,
     bool Fahrenheit = false);
 
@@ -100,6 +101,7 @@ internal sealed class SettingsStore
                     ? new AutoLayoutSwitch(autoId, ToLayout(before))
                     : null,
                 SuppressedProfileIds: stored?.SuppressedProfileIds,
+                SuppressedSince: stored?.SuppressedSince,
                 Weather: stored?.Weather is { Name: { } weatherName, Latitude: { } latitude, Longitude: { } longitude }
                     ? new WeatherLocation(weatherName, latitude, longitude)
                     : null,
@@ -143,6 +145,7 @@ internal sealed class SettingsStore
                     ? new StoredAutoSwitch { ProfileId = autoSwitch.ProfileId, Before = FromLayout(autoSwitch.Before) }
                     : null,
                 SuppressedProfileIds = settings.SuppressedProfileIds?.ToList(),
+                SuppressedSince = settings.SuppressedSince?.ToDictionary(),
                 Profiles = settings.Profiles!.Select(profile => new StoredProfile
                 {
                     Id = profile.Id,
@@ -212,6 +215,9 @@ internal sealed class SettingsStore
             SuppressedProfileIds = (value.SuppressedProfileIds ?? [])
                 .Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            SuppressedSince = (value.SuppressedSince ?? new Dictionary<string, DateTime>())
+                .Where(entry => value.SuppressedProfileIds?.Contains(entry.Key) == true)
+                .ToDictionary(entry => entry.Key, entry => DateTime.SpecifyKind(entry.Value, DateTimeKind.Utc)),
             Weather = NormalizeWeather(value.Weather)
         };
     }
@@ -300,6 +306,7 @@ internal sealed class SettingsStore
         public List<StoredProfile>? Profiles { get; set; }
         public StoredAutoSwitch? AutoSwitch { get; set; }
         public List<string>? SuppressedProfileIds { get; set; }
+        public Dictionary<string, DateTime>? SuppressedSince { get; set; }
         public StoredWeather? Weather { get; set; }
         public bool? Fahrenheit { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }
