@@ -10,6 +10,10 @@ ID for an unrelated widget.
 
 ## Contribution rules
 
+Widgets can be written in XAML (Audio, Media) or entirely in C# (PC activity,
+`Controls/PcStatsWidget.cs`). Keep calculations in a class without WinUI types,
+as `StatsMath.cs` does, so the console checks can cover them.
+
 Implement a WinUI `UserControl` and register a `WidgetDescriptor` in
 `WidgetRegistry.CreateBuiltIns()` under `src/EdgeDock/Widgets`. The descriptor
 implements `IWidgetDescriptor`: stable `Id`, `DisplayName`, `Description` and a

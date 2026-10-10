@@ -12,5 +12,6 @@
     <Compile Include="../../src/EdgeDock/StartupApproval.cs" Link="StartupApproval.cs" />
     <Compile Include="../../src/EdgeDock/WebRecovery.cs" Link="WebRecovery.cs" />
     <Compile Include="../../src/EdgeDock/MediaNaming.cs" Link="MediaNaming.cs" />
+    <Compile Include="../../src/EdgeDock/StatsMath.cs" Link="StatsMath.cs" />
   </ItemGroup>
 </Project>
