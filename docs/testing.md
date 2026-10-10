@@ -15,6 +15,10 @@
   unavailable disk or network rates read "not available" rather than 0; video
   memory shows the busiest adapter (`GPU Adapter Memory` has one instance per
   adapter, confirmed on this PC: two). 36 console checks pass.
+- Second review: performance counters are opened on the thread pool too, and
+  network rates are tracked per adapter, so an adapter connecting or leaving
+  causes no spike or drop (console check). 37 console checks pass; a fresh
+  capture still showed all five rows live.
 - Sampling checks real visibility each second. EdgeDock's CPU time over 20
   seconds: 625 ms with the widget showing, 109 ms with widgets hidden.
 

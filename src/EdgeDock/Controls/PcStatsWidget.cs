@@ -75,16 +75,24 @@ internal sealed class PcStatsWidget : UserControl
     {
         if (_sampleRunning || _timer is null || !IsOnScreen()) return;
         _sampleRunning = true;
-        _stats ??= new SystemStatsService();
         var stats = _stats;
-        // Performance counters can take tens of milliseconds; keep them off the UI thread.
-        _ = Task.Run(stats.Sample).ContinueWith(task =>
+        // Opening and reading performance counters can take tens of milliseconds, so both
+        // happen on the thread pool. Only one sample runs at a time.
+        _ = Task.Run(() =>
+        {
+            stats ??= new SystemStatsService();
+            return (Stats: stats, Snapshot: stats.Sample());
+        }).ContinueWith(task =>
         {
             DispatcherQueue.TryEnqueue(() =>
             {
                 _sampleRunning = false;
+                if (task.Status == TaskStatus.RanToCompletion)
+                {
+                    _stats = task.Result.Stats;
+                    if (_timer is not null) Show(task.Result.Snapshot);
+                }
                 if (_timer is null) DisposeStats();
-                else if (task.Status == TaskStatus.RanToCompletion) Show(task.Result);
             });
         }, TaskScheduler.Default);
     }

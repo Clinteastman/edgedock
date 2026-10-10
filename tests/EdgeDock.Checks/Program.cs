@@ -223,6 +223,11 @@ try
     Check(line.Count == 3 && line[^1] == (590.0, 0.0) && line[0] == (570.0, 30.0) && line[1].Y == 15 &&
           StatsMath.Sparkline([], 60, 100, 30, 100).Count == 0,
           "Graphs put the newest sample on the right and scale to the panel");
+    var before = new Dictionary<string, (long Down, long Up)> { ["wifi"] = (1000, 500), ["gone"] = (9000, 9000) };
+    var after = new Dictionary<string, (long Down, long Up)> { ["wifi"] = (3000, 1500), ["vpn"] = (50_000_000, 40_000_000) };
+    Check(StatsMath.NetworkRates(before, after, 2) == (1000.0, 500.0) &&
+          StatsMath.NetworkRates(after, new Dictionary<string, (long, long)> { ["wifi"] = (10, 10) }, 1) == (0.0, 0.0),
+          "A newly connected or removed network adapter causes no spike or drop");
     var history = new SampleHistory(3);
     foreach (var sample in new[] { 1.0, 2, double.NaN, 4 }) history.Add(sample);
     Check(history.Values.SequenceEqual([2.0, 0, 4]),

@@ -47,6 +47,27 @@ internal static class StatsMath
         return to <= from ? null : text[from..to];
     }
 
+    /// <summary>
+    /// Network rates from per-adapter byte counters. Only adapters present in both readings
+    /// count, so an adapter that connects (bringing its lifetime total) or disconnects does
+    /// not create a spike or a drop; a counter that went backwards counts as zero.
+    /// </summary>
+    public static (double Down, double Up) NetworkRates(
+        IReadOnlyDictionary<string, (long Down, long Up)> previous,
+        IReadOnlyDictionary<string, (long Down, long Up)> current,
+        double seconds)
+    {
+        if (seconds <= 0) return (0, 0);
+        double down = 0, up = 0;
+        foreach (var (id, now) in current)
+        {
+            if (!previous.TryGetValue(id, out var before)) continue;
+            down += Rate(before.Down, now.Down, seconds);
+            up += Rate(before.Up, now.Up, seconds);
+        }
+        return (down, up);
+    }
+
     public static string FormatRate(double bytesPerSecond) => FormatBytes(bytesPerSecond) + "/s";
 
     public static string FormatBytes(double bytes)

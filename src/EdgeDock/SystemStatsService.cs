@@ -36,7 +36,7 @@ internal sealed class SystemStatsService : IDisposable
     private IntPtr _diskRead;
     private IntPtr _diskWrite;
     private (ulong Idle, ulong Kernel, ulong User)? _lastTimes;
-    private (long Down, long Up, DateTime At)? _lastNetwork;
+    private (Dictionary<string, (long Down, long Up)> Adapters, DateTime At)? _lastNetwork;
 
     public SystemStatsService()
     {
@@ -89,7 +89,7 @@ internal sealed class SystemStatsService : IDisposable
 
     private (double? Down, double? Up) NetworkRates()
     {
-        long down = 0, up = 0;
+        var adapters = new Dictionary<string, (long Down, long Up)>(StringComparer.OrdinalIgnoreCase);
         try
         {
             foreach (var adapter in NetworkInterface.GetAllNetworkInterfaces())
@@ -97,8 +97,7 @@ internal sealed class SystemStatsService : IDisposable
                 if (adapter.OperationalStatus != OperationalStatus.Up ||
                     adapter.NetworkInterfaceType is NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel) continue;
                 var statistics = adapter.GetIPStatistics();
-                down += statistics.BytesReceived;
-                up += statistics.BytesSent;
+                adapters[adapter.Id] = (statistics.BytesReceived, statistics.BytesSent);
             }
         }
         catch (NetworkInformationException)
@@ -109,10 +108,10 @@ internal sealed class SystemStatsService : IDisposable
 
         var now = DateTime.UtcNow;
         var previous = _lastNetwork;
-        _lastNetwork = (down, up, now);
+        _lastNetwork = (adapters, now);
         if (previous is not { } last) return (null, null);
-        var seconds = (now - last.At).TotalSeconds;
-        return (StatsMath.Rate(last.Down, down, seconds), StatsMath.Rate(last.Up, up, seconds));
+        var (down, up) = StatsMath.NetworkRates(last.Adapters, adapters, (now - last.At).TotalSeconds);
+        return (down, up);
     }
 
     private IntPtr AddCounter(string path) =>
