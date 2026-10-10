@@ -938,7 +938,9 @@ public sealed partial class MainWindow : Window
             ProfileNameBox.Focus(FocusState.Programmatic);
             return;
         }
-        // Under the layout gate, so an automatic switch cannot interleave its own snapshot.
+        // The layout on screen when Save is tapped, even if an automatic switch is finishing.
+        var shown = LayoutProfiles.Capture(CurrentSettings());
+        // Merged and saved under the layout gate, so an automatic switch cannot interleave.
         await _profileGate.WaitAsync();
         try
         {
@@ -950,7 +952,7 @@ public sealed partial class MainWindow : Window
                 ProfileStatus.Visibility = Visibility.Visible;
                 return;
             }
-            var saved = new LayoutProfile(existing?.Id ?? Guid.NewGuid().ToString("N"), name, existing?.WhenRunning, LayoutProfiles.Capture(CurrentSettings()));
+            var saved = new LayoutProfile(existing?.Id ?? Guid.NewGuid().ToString("N"), name, existing?.WhenRunning, shown);
             var updated = existing is null ? _profiles.Append(saved).ToArray() : _profiles.Select(profile => profile.Id == existing.Id ? saved : profile).ToArray();
             var candidate = SettingsStore.Normalize(CurrentSettings() with { Profiles = updated });
             if (!await PersistAsync(candidate)) return;
@@ -1181,6 +1183,8 @@ public sealed partial class MainWindow : Window
         try
         {
             if (sender is not ComboBox { SelectedItem: ComboBoxItem item, Tag: int index } || item.Tag is not string id) return;
+            // A selector replaced by a layout switch while waiting belongs to the old layout.
+            if (!WebPanelSelectors.Children.Contains((ComboBox)sender)) return;
             var selections = _webPanelCardIds.ToList();
             while (selections.Count < 2) selections.Add(_webCards.ElementAtOrDefault(selections.Count)?.Id ?? id);
             if (string.Equals(selections[index], id, StringComparison.OrdinalIgnoreCase)) return;
