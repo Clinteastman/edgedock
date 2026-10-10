@@ -1109,6 +1109,12 @@ public sealed partial class MainWindow : Window
                 SetFullScreen(false);
                 (AppWindow.Presenter as OverlappedPresenter)?.Minimize();
             }
+            else if (!_isFullScreen && !_minimizedForMissingDisplay)
+            {
+                // Windowed: Windows moves the window to another screen. Leave it usable there,
+                // but move it back when its screen returns, unless the user picks a new one.
+                _awaitingPreferredDisplay = true;
+            }
             return;
         }
 

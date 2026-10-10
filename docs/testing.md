@@ -43,6 +43,8 @@
   (StartupApproved value; odd first byte means disabled; console check), and
   turning it on in EdgeDock clears an earlier "disabled". Not run against the
   real registry, to avoid creating a sign-in entry on this PC.
+- Eighth pass: a windowed EdgeDock whose screen disconnects is marked to move
+  back when the screen returns (code only; needs a real disconnect).
 - Not yet tested: unplugging or switching off the Edge while full screen
   (minimise and return), sign-in start after a real reboot, and the Startup
   toggle writing the Run key (only the isolated, disabled state was used).
