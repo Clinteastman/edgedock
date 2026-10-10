@@ -69,6 +69,8 @@ public sealed partial class MainWindow : Window
     // or damaged and would then overwrite the whole layout.
     private EdgeDockSettings? _savedSettings;
     private bool _closeAfterPendingSave;
+    private bool _closeReady;
+    private DateTimeOffset _lastDisplayChange = DateTimeOffset.MinValue;
     // Every screen save started, so closing can wait for one already past its debounce.
     private Task _displaySaves = Task.CompletedTask;
     private bool _openFullScreen;
@@ -984,6 +986,8 @@ public sealed partial class MainWindow : Window
 
     private void StartDisplayTracking()
     {
+        // Treat launch like a display change: early moves are Windows placing the window.
+        _lastDisplayChange = DateTimeOffset.Now;
         _displayChangeTimer = DispatcherQueue.CreateTimer();
         _displayChangeTimer.Interval = TimeSpan.FromMilliseconds(800);
         _displayChangeTimer.IsRepeating = false;
@@ -1004,7 +1008,12 @@ public sealed partial class MainWindow : Window
 
     // Watcher events arrive on a background thread, often several per change; settle them first.
     private void DisplayWatcher_Changed(DisplayAreaWatcher sender, DisplayArea args) =>
-        DispatcherQueue.TryEnqueue(() => { if (!_closing) _displayChangeTimer?.Start(); });
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_closing) return;
+            _lastDisplayChange = DateTimeOffset.Now;
+            _displayChangeTimer?.Start();
+        });
 
     private void OnDisplaysChanged()
     {
@@ -1076,16 +1085,19 @@ public sealed partial class MainWindow : Window
     /// <summary>Updates the remembered screen from the window's position; true if it changed.</summary>
     private bool CaptureMovedDisplay()
     {
-        if (_awaitingPreferredDisplay || _minimizedForMissingDisplay ||
+        if (_minimizedForMissingDisplay ||
             AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized }) return false;
-        // When the saved screen disconnects, Windows moves the window elsewhere. That is not
-        // the user choosing a new screen, so keep the old one to return to.
+        // When the saved screen disconnects, Windows moves the window elsewhere straight away.
+        // That is not the user choosing a new screen, so keep the old one to return to. A move
+        // made later, while it is still missing, is a deliberate choice and replaces it.
         if (_displayPreference is not null &&
+            DateTimeOffset.Now - _lastDisplayChange < TimeSpan.FromSeconds(10) &&
             DisplayPlacement.FindPreferred(ConnectedDisplays().Select(display => display.Info).ToArray(), _displayPreference) < 0)
             return false;
         var preference = DisplayPlacement.PreferenceFor(CurrentDisplay());
         if (preference is null || preference == _displayPreference) return false;
         _displayPreference = preference;
+        _awaitingPreferredDisplay = false;
         return true;
     }
 
@@ -1096,9 +1108,12 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private async void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
     {
+        if (_closeReady) return;
         var movePending = _windowMoveTimer?.IsRunning == true;
-        if (_closeAfterPendingSave || (!movePending && _displaySaves.IsCompleted)) return;
+        if (!_closeAfterPendingSave && !movePending && _displaySaves.IsCompleted) return;
         args.Cancel = true;
+        // Already waiting: further close clicks must not end the process mid-save.
+        if (_closeAfterPendingSave) return;
         _closeAfterPendingSave = true;
         if (movePending)
         {
@@ -1108,6 +1123,7 @@ public sealed partial class MainWindow : Window
         // Covers saves started by the timer that are still waiting for the gate or the disk.
         try { await _displaySaves; }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        _closeReady = true;
         Close();
     }
 

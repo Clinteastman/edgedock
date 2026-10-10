@@ -27,6 +27,10 @@
   0.4 seconds after a drag holds the close, saves, then closes; the new
   screen was kept. Closing 1.6 seconds after a drag (debounce fired, save in
   flight) also waits for the save; the new screen was kept.
+- Fifth pass, saved screen missing (fake monitor): a move 3 seconds after
+  launch was ignored; a move 14 seconds after launch replaced it, keeping the
+  card and full-screen choice. Two close requests straight after a drag still
+  saved the new screen.
 - Not yet tested: unplugging or switching off the Edge while full screen
   (minimise and return), sign-in start after a real reboot, and the Startup
   toggle writing the Run key (only the isolated, disabled state was used).
