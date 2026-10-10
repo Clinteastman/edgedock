@@ -56,6 +56,7 @@ public sealed partial class MainWindow : Window
     // Bumped by each Save and by closing Settings; a save still checking launcher targets
     // when it changes is stale (cancelled, or overtaken by a newer save) and is dropped.
     private int _settingsSaveVersion;
+    private bool _checkingSave;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly SemaphoreSlim _webPanelGate = new(1, 1);
     private bool _closing;
@@ -419,9 +420,13 @@ public sealed partial class MainWindow : Window
             UrlErrorText.Visibility = Visibility.Visible;
             return;
         }
+        // One check at a time: a second Save while targets are being checked is ignored, so
+        // only the save that locked the drafts can unlock them.
+        if (_checkingSave) return;
         var saveVersion = ++_settingsSaveVersion;
         // Lock the drafts while targets are checked: an edit made during a slow check would
         // otherwise be silently replaced by the values being validated.
+        _checkingSave = true;
         LauncherEditor.IsEnabled = false;
         WebCardEditor.IsEnabled = false;
         (bool Valid, IReadOnlyList<LauncherItem> Items, string? Error) validation;
@@ -430,6 +435,7 @@ public sealed partial class MainWindow : Window
         {
             LauncherEditor.IsEnabled = true;
             WebCardEditor.IsEnabled = true;
+            _checkingSave = false;
         }
         var (launchersValid, launchers, launcherError) = validation;
         if (saveVersion != _settingsSaveVersion) return;
