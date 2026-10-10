@@ -27,6 +27,15 @@
   happened while blank. 55 console checks pass.
 - Not tested at runtime: night transitions, idle blanking and waking (need
   real time of day and five or more idle minutes).
+- Later review (build and console checks only; these paths need a DDC/CI
+  monitor that refuses writes, a locked settings file or a monitor unplugged at
+  the right moment, so they were not exercised): the monitor is changed only
+  after its original level is saved on disk; a second monitor is left alone
+  (software dimming instead) until the first one's level is put back; a level
+  that fails to apply is retried, and the pre-blank level is kept until the new
+  one is really written; saving unrelated settings no longer rewrites the level;
+  closing waits for any in-flight blank or wake to finish completely before
+  restoring.
 
 ## Clock and weather widget (10 October 2026)
 

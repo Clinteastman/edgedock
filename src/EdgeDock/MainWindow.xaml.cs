@@ -79,6 +79,8 @@ public sealed partial class MainWindow : Window
     // never fights adjustments made with the monitor's own buttons in between.
     private int? _appliedScheduleBrightness;
     private bool _screenBusy;
+    // The screen update in progress, awaited in full before closing restores brightness.
+    private Task _screenWork = Task.CompletedTask;
     // The settings as last written (or loaded) successfully. Display-only saves merge onto
     // this rather than re-reading settings.json, which yields defaults if the file is locked
     // or damaged and would then overwrite the whole layout.
@@ -469,10 +471,15 @@ public sealed partial class MainWindow : Window
         _webPanelCount = settings.WebPanelCount;
         _webPanelCardIds = settings.WebPanelCardIds!;
         _configuredWebSplitRatio = settings.WebSplitRatio;
-        _screenSettings = settings.Screen ?? ScreenScheduleSettings.Default;
-        // Re-evaluate straight away with the new schedule.
-        _appliedScheduleBrightness = null;
-        _ = UpdateScreenAsync();
+        var newSchedule = settings.Screen ?? ScreenScheduleSettings.Default;
+        if (newSchedule != _screenSettings)
+        {
+            // Re-evaluate straight away with the new schedule. Saving unrelated settings must
+            // not rewrite the level, which would undo a change made on the monitor's buttons.
+            _screenSettings = newSchedule;
+            _appliedScheduleBrightness = null;
+            _ = UpdateScreenAsync();
+        }
         _weatherLocation = settings.Weather;
         _fahrenheit = settings.Fahrenheit;
         BuildWidgetSlots();
@@ -1111,10 +1118,15 @@ public sealed partial class MainWindow : Window
     /// Brightness uses the monitor's own control (DDC/CI) where available, otherwise a dark
     /// layer over EdgeDock.
     /// </summary>
-    private async Task UpdateScreenAsync()
+    private Task UpdateScreenAsync()
     {
-        if (_closing || _screenBusy) return;
+        if (_closing || _closeAfterPendingSave || _screenBusy) return Task.CompletedTask;
         _screenBusy = true;
+        return _screenWork = RunScreenUpdateAsync();
+    }
+
+    private async Task RunScreenUpdateAsync()
+    {
         try
         {
             if (!_screenBlank && _brightnessBeforeBlank is not null) await RestoreBlankedBrightnessAsync();
@@ -1125,9 +1137,11 @@ public sealed partial class MainWindow : Window
             else if (!state.Blank && _screenBlank) await WakeScreenAsync(state.Brightness);
             else if (!_screenBlank && state.Brightness != _appliedScheduleBrightness)
             {
-                if (state.Brightness is { } brightness) await ApplyBrightnessAsync(brightness);
+                // A refused write is retried on the next tick rather than marked as applied.
+                var applied = true;
+                if (state.Brightness is { } brightness) applied = (await ApplyBrightnessAsync(brightness)).Done;
                 else ScreenDimLayer.Opacity = 0; // Schedule off or windowed: remove any software dimming.
-                _appliedScheduleBrightness = state.Brightness;
+                if (applied) _appliedScheduleBrightness = state.Brightness;
             }
             // Nothing scheduled any more (turned off, or not full screen): put the monitor back
             // to how it was before EdgeDock changed it. Retried each tick if it is unplugged.
@@ -1144,12 +1158,15 @@ public sealed partial class MainWindow : Window
         if (_screenTimer is not null) _screenTimer.Interval = TimeSpan.FromSeconds(1);
         var monitor = MonitorBrightness.MonitorOf(_windowHandle);
         _blankedMonitor = DisplayPlacement.PreferenceFor(CurrentDisplay());
-        _brightnessBeforeBlank = await MonitorBrightness.GetAsync(monitor);
-        if (_brightnessBeforeBlank is not null)
+        // The black overlay always shows; the backlight is turned down only when its original
+        // level is safely saved, so a crash can never leave it dark with nothing to restore.
+        var before = await MonitorBrightness.GetAsync(monitor);
+        if (before is not null && await RememberOriginalBrightnessAsync(_blankedMonitor, before.Value))
         {
-            await RememberOriginalBrightnessAsync(_blankedMonitor, _brightnessBeforeBlank.Value);
+            _brightnessBeforeBlank = before;
             await MonitorBrightness.SetAsync(monitor, 0);
         }
+        else _blankedMonitor = null;
     }
 
     private async Task WakeScreenAsync(int? scheduled)
@@ -1157,12 +1174,20 @@ public sealed partial class MainWindow : Window
         _screenBlank = false;
         ScreenBlankOverlay.Visibility = Visibility.Collapsed;
         if (_screenTimer is not null) _screenTimer.Interval = TimeSpan.FromSeconds(5);
+        var applied = true;
         if (scheduled is not null && scheduled != _appliedScheduleBrightness)
         {
-            // Day turned to night (or back) while blank: the schedule's new level wins.
-            _brightnessBeforeBlank = null;
-            _blankedMonitor = null;
-            await ApplyBrightnessAsync(scheduled.Value);
+            // Day turned to night (or back) while blank: the schedule's new level wins, but the
+            // pre-blank level is dropped only once the new one is written; if the write fails it
+            // is restored instead (and retried every tick), so the screen never stays at zero.
+            var (done, onMonitor) = await ApplyBrightnessAsync(scheduled.Value);
+            applied = done;
+            if (onMonitor)
+            {
+                _brightnessBeforeBlank = null;
+                _blankedMonitor = null;
+            }
+            else await RestoreBlankedBrightnessAsync();
         }
         else
         {
@@ -1170,7 +1195,8 @@ public sealed partial class MainWindow : Window
             // monitor-button change made since the schedule last applied.
             await RestoreBlankedBrightnessAsync();
         }
-        _appliedScheduleBrightness = scheduled;
+        if (applied) _appliedScheduleBrightness = scheduled;
+        else _appliedScheduleBrightness = null;
         // Waking outside full screen, or with the schedule off: no software dimming either.
         if (scheduled is null) ScreenDimLayer.Opacity = 0;
     }
@@ -1196,12 +1222,24 @@ public sealed partial class MainWindow : Window
         return true;
     }
 
-    /// <summary>Saves the monitor's level the first time EdgeDock changes it.</summary>
-    private async Task RememberOriginalBrightnessAsync(DisplayPreference? monitor, int brightness)
+    /// <summary>
+    /// Saves the monitor's level the first time EdgeDock changes it. True only when it is safe to
+    /// change <paramref name="monitor"/>: its restore point is saved on disk. One restore point
+    /// at a time: another monitor still waiting to be put back must be restored first, so its
+    /// original level is never lost.
+    /// </summary>
+    private async Task<bool> RememberOriginalBrightnessAsync(DisplayPreference? monitor, int brightness)
     {
-        if (_brightnessRestore is not null || monitor is null) return;
+        if (monitor is null) return false;
+        if (_brightnessRestore is { } pending)
+        {
+            if (pending.Monitor == monitor) return true;
+            if (!await RestoreOriginalBrightnessAsync() || _brightnessRestore is not null) return false;
+        }
         _brightnessRestore = new BrightnessRestore(monitor, brightness);
-        await PersistBrightnessRestoreAsync();
+        if (await PersistBrightnessRestoreAsync()) return true;
+        _brightnessRestore = null; // Not saved: leave the monitor alone and try again later.
+        return false;
     }
 
     /// <summary>
@@ -1218,24 +1256,32 @@ public sealed partial class MainWindow : Window
         return await MonitorBrightness.SetAsync(Win32Interop.GetMonitorFromDisplayId(displays[index].Area.DisplayId), brightness);
     }
 
-    private async Task ApplyBrightnessAsync(int brightness)
+    /// <summary>
+    /// Sets the scheduled level. OnMonitor when the monitor itself now has it. Done is false when the monitor answered but the change could not be
+    /// made safely (restore point not saved, or the write refused), so the caller retries; a
+    /// monitor without DDC/CI gets software dimming and counts as done.
+    /// </summary>
+    private async Task<(bool Done, bool OnMonitor)> ApplyBrightnessAsync(int brightness)
     {
         var monitor = MonitorBrightness.MonitorOf(_windowHandle);
+        var done = true;
         if (await MonitorBrightness.GetAsync(monitor) is { } current)
         {
-            await RememberOriginalBrightnessAsync(DisplayPlacement.PreferenceFor(CurrentDisplay()), current);
-            if (await MonitorBrightness.SetAsync(monitor, brightness))
+            if (await RememberOriginalBrightnessAsync(DisplayPlacement.PreferenceFor(CurrentDisplay()), current) &&
+                await MonitorBrightness.SetAsync(monitor, brightness))
             {
                 ScreenDimLayer.Opacity = 0;
-                return;
+                return (true, true);
             }
+            done = false;
         }
-        // No DDC/CI on this monitor or cable: darken EdgeDock itself instead.
+        // No DDC/CI on this monitor or cable (or not safe to change it yet): darken EdgeDock itself.
         ScreenDimLayer.Opacity = Math.Clamp((100 - brightness) / 100.0, 0, 0.85);
+        return (done, false);
     }
 
-    /// <summary>Saves only the restore point, merged onto the last saved settings.</summary>
-    private async Task PersistBrightnessRestoreAsync()
+    /// <summary>Saves only the restore point, merged onto the last saved settings. False if not saved.</summary>
+    private async Task<bool> PersistBrightnessRestoreAsync()
     {
         await _saveGate.WaitAsync();
         try
@@ -1243,8 +1289,9 @@ public sealed partial class MainWindow : Window
             var merged = (_savedSettings ?? CurrentSettings()) with { PendingBrightness = _brightnessRestore };
             await _settings.SaveAsync(merged);
             _savedSettings = SettingsStore.Normalize(merged);
+            return true;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return false; }
         finally { _saveGate.Release(); }
     }
 
@@ -1482,8 +1529,9 @@ public sealed partial class MainWindow : Window
     private async Task RestoreScreenBeforeCloseAsync()
     {
         _screenTimer?.Stop();
-        // Let a blank or wake that is already talking to the monitor finish first.
-        for (var waited = 0; _screenBusy && waited < 50; waited++) await Task.Delay(100);
+        // Let a blank or wake that is already talking to the monitor finish completely first;
+        // no new one starts once closing has begun.
+        await _screenWork;
         _screenBlank = false;
         _brightnessBeforeBlank = null;
         _blankedMonitor = null;
