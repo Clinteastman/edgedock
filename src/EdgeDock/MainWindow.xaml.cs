@@ -1148,6 +1148,7 @@ public sealed partial class MainWindow : Window
                 : new ScreenState(null, false);
             if (state.Blank && !_screenBlank) await BlankScreenAsync();
             else if (!state.Blank && _screenBlank) await WakeScreenAsync(state.Brightness);
+            else if (_screenBlank && _blankWritePending) await RetryBlankWriteAsync();
             else if (!_screenBlank && state.Brightness != _appliedScheduleBrightness)
             {
                 // A refused write is retried on the next tick rather than marked as applied.
@@ -1156,6 +1157,8 @@ public sealed partial class MainWindow : Window
                 else ScreenDimLayer.Opacity = 0; // Schedule off or windowed: remove any software dimming.
                 if (applied) _appliedScheduleBrightness = state.Brightness;
             }
+            // Nothing scheduled: never leave software dimming behind, whatever the marker says.
+            if (!_screenBlank && state.Brightness is null) ScreenDimLayer.Opacity = 0;
             // Nothing scheduled any more (turned off, or not full screen): put the monitor back
             // to how it was before EdgeDock changed it. Retried each tick if it is unplugged.
             if (!_screenBlank && state.Brightness is null && _brightnessRestore is not null) await RestoreOriginalBrightnessAsync();
@@ -1166,6 +1169,7 @@ public sealed partial class MainWindow : Window
     private async Task BlankScreenAsync()
     {
         _screenBlank = true;
+        _wakeRequested = false;
         ScreenBlankOverlay.Visibility = Visibility.Visible;
         // Take keyboard focus (from XAML controls and web pages alike) so wake keys land here.
         _focusBeforeBlank = FocusManager.GetFocusedElement(Root.XamlRoot) as Control;
@@ -1181,18 +1185,33 @@ public sealed partial class MainWindow : Window
         // identity must also find exactly this monitor again, or it could never be put back.
         if (MonitorBrightness.MonitorOf(_windowHandle) != monitor || !IdentifiesMonitor(_blankedMonitor, monitor)) before = null;
         if (before is not null && await RememberOriginalBrightnessAsync(_blankedMonitor, before.Value) &&
-            // Still blank and full screen after the waits (F11 or a touch may have come in).
-            _screenBlank && _isFullScreen && MonitorBrightness.MonitorOf(_windowHandle) == monitor)
+            // Still blank and full screen after the waits (F11, a touch or a key may have come in).
+            _screenBlank && !_wakeRequested && _isFullScreen && MonitorBrightness.MonitorOf(_windowHandle) == monitor)
         {
             _brightnessBeforeBlank = before;
-            await MonitorBrightness.SetAsync(monitor, 0);
+            _blankHandle = monitor;
+            // A refused write is retried each tick while blank, so the backlight still goes off.
+            _blankWritePending = !await MonitorBrightness.SetAsync(monitor, 0);
         }
         else _blankedMonitor = null;
+    }
+
+    // Set by any wake gesture straight away, even while a blank is still talking to the monitor,
+    // so a blank in progress never turns the backlight off after the user asked to wake.
+    private bool _wakeRequested;
+    private bool _blankWritePending;
+    private IntPtr _blankHandle;
+
+    private async Task RetryBlankWriteAsync()
+    {
+        if (_wakeRequested || !_isFullScreen || MonitorBrightness.MonitorOf(_windowHandle) != _blankHandle) return;
+        _blankWritePending = !await MonitorBrightness.SetAsync(_blankHandle, 0) && !_wakeRequested;
     }
 
     private async Task WakeScreenAsync(int? scheduled)
     {
         _screenBlank = false;
+        _blankWritePending = false;
         ScreenBlankOverlay.Visibility = Visibility.Collapsed;
         if (_focusBeforeBlank is { } previous && previous != ScreenWakeButton) previous.Focus(FocusState.Programmatic);
         _focusBeforeBlank = null;
@@ -1375,16 +1394,22 @@ public sealed partial class MainWindow : Window
     {
         // Any key only wakes the screen; nothing underneath sees it.
         args.Handled = true;
+        _wakeRequested = true;
         await UpdateScreenAsync();
     }
 
-    private async void ScreenWakeButton_Click(object sender, RoutedEventArgs args) => await UpdateScreenAsync();
+    private async void ScreenWakeButton_Click(object sender, RoutedEventArgs args)
+    {
+        _wakeRequested = true;
+        await UpdateScreenAsync();
+    }
 
     private async void ScreenBlankOverlay_PointerPressed(object sender, PointerRoutedEventArgs args)
     {
         // The tap only wakes the screen; it does not reach the widget underneath. It also
         // resets Windows' idle time, so the normal update path wakes the screen.
         args.Handled = true;
+        _wakeRequested = true;
         await UpdateScreenAsync();
     }
 
