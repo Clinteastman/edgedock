@@ -27,7 +27,7 @@ internal sealed record EdgeDockSettings(
     bool OpenFullScreen = false,
     IReadOnlyList<LayoutProfile>? Profiles = null,
     AutoLayoutSwitch? AutoSwitch = null,
-    string? SuppressedProfileId = null,
+    IReadOnlyList<string>? SuppressedProfileIds = null,
     WeatherLocation? Weather = null,
     bool Fahrenheit = false);
 
@@ -99,7 +99,7 @@ internal sealed class SettingsStore
                 AutoSwitch: stored?.AutoSwitch is { ProfileId: { } autoId, Before: { } before }
                     ? new AutoLayoutSwitch(autoId, ToLayout(before))
                     : null,
-                SuppressedProfileId: stored?.SuppressedProfileId,
+                SuppressedProfileIds: stored?.SuppressedProfileIds,
                 Weather: stored?.Weather is { Name: { } weatherName, Latitude: { } latitude, Longitude: { } longitude }
                     ? new WeatherLocation(weatherName, latitude, longitude)
                     : null,
@@ -142,7 +142,7 @@ internal sealed class SettingsStore
                 AutoSwitch = settings.AutoSwitch is { } autoSwitch
                     ? new StoredAutoSwitch { ProfileId = autoSwitch.ProfileId, Before = FromLayout(autoSwitch.Before) }
                     : null,
-                SuppressedProfileId = settings.SuppressedProfileId,
+                SuppressedProfileIds = settings.SuppressedProfileIds?.ToList(),
                 Profiles = settings.Profiles!.Select(profile => new StoredProfile
                 {
                     Id = profile.Id,
@@ -209,7 +209,9 @@ internal sealed class SettingsStore
             AutoSwitch = value.AutoSwitch is { } autoSwitch && !string.IsNullOrWhiteSpace(autoSwitch.ProfileId) && autoSwitch.Before is not null
                 ? autoSwitch with { Before = LayoutProfiles.Capture(LayoutProfiles.Apply(value with { Profiles = [], AutoSwitch = null }, autoSwitch.Before)) }
                 : null,
-            SuppressedProfileId = string.IsNullOrWhiteSpace(value.SuppressedProfileId) ? null : value.SuppressedProfileId.Trim(),
+            SuppressedProfileIds = (value.SuppressedProfileIds ?? [])
+                .Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
             Weather = NormalizeWeather(value.Weather)
         };
     }
@@ -297,7 +299,7 @@ internal sealed class SettingsStore
         public bool? OpenFullScreen { get; set; }
         public List<StoredProfile>? Profiles { get; set; }
         public StoredAutoSwitch? AutoSwitch { get; set; }
-        public string? SuppressedProfileId { get; set; }
+        public List<string>? SuppressedProfileIds { get; set; }
         public StoredWeather? Weather { get; set; }
         public bool? Fahrenheit { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }

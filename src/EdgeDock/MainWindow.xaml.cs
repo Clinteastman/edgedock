@@ -72,7 +72,10 @@ public sealed partial class MainWindow : Window
     // program, and one the user overrode by hand (left alone until its program restarts).
     private ProfileLayout? _layoutBeforeAuto;
     private string? _autoProfileId;
-    private string? _suppressedAutoProfileId;
+    private IReadOnlyList<string> _suppressedProfileIds = [];
+    // One layout change at a time, from start to finish: a hand choice, an automatic switch and
+    // a Settings save each read the current layout and must not interleave.
+    private readonly SemaphoreSlim _profileGate = new(1, 1);
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _profileTimer;
     private bool _checkingPrograms;
     // The settings as last written (or loaded) successfully. Display-only saves merge onto
@@ -162,7 +165,7 @@ public sealed partial class MainWindow : Window
         _profiles = settings.Profiles ?? [];
         _autoProfileId = settings.AutoSwitch?.ProfileId;
         _layoutBeforeAuto = settings.AutoSwitch?.Before;
-        _suppressedAutoProfileId = settings.SuppressedProfileId;
+        _suppressedProfileIds = settings.SuppressedProfileIds ?? [];
         _weatherLocation = settings.Weather;
         _fahrenheit = settings.Fahrenheit;
         // Move to the saved screen before WebView2 creates its child HWNDs, so pages
@@ -435,13 +438,21 @@ public sealed partial class MainWindow : Window
             UrlErrorText.Visibility = Visibility.Visible;
             return;
         }
-        // The override was for the program that was running; a new or removed trigger ends it.
-        var suppressedId = _suppressedAutoProfileId is { } suppressedProfile &&
-            _profiles.FirstOrDefault(profile => profile.Id == suppressedProfile)?.WhenRunning is { } oldTrigger &&
-            profiles.FirstOrDefault(profile => profile.Id == suppressedProfile)?.WhenRunning is { } newTrigger &&
-            string.Equals(oldTrigger, newTrigger, StringComparison.OrdinalIgnoreCase)
-                ? suppressedProfile
-                : null;
+        await _profileGate.WaitAsync();
+        try { await SaveSettingsLockedAsync(cards, profiles); }
+        finally { _profileGate.Release(); }
+    }
+
+    private async Task SaveSettingsLockedAsync(IReadOnlyList<WebCardSettings> cards, IReadOnlyList<LayoutProfile> profiles)
+    {
+        // Saving Settings while a program's layout is on is a hand choice: keep what was saved,
+        // and keep that program's layout off until it next starts. An override was for the
+        // program that was running; a new or removed trigger ends it.
+        var suppressedIds = _suppressedProfileIds.Append(_autoProfileId).OfType<string>()
+            .Where(id => _profiles.FirstOrDefault(profile => profile.Id == id)?.WhenRunning is { } oldTrigger &&
+                profiles.FirstOrDefault(profile => profile.Id == id)?.WhenRunning is { } newTrigger &&
+                string.Equals(oldTrigger, newTrigger, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
         // Saving with the toggle on also repairs an entry left pointing at a moved or older copy.
         var startupNeedsChange = StartupToggle.IsOn ? !StartupRegistration.PointsHere() : StartupRegistration.IsEnabled();
         if (StartupToggle.IsEnabled && startupNeedsChange && !StartupRegistration.SetEnabled(StartupToggle.IsOn))
@@ -463,8 +474,8 @@ public sealed partial class MainWindow : Window
             BackdropTransparencySlider.Value, cards, _webPanelCount, _webPanelCardIds,
             _configuredWebSplitRatio, _displayPreference, _openFullScreen,
             Profiles: profiles,
-            AutoSwitch: _autoProfileId is { } autoId && _layoutBeforeAuto is { } before ? new AutoLayoutSwitch(autoId, before) : null,
-            SuppressedProfileId: suppressedId,
+            AutoSwitch: null,
+            SuppressedProfileIds: suppressedIds,
             Weather: WeatherPlaceSelector.SelectedItem is ComboBoxItem { Tag: WeatherLocation place } ? place : null,
             Fahrenheit: FahrenheitToggle.IsOn));
         if (!await PersistAsync(settings)) return;
@@ -482,7 +493,9 @@ public sealed partial class MainWindow : Window
         _webPanelCardIds = settings.WebPanelCardIds!;
         _configuredWebSplitRatio = settings.WebSplitRatio;
         _profiles = settings.Profiles ?? [];
-        _suppressedAutoProfileId = settings.SuppressedProfileId;
+        _suppressedProfileIds = settings.SuppressedProfileIds ?? [];
+        _autoProfileId = null;
+        _layoutBeforeAuto = null;
         _weatherLocation = settings.Weather;
         _fahrenheit = settings.Fahrenheit;
         BuildWidgetSlots();
@@ -548,7 +561,7 @@ public sealed partial class MainWindow : Window
         _openFullScreen,
         Profiles: _profiles,
         AutoSwitch: _autoProfileId is { } autoId && _layoutBeforeAuto is { } before ? new AutoLayoutSwitch(autoId, before) : null,
-        SuppressedProfileId: _suppressedAutoProfileId,
+        SuppressedProfileIds: _suppressedProfileIds,
         Weather: _weatherLocation,
         Fahrenheit: _fahrenheit);
 
@@ -864,10 +877,15 @@ public sealed partial class MainWindow : Window
             AutomationProperties.SetName(button, active ? $"{profile.Name}, current layout" : $"Switch to the {profile.Name} layout");
             button.Click += async (_, _) =>
             {
-                // Choosing by hand while a program's layout is on keeps that layout off until the
-                // program next starts.
-                await ApplyProfileAsync(profile.Layout, profile.Id, manual: true,
-                    new AutoState(null, null, _autoProfileId ?? _suppressedAutoProfileId));
+                await _profileGate.WaitAsync();
+                try
+                {
+                    // Choosing by hand while a program's layout is on keeps that layout off until
+                    // the program next starts, along with any already kept off.
+                    await ApplyProfileAsync(profile.Layout, profile.Id, manual: true,
+                        new AutoState(null, null, _suppressedProfileIds.Append(_autoProfileId).OfType<string>().Distinct().ToArray()));
+                }
+                finally { _profileGate.Release(); }
                 CloseControlsDrawer();
             };
             ProfileButtons.Children.Add(button);
@@ -902,7 +920,7 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>The automatic-switch bookkeeping that goes with a layout change.</summary>
-    private sealed record AutoState(string? AutoProfileId, ProfileLayout? Before, string? SuppressedId);
+    private sealed record AutoState(string? AutoProfileId, ProfileLayout? Before, IReadOnlyList<string> SuppressedIds);
 
     /// <summary>
     /// Switches the dashboard to a saved layout and saves it as the current one, together with
@@ -914,12 +932,12 @@ public sealed partial class MainWindow : Window
         var settings = LayoutProfiles.Apply(CurrentSettings(), layout) with
         {
             AutoSwitch = auto is { AutoProfileId: { } autoId, Before: { } before } ? new AutoLayoutSwitch(autoId, before) : null,
-            SuppressedProfileId = auto.SuppressedId
+            SuppressedProfileIds = auto.SuppressedIds
         };
         if (!await PersistAsync(settings, alreadyApplied: false)) return false;
         _autoProfileId = auto.AutoProfileId;
         _layoutBeforeAuto = auto.Before;
-        _suppressedAutoProfileId = auto.SuppressedId;
+        _suppressedProfileIds = auto.SuppressedIds;
         _mediaPlacement = settings.MediaPanelPlacement;
         _lastVisiblePlacement = settings.LastVisibleMediaPanelPlacement;
         _configuredPanelWidth = settings.MediaPanelWidth;
@@ -932,6 +950,13 @@ public sealed partial class MainWindow : Window
         ApplyMediaLayout();
         await BuildWebPanelsAsync();
         ApplyMediaLayout();
+        if (ControlsOverlay.Visibility == Visibility.Visible && !_isWidgetView)
+        {
+            // The drawer's selectors belong to the panels just replaced; rebuild them.
+            BuildWebPanelSelectors();
+            BuildPanelSelectors();
+            BuildProfileButtons();
+        }
         // An automatic switch must not discard edits in an open Settings panel; Settings
         // reloads from the current layout when it is next opened.
         if (manual || SettingsPanel.Visibility != Visibility.Visible) UpdateSettingsControls();
@@ -963,29 +988,44 @@ public sealed partial class MainWindow : Window
                 var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var process in System.Diagnostics.Process.GetProcesses())
                 {
-                    using (process) names.Add(process.ProcessName);
+                    // A process can exit while the list is read; skip it.
+                    using (process)
+                    {
+                        try { names.Add(process.ProcessName); }
+                        catch (InvalidOperationException) { }
+                    }
                 }
                 return names;
             });
-            // A hand-chosen override ends once its own program stops, whatever else is running.
-            var suppressed = LayoutProfiles.StillSuppressed(_suppressedAutoProfileId, _profiles, running);
-            if (suppressed != _suppressedAutoProfileId)
-            {
-                if (!await PersistAsync(CurrentSettings() with { SuppressedProfileId = suppressed }, alreadyApplied: false)) return;
-                _suppressedAutoProfileId = suppressed;
-            }
-            var target = LayoutProfiles.Automatic(_profiles, running, suppressed);
-            if (target is null)
-            {
-                if (_autoProfileId is not null && _layoutBeforeAuto is { } previous)
-                    await ApplyProfileAsync(previous, null, manual: false, new AutoState(null, null, suppressed));
-                return;
-            }
-            if (target.Id == _autoProfileId) return;
-            await ApplyProfileAsync(target.Layout, target.Id, manual: false,
-                new AutoState(target.Id, _layoutBeforeAuto ?? LayoutProfiles.Capture(CurrentSettings()), suppressed));
+            // Decide and switch under the gate, so the layout to return to is read only after any
+            // hand choice or Settings save in progress has finished.
+            await _profileGate.WaitAsync();
+            try { await SwitchForRunningProgramsAsync(running); }
+            finally { _profileGate.Release(); }
         }
         finally { _checkingPrograms = false; }
+    }
+
+    private async Task SwitchForRunningProgramsAsync(IReadOnlySet<string> running)
+    {
+        if (_closing) return;
+        // Hand-chosen overrides end once their own program stops, whatever else is running.
+        var suppressed = LayoutProfiles.StillSuppressed(_suppressedProfileIds, _profiles, running);
+        if (!suppressed.SequenceEqual(_suppressedProfileIds))
+        {
+            if (!await PersistAsync(CurrentSettings() with { SuppressedProfileIds = suppressed }, alreadyApplied: false)) return;
+            _suppressedProfileIds = suppressed;
+        }
+        var target = LayoutProfiles.Automatic(_profiles, running, suppressed);
+        if (target is null)
+        {
+            if (_autoProfileId is not null && _layoutBeforeAuto is { } previous)
+                await ApplyProfileAsync(previous, null, manual: false, new AutoState(null, null, suppressed));
+            return;
+        }
+        if (target.Id == _autoProfileId) return;
+        await ApplyProfileAsync(target.Layout, target.Id, manual: false,
+            new AutoState(target.Id, _layoutBeforeAuto ?? LayoutProfiles.Capture(CurrentSettings()), suppressed));
     }
 
     private void OpenControlsDrawer()

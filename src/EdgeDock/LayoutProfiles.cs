@@ -88,10 +88,9 @@ internal static class LayoutProfiles
         current.WidgetSlots.Zip(saved.WidgetSlots).All(pair =>
             pair.First.SelectedWidgetId == pair.Second.SelectedWidgetId &&
             pair.First.EnabledWidgetIds.SequenceEqual(pair.Second.EnabledWidgetIds)) &&
-        (!current.IsWebVisible ||
-            (current.WebPanelCount == saved.WebPanelCount &&
-             current.WebPanelCardIds.SequenceEqual(saved.WebPanelCardIds) &&
-             Math.Abs(current.WebSplitRatio - saved.WebSplitRatio) < 0.005));
+        current.WebPanelCount == saved.WebPanelCount &&
+        current.WebPanelCardIds.SequenceEqual(saved.WebPanelCardIds) &&
+        Math.Abs(current.WebSplitRatio - saved.WebSplitRatio) < 0.005;
 
     public static IReadOnlyList<LayoutProfile> Normalize(IReadOnlyList<LayoutProfile>? source, EdgeDockSettings baseline)
     {
@@ -111,15 +110,15 @@ internal static class LayoutProfiles
     }
 
     /// <summary>The first profile whose app is running, or null.</summary>
-    public static LayoutProfile? Automatic(IReadOnlyList<LayoutProfile> profiles, IReadOnlySet<string> runningProcesses, string? suppressedId = null) =>
-        profiles.FirstOrDefault(profile => profile.Id != suppressedId && profile.WhenRunning is { } app && runningProcesses.Contains(app));
+    public static LayoutProfile? Automatic(IReadOnlyList<LayoutProfile> profiles, IReadOnlySet<string> runningProcesses, IReadOnlyCollection<string>? suppressedIds = null) =>
+        profiles.FirstOrDefault(profile => suppressedIds?.Contains(profile.Id) != true &&
+            profile.WhenRunning is { } app && runningProcesses.Contains(app));
 
     /// <summary>
-    /// A layout the user switched away from by hand stays off until its program stops; then the
-    /// next start of that program switches again. Returns the ID to keep suppressed, or null.
+    /// Layouts the user switched away from by hand stay off until their own program stops; then
+    /// the next start of that program switches again. Every overridden layout is kept, so turning
+    /// off one does not bring back another that is still running. Returns those still to keep off.
     /// </summary>
-    public static string? StillSuppressed(string? suppressedId, IReadOnlyList<LayoutProfile> profiles, IReadOnlySet<string> runningProcesses) =>
-        suppressedId is not null && profiles.Any(profile => profile.Id == suppressedId && profile.WhenRunning is { } app && runningProcesses.Contains(app))
-            ? suppressedId
-            : null;
+    public static IReadOnlyList<string> StillSuppressed(IReadOnlyList<string> suppressedIds, IReadOnlyList<LayoutProfile> profiles, IReadOnlySet<string> runningProcesses) =>
+        suppressedIds.Where(id => profiles.Any(profile => profile.Id == id && profile.WhenRunning is { } app && runningProcesses.Contains(app))).ToArray();
 }

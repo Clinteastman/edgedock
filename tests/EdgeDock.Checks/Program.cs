@@ -363,13 +363,15 @@ try
     Check(autoSaved.AutoSwitch?.ProfileId == "game" && autoSaved.AutoSwitch.Before.IsWebVisible == workLayout.IsWebVisible &&
           autoSaved.AutoSwitch.Before.WebPanelCount == workLayout.WebPanelCount,
           "The layout to return to after a program closes survives restart");
-    await store.SaveAsync(withProfiles with { SuppressedProfileId = "game" });
-    Check((await new SettingsStore().LoadAsync()).SuppressedProfileId == "game", "A layout switched off by hand stays off across restart");
+    await store.SaveAsync(withProfiles with { SuppressedProfileIds = ["game", "chat"] });
+    Check((await new SettingsStore().LoadAsync()).SuppressedProfileIds is ["game", "chat"], "Layouts switched off by hand stay off across restart");
     var gameAndChat = new HashSet<string>(["game", "chat"], StringComparer.OrdinalIgnoreCase);
     LayoutProfile[] watched = [new("a", "A", "game", workLayout), new("b", "B", "chat", workLayout)];
-    Check(LayoutProfiles.StillSuppressed("a", watched, gameAndChat) == "a" &&
-          LayoutProfiles.StillSuppressed("a", watched, new HashSet<string>(["chat"])) is null &&
-          LayoutProfiles.Automatic(watched, gameAndChat, "a")?.Id == "b",
+    Check(LayoutProfiles.StillSuppressed(["a"], watched, gameAndChat) is ["a"] &&
+          LayoutProfiles.StillSuppressed(["a"], watched, new HashSet<string>(["chat"])).Count == 0 &&
+          LayoutProfiles.Automatic(watched, gameAndChat, ["a"])?.Id == "b" &&
+          LayoutProfiles.StillSuppressed(["a", "b"], watched, gameAndChat) is ["a", "b"] &&
+          LayoutProfiles.Automatic(watched, gameAndChat, ["a", "b"]) is null,
           "A hand override ends when its own program stops, even while another layout's program runs");
     Check(LayoutProfiles.NormalizeProcessName("Game.EXE") == "Game" && LayoutProfiles.NormalizeProcessName("cmd /c x") is null &&
           LayoutProfiles.NormalizeProcessName(@"C:\x.exe") is null && LayoutProfiles.NormalizeProcessName(" ") is null,
@@ -380,7 +382,8 @@ try
     var shown = LayoutProfiles.Capture(withProfiles);
     Check(LayoutProfiles.Matches(shown, shown) &&
           !LayoutProfiles.Matches(shown with { PanelWidth = shown.PanelWidth + 40 }, shown) &&
-          !LayoutProfiles.Matches(shown with { WidgetSlots = [new(["stats"], "stats")] }, shown),
+          !LayoutProfiles.Matches(shown with { WidgetSlots = [new(["stats"], "stats")] }, shown) &&
+          !LayoutProfiles.Matches(shown with { IsWebVisible = false, WebPanelCount = shown.WebPanelCount + 1 }, shown with { IsWebVisible = false }),
           "A saved layout reads as current only while the dashboard still matches it");
     const string forecastJson = """
         {"utc_offset_seconds":3600,

@@ -23,6 +23,12 @@
   any legal file name (notepad++) but not folders, quotes or options; the
   drawer highlights a layout only while the dashboard still matches it. Console
   checks added; auto-switch capture repeated.
+- Fifth review: layout changes (hand choice, automatic switch, Settings save)
+  run one at a time; every overridden layout stays off until its own program
+  stops; saving Settings while a program's layout is on counts as a hand
+  choice; the drawer's selectors are rebuilt after a switch; a process exiting
+  mid-scan is skipped; hidden web settings still count when matching layouts.
+  Console checks updated; auto-switch capture repeated with a silent trigger.
 
 ## Audio widget (10 October 2026)
 
