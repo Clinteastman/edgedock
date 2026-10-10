@@ -37,28 +37,31 @@ internal sealed class LauncherEditor : UserControl
         UpdateAddButton();
     }
 
-    internal bool TryGetItems(out IReadOnlyList<LauncherItem> items, out string? error)
+    /// <summary>
+    /// Validates every row. Existence checks can wait on slow or disconnected drives, so they
+    /// run on the thread pool; the Settings panel stays responsive meanwhile.
+    /// </summary>
+    internal async Task<(bool Valid, IReadOnlyList<LauncherItem> Items, string? Error)> TryGetItemsAsync()
     {
+        var rows = _editors
+            .Select(editor => (Editor: editor, Name: editor.Name.Text.Trim(), Target: editor.Target.Text.Trim().Trim('"')))
+            .Where(row => row.Name.Length > 0 || row.Target.Length > 0)
+            .ToArray();
+        var kinds = await Task.Run(() => rows.Select(row => LauncherTargets.Classify(row.Target)).ToArray());
         var result = new List<LauncherItem>();
-        foreach (var editor in _editors)
+        for (var index = 0; index < rows.Length; index++)
         {
-            var name = editor.Name.Text.Trim();
-            var target = editor.Target.Text.Trim().Trim('"');
-            if (string.IsNullOrEmpty(name) && string.IsNullOrEmpty(target)) continue;
-            if (LauncherTargets.Classify(target) == LauncherTargetKind.Invalid)
+            var (editor, name, target) = rows[index];
+            if (kinds[index] == LauncherTargetKind.Invalid)
             {
-                items = [];
-                error = string.IsNullOrEmpty(target)
-                    ? $"Choose what {(string.IsNullOrEmpty(name) ? "the new launcher item" : name)} should open."
-                    : $"{target} is not an existing file or folder, or an http or https address. Use Browse to pick one.";
                 editor.Target.Focus(FocusState.Programmatic);
-                return false;
+                return (false, [], string.IsNullOrEmpty(target)
+                    ? $"Choose what {(string.IsNullOrEmpty(name) ? "the new launcher item" : name)} should open."
+                    : $"{target} is not an existing file or folder, or an http or https address. Use Browse to pick one.");
             }
-            result.Add(new LauncherItem(editor.Id, string.IsNullOrEmpty(name) ? LauncherTargets.DefaultName(target) : name, target));
+            result.Add(new LauncherItem(editor.Id, string.IsNullOrEmpty(name) ? LauncherTargets.DefaultName(target, kinds[index]) : name, target));
         }
-        items = result;
-        error = null;
-        return true;
+        return (true, result, null);
     }
 
     private void UpdateAddButton() => _add.IsEnabled = _editors.Count < SettingsStore.MaximumLaunchers;
@@ -77,14 +80,14 @@ internal sealed class LauncherEditor : UserControl
             var picker = new FileOpenPicker { SuggestedStartLocation = PickerLocationId.Desktop };
             picker.FileTypeFilter.Add("*");
             WinRT.Interop.InitializeWithWindow.Initialize(picker, WindowHandle);
-            if (await picker.PickSingleFileAsync() is { } file) editor.Use(file.Path);
+            if (await picker.PickSingleFileAsync() is { } file) editor.Use(file.Path, LauncherTargetKind.File);
         };
         editor.BrowseFolder.Click += async (_, _) =>
         {
             var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.ComputerFolder };
             picker.FileTypeFilter.Add("*");
             WinRT.Interop.InitializeWithWindow.Initialize(picker, WindowHandle);
-            if (await picker.PickSingleFolderAsync() is { } folder) editor.Use(folder.Path);
+            if (await picker.PickSingleFolderAsync() is { } folder) editor.Use(folder.Path, LauncherTargetKind.Folder);
         };
         _editors.Add(editor);
         _rows.Children.Add(editor.Root);
@@ -127,10 +130,10 @@ internal sealed class LauncherEditor : UserControl
             AutomationProperties.SetName(Remove, $"Remove {label} from the launcher");
         }
 
-        internal void Use(string path)
+        internal void Use(string path, LauncherTargetKind kind)
         {
             Target.Text = path;
-            if (string.IsNullOrWhiteSpace(Name.Text)) Name.Text = LauncherTargets.DefaultName(path);
+            if (string.IsNullOrWhiteSpace(Name.Text)) Name.Text = LauncherTargets.DefaultName(path, kind);
         }
     }
 }

@@ -31,13 +31,20 @@ internal static class LauncherTargets
 
     public static LauncherTargetKind Classify(string? target) => Classify(target, File.Exists, Directory.Exists);
 
-    /// <summary>A readable default name: the file or folder name, or the web site's host.</summary>
-    public static string DefaultName(string target)
+    /// <summary>
+    /// A readable default name: the web site's host, a folder's full name (dots included, as in
+    /// <c>Projects.v2</c>), or a file's name without its extension. Pass the kind when known;
+    /// unknown targets are treated as files, which only matters for dotted folder names.
+    /// </summary>
+    public static string DefaultName(string target, LauncherTargetKind kind = LauncherTargetKind.Invalid)
     {
         target = target.Trim();
         if (SettingsStore.IsAllowedUrl(target, out var uri) && uri is not null) return uri.Host;
         var trimmed = Path.TrimEndingDirectorySeparator(target);
-        var name = Path.GetFileNameWithoutExtension(trimmed);
+        var fullName = Path.GetFileName(trimmed);
+        var name = kind == LauncherTargetKind.Folder ? fullName : Path.GetFileNameWithoutExtension(trimmed);
+        // ".config" has no name before its dot; fall back to the whole final part, then the path.
+        if (string.IsNullOrWhiteSpace(name)) name = fullName;
         return string.IsNullOrWhiteSpace(name) ? trimmed : name;
     }
 }

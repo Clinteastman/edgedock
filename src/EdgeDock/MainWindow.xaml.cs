@@ -389,7 +389,8 @@ public sealed partial class MainWindow : Window
             UrlErrorText.Visibility = Visibility.Visible;
             return;
         }
-        if (!LauncherEditor.TryGetItems(out var launchers, out var launcherError))
+        var (launchersValid, launchers, launcherError) = await LauncherEditor.TryGetItemsAsync();
+        if (!launchersValid)
         {
             UrlErrorText.Text = launcherError;
             UrlErrorText.Visibility = Visibility.Visible;

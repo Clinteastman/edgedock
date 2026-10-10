@@ -210,6 +210,11 @@ try
     Check(LauncherTargets.DefaultName(@"C:\Tools\app.exe") == "app" && LauncherTargets.DefaultName(@"D:\Projects\") == "Projects" &&
           LauncherTargets.DefaultName("https://www.example.com/x") == "www.example.com",
           "Launcher items get a readable default name");
+    Check(LauncherTargets.DefaultName(@"D:\Projects.v2", LauncherTargetKind.Folder) == "Projects.v2" &&
+          LauncherTargets.DefaultName(@"C:\Users\me\.config", LauncherTargetKind.Folder) == ".config" &&
+          LauncherTargets.DefaultName(@"C:\Users\me\.profile") == ".profile" &&
+          LauncherTargets.DefaultName(@"D:\Docs\report.v2.pdf", LauncherTargetKind.File) == "report.v2",
+          "Folder names keep their dots; dot-only names are kept whole");
     store = new SettingsStore();
     await store.SaveAsync(upgraded with
     {
