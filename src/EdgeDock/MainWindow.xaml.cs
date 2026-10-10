@@ -448,7 +448,7 @@ public sealed partial class MainWindow : Window
         // Saving Settings while a program's layout is on is a hand choice: keep what was saved,
         // and keep that program's layout off until it next starts. An override was for the
         // program that was running; a new or removed trigger ends it.
-        var suppressedIds = _suppressedProfileIds.Append(_autoProfileId).OfType<string>()
+        var suppressedIds = SuppressActive()
             .Where(id => _profiles.FirstOrDefault(profile => profile.Id == id)?.WhenRunning is { } oldTrigger &&
                 profiles.FirstOrDefault(profile => profile.Id == id)?.WhenRunning is { } newTrigger &&
                 string.Equals(oldTrigger, newTrigger, StringComparison.OrdinalIgnoreCase))
@@ -506,6 +506,14 @@ public sealed partial class MainWindow : Window
         UrlErrorText.Visibility = Visibility.Collapsed;
     }
 
+    /// <summary>Saves the current layout in turn with automatic switches.</summary>
+    private async Task PersistWithLayoutGateAsync()
+    {
+        await _profileGate.WaitAsync();
+        try { await PersistAsync(CurrentSettings(), alreadyApplied: true); }
+        finally { _profileGate.Release(); }
+    }
+
     private async Task<bool> PersistAsync(EdgeDockSettings settings, bool alreadyApplied = false)
     {
         await _saveGate.WaitAsync();
@@ -535,12 +543,18 @@ public sealed partial class MainWindow : Window
 
     private async void ToggleMediaPanel_Click(object sender, RoutedEventArgs args)
     {
-        if (!_isWebVisible) return;
-        if (_mediaPlacement == MediaPanelPlacement.Hidden) _mediaPlacement = _lastVisiblePlacement;
-        else { _lastVisiblePlacement = _mediaPlacement; _mediaPlacement = MediaPanelPlacement.Hidden; }
-        ApplyMediaLayout();
-        await PersistAsync(CurrentSettings(), alreadyApplied: true);
-        CloseControlsDrawer();
+        // Layout changes run one at a time with automatic switches (see _profileGate).
+        await _profileGate.WaitAsync();
+        try
+        {
+            if (!_isWebVisible) return;
+            if (_mediaPlacement == MediaPanelPlacement.Hidden) _mediaPlacement = _lastVisiblePlacement;
+            else { _lastVisiblePlacement = _mediaPlacement; _mediaPlacement = MediaPanelPlacement.Hidden; }
+            ApplyMediaLayout();
+            await PersistAsync(CurrentSettings(), alreadyApplied: true);
+            CloseControlsDrawer();
+        }
+        finally { _profileGate.Release(); }
     }
 
     private EdgeDockSettings CurrentSettings() => new(
@@ -653,10 +667,17 @@ public sealed partial class MainWindow : Window
             slot.SetEdgeToEdge(_isFullScreen);
             slot.SelectionChanged += async (_, selectedId) =>
             {
-                var updated = _widgetSlots.ToArray();
-                updated[slotIndex] = updated[slotIndex] with { SelectedWidgetId = selectedId };
-                _widgetSlots = updated;
-                await PersistAsync(CurrentSettings(), alreadyApplied: true);
+                await _profileGate.WaitAsync();
+                try
+                {
+                    // The panel may have gone in a layout switch while waiting.
+                    if (slotIndex >= _widgetSlots.Count) return;
+                    var updated = _widgetSlots.ToArray();
+                    updated[slotIndex] = updated[slotIndex] with { SelectedWidgetId = selectedId };
+                    _widgetSlots = updated;
+                    await PersistAsync(CurrentSettings(), alreadyApplied: true);
+                }
+                finally { _profileGate.Release(); }
             };
             Grid.SetColumn(slot, index);
             WidgetHost.Children.Add(slot);
@@ -740,7 +761,7 @@ public sealed partial class MainWindow : Window
         ApplyResizeDelta(divider, args.GetCurrentPoint(Root).Position.X - _resizeStartX);
         CompleteResize(divider);
         args.Handled = true;
-        await PersistAsync(CurrentSettings(), alreadyApplied: true);
+        await PersistWithLayoutGateAsync();
     }
 
     private void Divider_PointerCanceled(object sender, PointerRoutedEventArgs args)
@@ -785,7 +806,7 @@ public sealed partial class MainWindow : Window
         }
 
         args.Handled = true;
-        await PersistAsync(CurrentSettings(), alreadyApplied: true);
+        await PersistWithLayoutGateAsync();
     }
 
     private void ApplyResizeDelta(PanelDivider divider, double delta)
@@ -883,7 +904,7 @@ public sealed partial class MainWindow : Window
                     // Choosing by hand while a program's layout is on keeps that layout off until
                     // the program next starts, along with any already kept off.
                     await ApplyProfileAsync(profile.Layout, profile.Id, manual: true,
-                        new AutoState(null, null, _suppressedProfileIds.Append(_autoProfileId).OfType<string>().Distinct().ToArray()));
+                        new AutoState(null, null, SuppressActive()));
                 }
                 finally { _profileGate.Release(); }
                 CloseControlsDrawer();
@@ -923,6 +944,20 @@ public sealed partial class MainWindow : Window
         finally { _profileGate.Release(); }
         ProfileNameBox.Text = string.Empty;
         BuildProfileButtons();
+    }
+
+    /// <summary>
+    /// The layouts to keep off after a hand choice: those already kept off, plus every layout
+    /// triggered by the active layout's program, since that program has not stopped.
+    /// </summary>
+    private IReadOnlyList<string> SuppressActive()
+    {
+        var program = _profiles.FirstOrDefault(profile => profile.Id == _autoProfileId)?.WhenRunning;
+        var sameProgram = program is null ? [] : _profiles
+            .Where(profile => string.Equals(profile.WhenRunning, program, StringComparison.OrdinalIgnoreCase))
+            .Select(profile => profile.Id);
+        return _suppressedProfileIds.Concat(sameProgram).Append(_autoProfileId).OfType<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     /// <summary>The automatic-switch bookkeeping that goes with a layout change.</summary>
@@ -1083,39 +1118,52 @@ public sealed partial class MainWindow : Window
 
     private async void WebPanelSelector_SelectionChanged(object sender, SelectionChangedEventArgs args)
     {
-        if (sender is not ComboBox { SelectedItem: ComboBoxItem item, Tag: int index } || item.Tag is not string id) return;
-        var selections = _webPanelCardIds.ToList();
-        while (selections.Count < 2) selections.Add(_webCards.ElementAtOrDefault(selections.Count)?.Id ?? id);
-        if (string.Equals(selections[index], id, StringComparison.OrdinalIgnoreCase)) return;
-        selections[index] = id;
-        var candidate = SettingsStore.Normalize(CurrentSettings() with { WebPanelCardIds = selections });
-        if (!await PersistAsync(candidate))
+        // Layout changes run one at a time with automatic switches (see _profileGate).
+        await _profileGate.WaitAsync();
+        try
         {
-            BuildWebPanelSelectors();
-            CloseControlsDrawer(restoreFocus: false);
-            return;
+            if (sender is not ComboBox { SelectedItem: ComboBoxItem item, Tag: int index } || item.Tag is not string id) return;
+            var selections = _webPanelCardIds.ToList();
+            while (selections.Count < 2) selections.Add(_webCards.ElementAtOrDefault(selections.Count)?.Id ?? id);
+            if (string.Equals(selections[index], id, StringComparison.OrdinalIgnoreCase)) return;
+            selections[index] = id;
+            var candidate = SettingsStore.Normalize(CurrentSettings() with { WebPanelCardIds = selections });
+            if (!await PersistAsync(candidate))
+            {
+                BuildWebPanelSelectors();
+                CloseControlsDrawer(restoreFocus: false);
+                return;
+            }
+            _webPanelCardIds = candidate.WebPanelCardIds!;
+            await BuildWebPanelsAsync();
         }
-        _webPanelCardIds = candidate.WebPanelCardIds!;
-        await BuildWebPanelsAsync();
+        finally { _profileGate.Release(); }
     }
 
     private async void WebPanelCountSelector_SelectionChanged(object sender, SelectionChangedEventArgs args)
     {
+        // Programmatic changes (rebuilding the selectors) are ignored before waiting.
         if (_updatingWebPanelCount || WebPanelCountSelector.SelectedIndex < 0) return;
-        var count = WebPanelCountSelector.SelectedIndex + 1;
-        if (count == _webPanelCount || count > _webCards.Count) return;
-        var candidate = SettingsStore.Normalize(CurrentSettings() with { WebPanelCount = count });
-        if (!await PersistAsync(candidate))
+        // Layout changes run one at a time with automatic switches (see _profileGate).
+        await _profileGate.WaitAsync();
+        try
         {
+            var count = WebPanelCountSelector.SelectedIndex + 1;
+            if (count == _webPanelCount || count > _webCards.Count) return;
+            var candidate = SettingsStore.Normalize(CurrentSettings() with { WebPanelCount = count });
+            if (!await PersistAsync(candidate))
+            {
+                BuildWebPanelSelectors();
+                CloseControlsDrawer(restoreFocus: false);
+                return;
+            }
+            _webPanelCount = candidate.WebPanelCount;
+            _webPanelCardIds = candidate.WebPanelCardIds!;
+            await BuildWebPanelsAsync();
             BuildWebPanelSelectors();
-            CloseControlsDrawer(restoreFocus: false);
-            return;
+            ApplyMediaLayout();
         }
-        _webPanelCount = candidate.WebPanelCount;
-        _webPanelCardIds = candidate.WebPanelCardIds!;
-        await BuildWebPanelsAsync();
-        BuildWebPanelSelectors();
-        ApplyMediaLayout();
+        finally { _profileGate.Release(); }
     }
 
     private void BuildPanelSelectors()
@@ -1157,19 +1205,26 @@ public sealed partial class MainWindow : Window
 
     private async void PanelCountSelector_SelectionChanged(object sender, SelectionChangedEventArgs args)
     {
+        // Programmatic changes (rebuilding the selectors) are ignored before waiting.
         if (_updatingPanelCount || PanelCountSelector.SelectedIndex < 0) return;
-        var count = PanelCountSelector.SelectedIndex + 1;
-        if (count == _widgetSlots.Count) return;
-        var slots = _widgetSlots.Take(count).ToList();
-        while (slots.Count < count)
-            slots.Add(new WidgetSlotSettings(["media", "clock", "audio", "stats", "pc"], "media"));
-        _widgetSlots = slots;
-        BuildWidgetSlots();
-        ApplyMediaLayout();
-        BuildPanelSelectors();
-        UpdateSettingsControls();
-        if (!await PersistAsync(CurrentSettings(), alreadyApplied: true))
-            CloseControlsDrawer(restoreFocus: false);
+        // Layout changes run one at a time with automatic switches (see _profileGate).
+        await _profileGate.WaitAsync();
+        try
+        {
+            var count = PanelCountSelector.SelectedIndex + 1;
+            if (count == _widgetSlots.Count) return;
+            var slots = _widgetSlots.Take(count).ToList();
+            while (slots.Count < count)
+                slots.Add(new WidgetSlotSettings(["media", "clock", "audio", "stats", "pc"], "media"));
+            _widgetSlots = slots;
+            BuildWidgetSlots();
+            ApplyMediaLayout();
+            BuildPanelSelectors();
+            UpdateSettingsControls();
+            if (!await PersistAsync(CurrentSettings(), alreadyApplied: true))
+                CloseControlsDrawer(restoreFocus: false);
+        }
+        finally { _profileGate.Release(); }
     }
 
     private void CloseControls_Click(object sender, RoutedEventArgs args) => CloseControlsDrawer();
