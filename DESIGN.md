@@ -42,6 +42,11 @@ adjustment, save after an adjustment finishes, and restore the prior size if a
 pointer gesture is cancelled. Viewport constraints clamp only the rendered
 layout, so a preferred split returns when more space is available.
 
+Native widget panels and Widget view do not activate EdgeDock when tapped or
+clicked while another app is active; the input still reaches the widget, and
+the other app keeps keyboard focus. Web cards, the controls handle and open
+overlays activate normally.
+
 Each web card has a page zoom (50-150% in 5% steps, default 100%). It behaves
 like browser zoom: the page lays out on a viewport of the panel size divided by
 the zoom, and the result is scaled to fit, via the WebView2 DevTools protocol
