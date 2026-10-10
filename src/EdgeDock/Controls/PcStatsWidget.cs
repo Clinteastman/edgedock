@@ -27,6 +27,7 @@ internal sealed class PcStatsWidget : UserControl
     private bool _sampleRunning;
     // Starts true so the first visible tick primes fresh baselines rather than showing a gap.
     private bool _needsPrime = true;
+    private DateTime _lastSampleAt = DateTime.MinValue;
 
     public PcStatsWidget()
     {
@@ -78,7 +79,11 @@ internal sealed class PcStatsWidget : UserControl
             _needsPrime = true;
             return;
         }
+        // A long gap means the timer could not run (the PC slept, or the app was stalled);
+        // readings across it would be averages, not the last second.
+        if (DateTime.UtcNow - _lastSampleAt > TimeSpan.FromSeconds(3)) _needsPrime = true;
         _sampleRunning = true;
+        _lastSampleAt = DateTime.UtcNow;
         var stats = _stats;
         var prime = _needsPrime;
         _needsPrime = false;
@@ -193,8 +198,12 @@ internal sealed class PcStatsWidget : UserControl
             _detail.Text = detail ?? string.Empty;
             _detail.Visibility = string.IsNullOrEmpty(detail) ? Visibility.Collapsed : Visibility.Visible;
             AutomationProperties.SetHelpText(Root, _value.Text + (string.IsNullOrEmpty(detail) ? string.Empty : ", " + detail));
+            // A missing reading clears its graph rather than freezing old activity in place;
+            // it starts again from the next real reading.
             if (value is { } sample) _history.Add(sample);
+            else _history.Clear();
             if (second is { } secondSample) _secondHistory?.Add(secondSample);
+            else _secondHistory?.Clear();
             Draw();
         }
 

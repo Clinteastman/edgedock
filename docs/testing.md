@@ -26,6 +26,10 @@
 - Fourth review: coming back into view re-primes the counters and clears the
   graphs, so no reading averages the hidden gap. Capture still live; a
   minimised window used 47 ms of CPU over 15 seconds.
+- Fifth review: a gap of more than 3 seconds between samples (sleep, stall)
+  re-primes before showing values, and a reading that becomes unavailable
+  clears its graph instead of leaving old activity in place (code; capture
+  unchanged and live).
 - Sampling checks real visibility each second. EdgeDock's CPU time over 20
   seconds: 625 ms with the widget showing, 109 ms with widgets hidden.
 
