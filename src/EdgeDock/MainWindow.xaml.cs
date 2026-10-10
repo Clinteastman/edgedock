@@ -1174,9 +1174,12 @@ public sealed partial class MainWindow : Window
         // The black overlay always shows; the backlight is turned down only when its original
         // level is safely saved, so a crash can never leave it dark with nothing to restore.
         var before = await MonitorBrightness.GetAsync(monitor);
-        // Moved to another monitor during the read: that reading is not this monitor's.
-        if (MonitorBrightness.MonitorOf(_windowHandle) != monitor) before = null;
-        if (before is not null && await RememberOriginalBrightnessAsync(_blankedMonitor, before.Value))
+        // Moved to another monitor during the read: that reading is not this monitor's. The saved
+        // identity must also find exactly this monitor again, or it could never be put back.
+        if (MonitorBrightness.MonitorOf(_windowHandle) != monitor || !IdentifiesMonitor(_blankedMonitor, monitor)) before = null;
+        if (before is not null && await RememberOriginalBrightnessAsync(_blankedMonitor, before.Value) &&
+            // Still blank and full screen after the waits (F11 or a touch may have come in).
+            _screenBlank && _isFullScreen && MonitorBrightness.MonitorOf(_windowHandle) == monitor)
         {
             _brightnessBeforeBlank = before;
             await MonitorBrightness.SetAsync(monitor, 0);
@@ -1282,6 +1285,19 @@ public sealed partial class MainWindow : Window
     /// made safely (restore point not saved, or the write refused), so the caller retries; a
     /// monitor without DDC/CI gets software dimming and counts as done.
     /// </summary>
+    /// <summary>
+    /// Whether a saved identity leads back to exactly this monitor, using the same matcher as a
+    /// restore. An ambiguous identity (for example two same-size screens without device paths)
+    /// could never be restored, so such a monitor is left alone.
+    /// </summary>
+    private static bool IdentifiesMonitor(DisplayPreference? identity, IntPtr monitor)
+    {
+        if (identity is null) return false;
+        var displays = ConnectedDisplays();
+        var index = DisplayPlacement.FindPreferred(displays.Select(display => display.Info).ToArray(), identity);
+        return index >= 0 && Win32Interop.GetMonitorFromDisplayId(displays[index].Area.DisplayId) == monitor;
+    }
+
     private async Task<(bool Done, bool OnMonitor)> ApplyBrightnessAsync(int brightness)
     {
         // Take the monitor's handle and identity together, before the slow read; if the window
@@ -1290,16 +1306,21 @@ public sealed partial class MainWindow : Window
         var identity = DisplayPlacement.PreferenceFor(CurrentDisplay());
         // This monitor answered DDC/CI moments ago (before blanking), so a failed read now is a
         // hiccup to retry, not a monitor without DDC/CI.
-        var done = _brightnessBeforeBlank is null;
+        // Likewise when EdgeDock has already changed this monitor (its restore point is pending).
+        var done = _brightnessBeforeBlank is null && _brightnessRestore?.Monitor != identity;
         var current = await MonitorBrightness.GetAsync(monitor);
         if (current is not null && MonitorBrightness.MonitorOf(_windowHandle) != monitor)
         {
             current = null;
-            done = false;
+            done = false; // Moved mid-read: try again on the new monitor.
         }
+        else if (current is not null && !IdentifiesMonitor(identity, monitor))
+            current = null; // Could never be put back: software dimming only, for good.
         if (current is not null)
         {
             if (await RememberOriginalBrightnessAsync(identity, current.Value) &&
+                // Still full screen on the same monitor after the waits.
+                _isFullScreen && MonitorBrightness.MonitorOf(_windowHandle) == monitor &&
                 await MonitorBrightness.SetAsync(monitor, brightness))
             {
                 ScreenDimLayer.Opacity = 0;
