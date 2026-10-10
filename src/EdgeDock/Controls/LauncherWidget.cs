@@ -107,18 +107,13 @@ internal sealed class LauncherWidget : UserControl
 
     private Button CreateTile(LauncherItem item)
     {
-        var kind = LauncherTargets.Classify(item.Target);
-        UIElement icon = kind switch
-        {
-            LauncherTargetKind.File or LauncherTargetKind.Folder when ShellIcons.Load(item.Target, 48) is { } image =>
-                new Image { Source = image, Width = 40, Height = 40 },
-            LauncherTargetKind.WebPage => Glyph(""),    // Globe
-            LauncherTargetKind.Folder => Glyph(""),     // Folder
-            LauncherTargetKind.Invalid => Glyph(""),    // Error
-            _ => Glyph("")                              // Document
-        };
+        // Show the tile straight away; checking the target and reading its icon can be slow
+        // (network or removable drives, shell extensions), so both happen in the background.
+        var iconHost = new Grid { Width = 40, Height = 40, HorizontalAlignment = HorizontalAlignment.Center };
+        var isWebPage = SettingsStore.IsAllowedUrl(item.Target, out _);
+        iconHost.Children.Add(Glyph(isWebPage ? GlobeGlyph : DocumentGlyph));
         var content = new StackPanel { Spacing = 8, HorizontalAlignment = HorizontalAlignment.Center };
-        content.Children.Add(icon);
+        content.Children.Add(iconHost);
         content.Children.Add(new TextBlock
         {
             Text = item.Name,
@@ -137,10 +132,38 @@ internal sealed class LauncherWidget : UserControl
             Padding = new Thickness(8, 12, 8, 10)
         };
         AutomationProperties.SetName(button, $"Open {item.Name}");
-        ToolTipService.SetToolTip(button, kind == LauncherTargetKind.Invalid ? $"{item.Target} was not found" : item.Target);
+        ToolTipService.SetToolTip(button, item.Target);
         button.Click += (_, _) => Launch(item);
+        if (!isWebPage) _ = ShowTargetAsync(item, button, iconHost);
         return button;
     }
+
+    private static async Task ShowTargetAsync(LauncherItem item, Button button, Grid iconHost)
+    {
+        var kind = await Task.Run(() => LauncherTargets.Classify(item.Target));
+        if (kind == LauncherTargetKind.Invalid)
+        {
+            iconHost.Children.Clear();
+            iconHost.Children.Add(Glyph(ErrorGlyph));
+            ToolTipService.SetToolTip(button, $"{item.Target} was not found");
+            return;
+        }
+        if (await ShellIcons.LoadAsync(item.Target, 48) is { } image)
+        {
+            iconHost.Children.Clear();
+            iconHost.Children.Add(new Image { Source = image, Width = 40, Height = 40 });
+        }
+        else if (kind == LauncherTargetKind.Folder)
+        {
+            iconHost.Children.Clear();
+            iconHost.Children.Add(Glyph(FolderGlyph));
+        }
+    }
+
+    private const string GlobeGlyph = "\uE774";
+    private const string FolderGlyph = "\uE8B7";
+    private const string ErrorGlyph = "\uE783";
+    private const string DocumentGlyph = "\uE8A5";
 
     private static FontIcon Glyph(string glyph) => new()
     {
@@ -149,11 +172,12 @@ internal sealed class LauncherWidget : UserControl
         Foreground = (Brush)Application.Current.Resources["AccentBrush"]
     };
 
-    private void Launch(LauncherItem item)
+    private async void Launch(LauncherItem item)
     {
         _status.Visibility = Visibility.Collapsed;
-        // Re-check at the moment of use: a drive may have gone, or the file moved.
-        if (LauncherTargets.Classify(item.Target) == LauncherTargetKind.Invalid)
+        // Re-check at the moment of use (a drive may have gone, or the file moved), off the
+        // UI thread because the check can wait on a slow drive.
+        if (await Task.Run(() => LauncherTargets.Classify(item.Target)) == LauncherTargetKind.Invalid)
         {
             ShowStatus($"{item.Name} could not be found. Check it in Settings, under Launcher.");
             return;

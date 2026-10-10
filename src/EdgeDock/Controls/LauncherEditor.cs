@@ -106,8 +106,8 @@ internal sealed class LauncherEditor : UserControl
             Name.Text = item.Name;
             Target.Text = item.Target;
             AutomationProperties.SetName(Name, "Launcher item name");
-            AutomationProperties.SetName(Target, $"What {item.Name} opens");
-            AutomationProperties.SetName(Remove, $"Remove {item.Name} from the launcher");
+            UpdateNames();
+            Name.TextChanged += (_, _) => UpdateNames();
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             buttons.Children.Add(BrowseFile);
             buttons.Children.Add(BrowseFolder);
@@ -115,6 +115,16 @@ internal sealed class LauncherEditor : UserControl
             Root.Children.Add(Name);
             Root.Children.Add(Target);
             Root.Children.Add(buttons);
+        }
+
+        /// <summary>Screen readers name each row's controls after the item, as it is typed.</summary>
+        private void UpdateNames()
+        {
+            var label = string.IsNullOrWhiteSpace(Name.Text) ? "the new launcher item" : Name.Text.Trim();
+            AutomationProperties.SetName(Target, $"What {label} opens");
+            AutomationProperties.SetName(BrowseFile, $"Browse for a file for {label}");
+            AutomationProperties.SetName(BrowseFolder, $"Browse for a folder for {label}");
+            AutomationProperties.SetName(Remove, $"Remove {label} from the launcher");
         }
 
         internal void Use(string path)

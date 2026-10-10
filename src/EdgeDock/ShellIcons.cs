@@ -1,18 +1,69 @@
 using Microsoft.UI.Xaml.Media.Imaging;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 
 namespace EdgeDock;
 
-/// <summary>Gets the icon Explorer shows for a file or folder, as a XAML image.</summary>
+/// <summary>Raw icon pixels (premultiplied BGRA, top-down), safe to pass between threads.</summary>
+internal sealed record IconPixels(int Width, int Height, byte[] Bgra);
+
+/// <summary>
+/// Gets the icon Explorer shows for a file or folder. Extraction can be slow (uncached
+/// icons, shell extensions, network or removable drives), so it runs on a dedicated
+/// background thread; only the final image is built on the UI thread. That thread is
+/// single-threaded COM (STA) because some icon handlers fail on thread-pool (MTA) threads.
+/// </summary>
 internal static class ShellIcons
 {
     private static readonly Guid ImageFactoryId = new("bcc18b79-ba16-442f-80c4-8a59c30c463b");
     private const int IconOnly = 0x4;
     private const int BiggerSizeOk = 0x1;
+    private const int CacheLimit = 128;
+    private static readonly ConcurrentDictionary<string, IconPixels?> Cache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly BlockingCollection<Action> Work = new();
+    private static readonly Lazy<Thread> Worker = new(() =>
+    {
+        var thread = new Thread(() => { foreach (var job in Work.GetConsumingEnumerable()) job(); })
+        {
+            IsBackground = true,
+            Name = "EdgeDock icon loader"
+        };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        return thread;
+    });
 
-    /// <summary>Returns null when Windows has no icon for the path. Call on the UI thread.</summary>
-    public static WriteableBitmap? Load(string path, int size)
+    /// <summary>
+    /// Call from the UI thread; extraction happens on the icon thread and the image is built
+    /// when it returns. Null when Windows has no icon for the path.
+    /// </summary>
+    public static async Task<WriteableBitmap?> LoadAsync(string path, int size)
+    {
+        var key = $"{size}|{path}";
+        if (!Cache.TryGetValue(key, out var pixels))
+        {
+            pixels = await OnIconThread(() => Extract(path, size));
+            if (Cache.Count >= CacheLimit) Cache.Clear();
+            Cache[key] = pixels;
+        }
+        return pixels is null ? null : ToImage(pixels);
+    }
+
+    private static Task<T> OnIconThread<T>(Func<T> job)
+    {
+        var result = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ = Worker.Value;
+        Work.Add(() =>
+        {
+            try { result.SetResult(job()); }
+            catch (Exception exception) { result.SetException(exception); }
+        });
+        return result.Task;
+    }
+
+    /// <summary>Reads the icon's pixels. Never call on the UI thread.</summary>
+    public static IconPixels? Extract(string path, int size)
     {
         IntPtr bitmap = IntPtr.Zero;
         object? item = null;
@@ -23,7 +74,7 @@ internal static class ShellIcons
                 return null;
             if (factory.GetImage(new NativeSize { Width = size, Height = size }, IconOnly | BiggerSizeOk, out bitmap) != 0 || bitmap == IntPtr.Zero)
                 return null;
-            return ToWriteableBitmap(bitmap);
+            return ReadPixels(bitmap);
         }
         catch (Exception exception) when (exception is COMException or InvalidCastException or ArgumentException)
         {
@@ -36,7 +87,16 @@ internal static class ShellIcons
         }
     }
 
-    private static WriteableBitmap? ToWriteableBitmap(IntPtr bitmap)
+    /// <summary>Builds the XAML image. UI thread only.</summary>
+    public static WriteableBitmap ToImage(IconPixels pixels)
+    {
+        var image = new WriteableBitmap(pixels.Width, pixels.Height);
+        using (var stream = image.PixelBuffer.AsStream()) stream.Write(pixels.Bgra, 0, pixels.Bgra.Length);
+        image.Invalidate();
+        return image;
+    }
+
+    private static IconPixels? ReadPixels(IntPtr bitmap)
     {
         if (GetObject(bitmap, Marshal.SizeOf<NativeBitmap>(), out var info) == 0 || info.Width <= 0 || info.Height == 0) return null;
         var width = info.Width;
@@ -72,10 +132,7 @@ internal static class ShellIcons
             pixels[index + 1] = (byte)(pixels[index + 1] * alpha / 255);
             pixels[index + 2] = (byte)(pixels[index + 2] * alpha / 255);
         }
-        var image = new WriteableBitmap(width, height);
-        using (var stream = image.PixelBuffer.AsStream()) stream.Write(pixels, 0, pixels.Length);
-        image.Invalidate();
-        return image;
+        return new IconPixels(width, height, pixels);
     }
 
     [ComImport, Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
