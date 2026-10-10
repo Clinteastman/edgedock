@@ -397,7 +397,7 @@ public sealed partial class MainWindow : Window
         CloseControlsDrawer(restoreFocus: false);
         if (SettingsPanel.Visibility == Visibility.Visible)
         {
-            _settingsSaveVersion++;
+            AbandonSettingsSave();
             SettingsPanel.Visibility = Visibility.Collapsed;
             return;
         }
@@ -409,12 +409,29 @@ public sealed partial class MainWindow : Window
 
     private void CancelSettings_Click(object sender, RoutedEventArgs args)
     {
-        _settingsSaveVersion++;
+        AbandonSettingsSave();
         SettingsPanel.Visibility = Visibility.Collapsed;
         UrlErrorText.Visibility = Visibility.Collapsed;
     }
 
     private async void SaveSettings_Click(object sender, RoutedEventArgs args) => await SaveAndNavigateAsync();
+
+    /// <summary>
+    /// Drops a save still checking launcher targets (Settings closed or cancelled) and unlocks
+    /// the editors straight away; a check stuck on an offline drive cannot keep them locked.
+    /// </summary>
+    private void AbandonSettingsSave()
+    {
+        _settingsSaveVersion++;
+        UnlockSettingsEditors();
+    }
+
+    private void UnlockSettingsEditors()
+    {
+        _checkingSave = false;
+        LauncherEditor.IsEnabled = true;
+        WebCardEditor.IsEnabled = true;
+    }
 
     private async Task SaveAndNavigateAsync()
     {
@@ -437,9 +454,9 @@ public sealed partial class MainWindow : Window
         try { validation = await LauncherEditor.TryGetItemsAsync(); }
         finally
         {
-            LauncherEditor.IsEnabled = true;
-            WebCardEditor.IsEnabled = true;
-            _checkingSave = false;
+            // An abandoned check was unlocked when it was abandoned; it must not unlock a
+            // newer save's check.
+            if (saveVersion == _settingsSaveVersion) UnlockSettingsEditors();
         }
         var (launchersValid, launchers, launcherError) = validation;
         if (saveVersion != _settingsSaveVersion) return;
@@ -1011,7 +1028,7 @@ public sealed partial class MainWindow : Window
     private void EnterWidgetView()
     {
         if (_isWidgetView) return;
-        _settingsSaveVersion++;
+        AbandonSettingsSave();
         SettingsPanel.Visibility = Visibility.Collapsed;
         WidgetHost.Children.Clear();
         WidgetHost.ColumnDefinitions.Clear();
