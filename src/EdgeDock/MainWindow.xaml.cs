@@ -13,6 +13,7 @@ using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.Web.WebView2.Core;
+using Microsoft.Windows.System.Power;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using Windows.Graphics;
@@ -80,6 +81,10 @@ public sealed partial class MainWindow : Window
     private DisplayAreaWatcher? _displayWatcher;
     private DispatcherQueueTimer? _displayChangeTimer;
     private DispatcherQueueTimer? _windowMoveTimer;
+    private readonly RecoveryBudget _browserRecoveries = new(3, TimeSpan.FromMinutes(10));
+    private bool _recreatingWebPanels;
+    private DateTimeOffset? _suspendedAt;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _resumeReloadTimer;
 
     public MainWindow()
     {
@@ -90,6 +95,7 @@ public sealed partial class MainWindow : Window
         ApplyBackdrop();
         ConfigureWindow();
         InstallMessageHook();
+        PowerManager.SystemSuspendStatusChanged += PowerManager_SystemSuspendStatusChanged;
         Closed += MainWindow_Closed;
         Activated += MainWindow_Activated;
 
@@ -181,6 +187,7 @@ public sealed partial class MainWindow : Window
             while (_webPanels.Count > visibleCount)
             {
                 var last = _webPanels[^1];
+                last.BrowserProcessFailed -= WebPanel_BrowserProcessFailed;
                 WebHost.Children.Remove(last);
                 _webPanels.RemoveAt(_webPanels.Count - 1);
                 last.Dispose();
@@ -188,6 +195,7 @@ public sealed partial class MainWindow : Window
             while (_webPanels.Count < visibleCount)
             {
                 var panel = new WebPanelView(BuildWebPanelsAsync);
+                panel.BrowserProcessFailed += WebPanel_BrowserProcessFailed;
                 _webPanels.Add(panel);
                 WebHost.Children.Add(panel);
             }
@@ -218,6 +226,74 @@ public sealed partial class MainWindow : Window
             }
         }
         finally { _webPanelGate.Release(); }
+    }
+
+    /// <summary>
+    /// All cards share one browser process. When it ends, each card reports it; recreate
+    /// every card and the environment once, within a limit so a broken runtime cannot loop.
+    /// </summary>
+    private async void WebPanel_BrowserProcessFailed(object? sender, bool userRequested)
+    {
+        if (_closing || _recreatingWebPanels || sender is not WebPanelView panel || !_webPanels.Contains(panel)) return;
+        if (!userRequested && !_browserRecoveries.TryConsume(DateTimeOffset.Now))
+        {
+            foreach (var each in _webPanels) each.ShowBrowserFailed();
+            return;
+        }
+
+        _recreatingWebPanels = true;
+        try
+        {
+            await _webPanelGate.WaitAsync();
+            try
+            {
+                foreach (var each in _webPanels)
+                {
+                    each.BrowserProcessFailed -= WebPanel_BrowserProcessFailed;
+                    WebHost.Children.Remove(each);
+                    each.Dispose();
+                }
+                _webPanels.Clear();
+                _webEnvironment = null;
+            }
+            finally { _webPanelGate.Release(); }
+            await BuildWebPanelsAsync();
+            ApplyMediaLayout();
+        }
+        finally { _recreatingWebPanels = false; }
+    }
+
+    private void PowerManager_SystemSuspendStatusChanged(object? sender, object args)
+    {
+        // Raised on a background thread; read the status there, act on the window's thread.
+        var status = PowerManager.SystemSuspendStatus;
+        var now = DateTimeOffset.Now;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_closing) return;
+            if (status == SystemSuspendStatus.Entering)
+            {
+                _suspendedAt = now;
+                _resumeReloadTimer?.Stop();
+                return;
+            }
+            if (status is not (SystemSuspendStatus.AutoResume or SystemSuspendStatus.ManualResume)) return;
+            var reload = WebRecovery.ShouldReloadAfterResume(_suspendedAt, now);
+            _suspendedAt = null;
+            if (!reload) return;
+            if (_resumeReloadTimer is null)
+            {
+                _resumeReloadTimer = DispatcherQueue.CreateTimer();
+                _resumeReloadTimer.IsRepeating = false;
+                _resumeReloadTimer.Interval = WebRecovery.ResumeReloadDelay;
+                _resumeReloadTimer.Tick += (_, _) =>
+                {
+                    if (_closing) return;
+                    foreach (var panel in _webPanels) panel.Reload();
+                };
+            }
+            _resumeReloadTimer.Start();
+        });
     }
 
     private void ConfigureWebPanelColumns()
@@ -1216,6 +1292,8 @@ public sealed partial class MainWindow : Window
                 _displayWatcher.Stop();
             _displayWatcher = null;
         }
+        PowerManager.SystemSuspendStatusChanged -= PowerManager_SystemSuspendStatusChanged;
+        _resumeReloadTimer?.Stop();
         WidgetGalleryRow.Children.Clear();
         WidgetHost.Children.Clear();
         _media.Dispose();
