@@ -206,12 +206,24 @@ internal sealed class MediaSessionService : IDisposable
         return name;
     }
 
+    private int _lastSourceCount;
+
+    /// <summary>How many apps have media; on a transient failure, the last known count.</summary>
     private int SourceCount()
     {
         GlobalSystemMediaTransportControlsSessionManager? manager;
         lock (_gate) manager = _manager;
-        try { return manager?.GetSessions().Count ?? 0; }
-        catch (Exception exception) when (exception is InvalidOperationException or System.Runtime.InteropServices.COMException) { return 0; }
+        if (manager is null) return 0;
+        try
+        {
+            var count = manager.GetSessions().Count;
+            lock (_gate) _lastSourceCount = count;
+            return count;
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or System.Runtime.InteropServices.COMException)
+        {
+            lock (_gate) return _lastSourceCount;
+        }
     }
 
     public async Task PreviousAsync() => await RunCommandAsync(session => session.TrySkipPreviousAsync());

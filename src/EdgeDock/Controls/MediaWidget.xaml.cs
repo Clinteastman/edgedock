@@ -184,6 +184,10 @@ public sealed partial class MediaWidget : UserControl
         SourceChevron.Visibility = canChoose ? Visibility.Visible : Visibility.Collapsed;
         SourceButton.IsHitTestVisible = canChoose;
         SourceButton.IsTabStop = canChoose;
+        // Screen readers hear which app is controlled, not just the action.
+        AutomationProperties.SetName(SourceButton, canChoose
+            ? $"{SourceText.Text}. Choose which media app to control"
+            : SourceText.Text);
     }
 
     private void SourceButton_Click(object sender, RoutedEventArgs args)
