@@ -1253,7 +1253,7 @@ public sealed partial class MainWindow : Window
         if (monitor is null) return false;
         if (_brightnessRestore is { } pending)
         {
-            if (pending.Monitor == monitor) return true;
+            if (SameMonitor(pending.Monitor, monitor)) return true;
             if (!await RestoreOriginalBrightnessAsync() || _brightnessRestore is not null) return false;
         }
         _brightnessRestore = new BrightnessRestore(monitor, brightness);
@@ -1290,12 +1290,28 @@ public sealed partial class MainWindow : Window
     /// restore. An ambiguous identity (for example two same-size screens without device paths)
     /// could never be restored, so such a monitor is left alone.
     /// </summary>
-    private static bool IdentifiesMonitor(DisplayPreference? identity, IntPtr monitor)
+    private static bool IdentifiesMonitor(DisplayPreference? identity, IntPtr monitor) =>
+        monitor != IntPtr.Zero && ResolveMonitor(identity) == monitor;
+
+    /// <summary>The connected monitor a saved identity leads to, or zero if none or ambiguous.</summary>
+    private static IntPtr ResolveMonitor(DisplayPreference? identity)
     {
-        if (identity is null) return false;
+        if (identity is null) return IntPtr.Zero;
         var displays = ConnectedDisplays();
         var index = DisplayPlacement.FindPreferred(displays.Select(display => display.Info).ToArray(), identity);
-        return index >= 0 && Win32Interop.GetMonitorFromDisplayId(displays[index].Area.DisplayId) == monitor;
+        return index < 0 ? IntPtr.Zero : Win32Interop.GetMonitorFromDisplayId(displays[index].Area.DisplayId);
+    }
+
+    /// <summary>
+    /// Whether two saved identities are the same physical monitor, by the restore matcher rather
+    /// than exact equality (resolution and orientation can change while it stays the same screen).
+    /// </summary>
+    private static bool SameMonitor(DisplayPreference? first, DisplayPreference? second)
+    {
+        if (first is null || second is null) return false;
+        if (first == second) return true;
+        var resolved = ResolveMonitor(first);
+        return resolved != IntPtr.Zero && resolved == ResolveMonitor(second);
     }
 
     private async Task<(bool Done, bool OnMonitor)> ApplyBrightnessAsync(int brightness)
@@ -1307,7 +1323,7 @@ public sealed partial class MainWindow : Window
         // This monitor answered DDC/CI moments ago (before blanking), so a failed read now is a
         // hiccup to retry, not a monitor without DDC/CI.
         // Likewise when EdgeDock has already changed this monitor (its restore point is pending).
-        var done = _brightnessBeforeBlank is null && _brightnessRestore?.Monitor != identity;
+        var done = _brightnessBeforeBlank is null && !SameMonitor(_brightnessRestore?.Monitor, identity);
         var current = await MonitorBrightness.GetAsync(monitor);
         if (current is not null && MonitorBrightness.MonitorOf(_windowHandle) != monitor)
         {
