@@ -36,6 +36,7 @@ public sealed partial class MainWindow : Window
     private readonly List<WebPanelView> _webPanels = [];
     private IntPtr _windowHandle;
     private IntPtr _messageHook;
+    private ActivationGuard? _activationGuard;
     private MediaPanelPlacement _mediaPlacement = MediaPanelPlacement.Right;
     private MediaPanelPlacement _lastVisiblePlacement = MediaPanelPlacement.Right;
     private double _configuredPanelWidth = 340;
@@ -72,6 +73,7 @@ public sealed partial class MainWindow : Window
         ApplyBackdrop();
         ConfigureWindow();
         InstallMessageHook();
+        _activationGuard = new ActivationGuard(_windowHandle, ShouldSkipActivation);
         Closed += MainWindow_Closed;
         Activated += MainWindow_Activated;
 
@@ -255,6 +257,30 @@ public sealed partial class MainWindow : Window
         }
 
         return CallNextHookEx(_messageHook, code, removeMessage, messagePointer);
+    }
+
+    /// <summary>
+    /// Tapping a native widget (playback, volume, shortcuts) should not pull keyboard focus
+    /// away from the app being used on another screen. Web cards, the controls handle and
+    /// open overlays still activate EdgeDock, because they may need typing.
+    /// </summary>
+    private bool ShouldSkipActivation(ActivationGuard.NativePoint screenPoint)
+    {
+        if (_closing || ControlsOverlay.Visibility == Visibility.Visible || SettingsPanel.Visibility == Visibility.Visible)
+            return false;
+        var clientPoint = screenPoint;
+        if (!ScreenToClient(_windowHandle, ref clientPoint)) return false;
+        var scale = Root.XamlRoot?.RasterizationScale ?? 1;
+        var position = new Windows.Foundation.Point(clientPoint.X / scale, clientPoint.Y / scale);
+        if (Contains(ControlHandle, position)) return false;
+        return Contains(WidgetHost, position) || Contains(WidgetGallery, position);
+    }
+
+    private static bool Contains(FrameworkElement element, Windows.Foundation.Point position)
+    {
+        if (element.Visibility != Visibility.Visible || element.ActualWidth <= 0 || element.ActualHeight <= 0) return false;
+        var bounds = element.TransformToVisual(null).TransformBounds(new Windows.Foundation.Rect(0, 0, element.ActualWidth, element.ActualHeight));
+        return bounds.Contains(position);
     }
 
     private void Root_KeyDown(object sender, KeyRoutedEventArgs args)
@@ -910,6 +936,8 @@ public sealed partial class MainWindow : Window
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
         _closing = true;
+        _activationGuard?.Dispose();
+        _activationGuard = null;
         WidgetGalleryRow.Children.Clear();
         WidgetHost.Children.Clear();
         _media.Dispose();
@@ -964,4 +992,7 @@ public sealed partial class MainWindow : Window
 
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    private static extern bool ScreenToClient(IntPtr window, ref ActivationGuard.NativePoint point);
 }

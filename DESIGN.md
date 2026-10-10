@@ -33,6 +33,11 @@ adjustment, save after an adjustment finishes, and restore the prior size if a
 pointer gesture is cancelled. Viewport constraints clamp only the rendered
 layout, so a preferred split returns when more space is available.
 
+Native widget panels and Widget view do not activate EdgeDock when tapped or
+clicked while another app is active; the input still reaches the widget, and
+the other app keeps keyboard focus. Web cards, the controls handle and open
+overlays activate normally.
+
 Panels have no shell header, page counter or navigation arrows. A native
 FlipView supplies touch paging; its overlay arrows are hidden. The drawer's
 page selectors provide an alternative for mouse and keyboard users.

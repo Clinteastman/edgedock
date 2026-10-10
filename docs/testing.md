@@ -1,5 +1,14 @@
 # Testing
 
+## Keep focus on the main screen (10 October 2026)
+
+- Debug x64 build: zero warnings/errors.
+- Runtime check pending. The first automated attempt was invalid: the
+  comparison app's window covered EdgeDock, so neither build received the
+  clicks. The corrected test (mouse click and injected touch tap on a widget
+  with Notepad active, then a click on the web area) needs the user's
+  permission to drive the screen.
+
 ## Web cards (9 September 2026)
 
 - Release x64 build completed with zero warnings/errors; 19 settings checks
