@@ -420,7 +420,18 @@ public sealed partial class MainWindow : Window
             return;
         }
         var saveVersion = ++_settingsSaveVersion;
-        var (launchersValid, launchers, launcherError) = await LauncherEditor.TryGetItemsAsync();
+        // Lock the drafts while targets are checked: an edit made during a slow check would
+        // otherwise be silently replaced by the values being validated.
+        LauncherEditor.IsEnabled = false;
+        WebCardEditor.IsEnabled = false;
+        (bool Valid, IReadOnlyList<LauncherItem> Items, string? Error) validation;
+        try { validation = await LauncherEditor.TryGetItemsAsync(); }
+        finally
+        {
+            LauncherEditor.IsEnabled = true;
+            WebCardEditor.IsEnabled = true;
+        }
+        var (launchersValid, launchers, launcherError) = validation;
         if (saveVersion != _settingsSaveVersion) return;
         if (!launchersValid)
         {

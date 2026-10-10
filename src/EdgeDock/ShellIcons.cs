@@ -21,6 +21,9 @@ internal static class ShellIcons
     private const int BiggerSizeOk = 0x1;
     private const int CacheLimit = 128;
     private static readonly ConcurrentDictionary<string, IconPixels?> Cache = new(StringComparer.OrdinalIgnoreCase);
+    // One extraction per icon at a time: repeated requests (page switches, several widgets)
+    // share it, so a slow shell handler cannot make the queue grow without bound.
+    private static readonly ConcurrentDictionary<string, Task<IconPixels?>> InFlight = new(StringComparer.OrdinalIgnoreCase);
     private static readonly BlockingCollection<Action> Work = new();
     private static readonly Lazy<Thread> Worker = new(() =>
     {
@@ -36,18 +39,31 @@ internal static class ShellIcons
 
     /// <summary>
     /// Call from the UI thread; extraction happens on the icon thread and the image is built
-    /// when it returns. Null when Windows has no icon for the path.
+    /// when it returns. Null when Windows has no icon for the path, or when
+    /// <paramref name="cancellation"/> fires first (the caller has gone, e.g. its page closed).
     /// </summary>
-    public static async Task<WriteableBitmap?> LoadAsync(string path, int size)
+    public static async Task<WriteableBitmap?> LoadAsync(string path, int size, CancellationToken cancellation = default)
     {
         var key = $"{size}|{path}";
         if (!Cache.TryGetValue(key, out var pixels))
         {
-            pixels = await OnIconThread(() => Extract(path, size));
+            var extraction = InFlight.GetOrAdd(key, _ => ExtractAndCacheAsync(key, path, size));
+            try { pixels = await extraction.WaitAsync(cancellation); }
+            catch (OperationCanceledException) { return null; }
+        }
+        return pixels is null || cancellation.IsCancellationRequested ? null : ToImage(pixels);
+    }
+
+    private static async Task<IconPixels?> ExtractAndCacheAsync(string key, string path, int size)
+    {
+        try
+        {
+            var pixels = await OnIconThread(() => Extract(path, size));
             if (Cache.Count >= CacheLimit) Cache.Clear();
             Cache[key] = pixels;
+            return pixels;
         }
-        return pixels is null ? null : ToImage(pixels);
+        finally { InFlight.TryRemove(key, out _); }
     }
 
     private static Task<T> OnIconThread<T>(Func<T> job)

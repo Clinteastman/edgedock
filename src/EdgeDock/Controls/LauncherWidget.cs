@@ -1,6 +1,7 @@
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using System.ComponentModel;
@@ -26,6 +27,8 @@ internal sealed class LauncherWidget : UserControl
         Visibility = Visibility.Collapsed
     };
     private readonly List<Button> _buttons = [];
+    // Cancelled when the page unloads, so background icon work never updates a discarded view.
+    private CancellationTokenSource? _loading;
     private int _columns;
 
     public LauncherWidget(Func<IReadOnlyList<LauncherItem>> items)
@@ -55,7 +58,15 @@ internal sealed class LauncherWidget : UserControl
             Child = layout
         };
         AutomationProperties.SetName(this, "Launcher");
+        // Failures are announced to screen readers, not just shown.
+        AutomationProperties.SetLiveSetting(_status, AutomationLiveSetting.Assertive);
         Loaded += (_, _) => Build();
+        Unloaded += (_, _) =>
+        {
+            _loading?.Cancel();
+            _loading?.Dispose();
+            _loading = null;
+        };
         _tiles.SizeChanged += (_, args) =>
         {
             if (ColumnsFor(args.NewSize.Width) != _columns) Arrange();
@@ -66,6 +77,9 @@ internal sealed class LauncherWidget : UserControl
 
     private void Build()
     {
+        _loading?.Cancel();
+        _loading?.Dispose();
+        _loading = new CancellationTokenSource();
         _buttons.Clear();
         var items = _items();
         if (items.Count == 0)
@@ -134,13 +148,16 @@ internal sealed class LauncherWidget : UserControl
         AutomationProperties.SetName(button, $"Open {item.Name}");
         ToolTipService.SetToolTip(button, item.Target);
         button.Click += (_, _) => Launch(item);
-        if (!isWebPage) _ = ShowTargetAsync(item, button, iconHost);
+        if (!isWebPage) _ = ShowTargetAsync(item, button, iconHost, _loading?.Token ?? CancellationToken.None);
         return button;
     }
 
-    private static async Task ShowTargetAsync(LauncherItem item, Button button, Grid iconHost)
+    private static async Task ShowTargetAsync(LauncherItem item, Button button, Grid iconHost, CancellationToken cancellation)
     {
-        var kind = await Task.Run(() => LauncherTargets.Classify(item.Target));
+        LauncherTargetKind kind;
+        try { kind = await Task.Run(() => LauncherTargets.Classify(item.Target), cancellation); }
+        catch (OperationCanceledException) { return; }
+        if (cancellation.IsCancellationRequested) return;
         if (kind == LauncherTargetKind.Invalid)
         {
             iconHost.Children.Clear();
@@ -148,7 +165,9 @@ internal sealed class LauncherWidget : UserControl
             ToolTipService.SetToolTip(button, $"{item.Target} was not found");
             return;
         }
-        if (await ShellIcons.LoadAsync(item.Target, 48) is { } image)
+        var image = await ShellIcons.LoadAsync(item.Target, 48, cancellation);
+        if (cancellation.IsCancellationRequested) return;
+        if (image is not null)
         {
             iconHost.Children.Clear();
             iconHost.Children.Add(new Image { Source = image, Width = 40, Height = 40 });
@@ -198,6 +217,8 @@ internal sealed class LauncherWidget : UserControl
     {
         _status.Text = message;
         _status.Visibility = Visibility.Visible;
+        (FrameworkElementAutomationPeer.FromElement(_status) ?? FrameworkElementAutomationPeer.CreatePeerForElement(_status))
+            ?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
     }
 
     private const int AnyProcess = -1;
