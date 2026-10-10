@@ -7,7 +7,7 @@ internal enum MediaPanelPlacement { Right, Left, Hidden }
 internal enum BackdropMaterial { Mica, Acrylic }
 
 internal sealed record WidgetSlotSettings(IReadOnlyList<string> EnabledWidgetIds, string? SelectedWidgetId);
-internal sealed record WebCardSettings(string Id, string Name, string Url);
+internal sealed record WebCardSettings(string Id, string Name, string Url, double Zoom = 1.0);
 
 internal sealed record EdgeDockSettings(
     string? DashboardUrl,
@@ -22,7 +22,9 @@ internal sealed record EdgeDockSettings(
     IReadOnlyList<WebCardSettings>? WebCards = null,
     int WebPanelCount = 1,
     IReadOnlyList<string>? WebPanelCardIds = null,
-    double WebSplitRatio = 0.5);
+    double WebSplitRatio = 0.5,
+    DisplayPreference? Display = null,
+    bool OpenFullScreen = false);
 
 internal sealed class SettingsStore
 {
@@ -31,17 +33,26 @@ internal sealed class SettingsStore
 
     public SettingsStore()
     {
-        var overrideRoot = Environment.GetEnvironmentVariable("EDGEDOCK_DATA_DIR");
-        var root = string.IsNullOrWhiteSpace(overrideRoot)
-            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EdgeDock")
-            : Path.GetFullPath(overrideRoot);
-
+        var root = ResolveDataRoot();
         Directory.CreateDirectory(root);
         _settingsPath = Path.Combine(root, "settings.json");
         WebViewProfilePath = Path.Combine(root, "WebView2");
     }
 
     public string WebViewProfilePath { get; }
+
+    /// <summary>True when EDGEDOCK_DATA_DIR points EdgeDock at an isolated test profile.</summary>
+    public static bool IsIsolatedProfile => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EDGEDOCK_DATA_DIR"));
+
+    public static string ResolveDataRoot()
+    {
+        var overrideRoot = Environment.GetEnvironmentVariable("EDGEDOCK_DATA_DIR");
+        var root = string.IsNullOrWhiteSpace(overrideRoot)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EdgeDock")
+            : Path.GetFullPath(overrideRoot);
+        // "C:\profile" and "C:\profile\" are the same folder and must share one instance key.
+        return Path.TrimEndingDirectorySeparator(root);
+    }
 
     public async Task<EdgeDockSettings> LoadAsync()
     {
@@ -58,7 +69,7 @@ internal sealed class SettingsStore
             var cards = stored?.WebCards is null
                 ? MigrateDashboard(stored?.DashboardUrl)
                 : stored.WebCards.Where(card => card is not null)
-                    .Select(card => new WebCardSettings(card.Id ?? string.Empty, card.Name ?? string.Empty, card.Url ?? string.Empty))
+                    .Select(card => new WebCardSettings(card.Id ?? string.Empty, card.Name ?? string.Empty, card.Url ?? string.Empty, card.Zoom ?? 1.0))
                     .ToArray();
             return Normalize(new EdgeDockSettings(
                 IsAllowedUrl(stored?.DashboardUrl, out _) ? stored!.DashboardUrl : null,
@@ -70,7 +81,11 @@ internal sealed class SettingsStore
                 slots,
                 ParseMaterial(stored?.Material), stored?.BackdropTransparency ?? 50,
                 cards, stored?.WebPanelCount ?? 1, stored?.WebPanelCardIds,
-                stored?.WebSplitRatio ?? 0.5));
+                stored?.WebSplitRatio ?? 0.5,
+                stored?.Display is { } display
+                    ? new DisplayPreference(display.DeviceId, display.HardwareId, display.Width ?? 0, display.Height ?? 0)
+                    : null,
+                stored?.OpenFullScreen ?? false));
         }
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -97,10 +112,14 @@ internal sealed class SettingsStore
                 IsWebVisible = settings.IsWebVisible,
                 Material = settings.Material.ToString(),
                 BackdropTransparency = settings.BackdropTransparency,
-                WebCards = settings.WebCards!.Select(card => new StoredWebCard { Id = card.Id, Name = card.Name, Url = card.Url }).ToList(),
+                WebCards = settings.WebCards!.Select(card => new StoredWebCard { Id = card.Id, Name = card.Name, Url = card.Url, Zoom = card.Zoom }).ToList(),
                 WebPanelCount = settings.WebPanelCount,
                 WebPanelCardIds = settings.WebPanelCardIds!.ToList(),
                 WebSplitRatio = settings.WebSplitRatio,
+                Display = settings.Display is { } display
+                    ? new StoredDisplay { DeviceId = display.DeviceId, HardwareId = display.HardwareId, Width = display.Width, Height = display.Height }
+                    : null,
+                OpenFullScreen = settings.OpenFullScreen,
                 WidgetSlots = settings.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
                 ExtensionData = _extensionData
             };
@@ -150,8 +169,19 @@ internal sealed class SettingsStore
             WebCards = cards,
             WebPanelCount = panelCount,
             WebPanelCardIds = selections,
-            WebSplitRatio = PanelLayout.NormalizeWebSplitRatio(value.WebSplitRatio)
+            WebSplitRatio = PanelLayout.NormalizeWebSplitRatio(value.WebSplitRatio),
+            Display = NormalizeDisplay(value.Display)
         };
+    }
+
+    private static DisplayPreference? NormalizeDisplay(DisplayPreference? display)
+    {
+        if (display is null) return null;
+        var deviceId = string.IsNullOrWhiteSpace(display.DeviceId) ? null : display.DeviceId.Trim();
+        var hardwareId = string.IsNullOrWhiteSpace(display.HardwareId) ? DisplayPlacement.HardwareIdFrom(deviceId) : display.HardwareId.Trim();
+        var hasSize = display.Width is > 0 and <= 100_000 && display.Height is > 0 and <= 100_000;
+        if (deviceId is null && hardwareId is null && !hasSize) return null;
+        return new DisplayPreference(deviceId, hardwareId, hasSize ? display.Width : 0, hasSize ? display.Height : 0);
     }
 
     private static IReadOnlyList<WebCardSettings> NormalizeWebCards(IReadOnlyList<WebCardSettings> source)
@@ -165,10 +195,17 @@ internal sealed class SettingsStore
             var id = baseId;
             for (var suffix = 2; !ids.Add(id); suffix++) id = $"{baseId}-{suffix}";
             var name = string.IsNullOrWhiteSpace(candidate.Name) ? uri.Host : candidate.Name.Trim();
-            cards.Add(new WebCardSettings(id, name, uri.AbsoluteUri));
+            cards.Add(new WebCardSettings(id, name, uri.AbsoluteUri, NormalizeZoom(candidate.Zoom)));
         }
         return cards;
     }
+
+    public const double MinimumZoom = 0.5;
+    public const double MaximumZoom = 1.5;
+
+    /// <summary>Page zoom per card: 50% to 150% in 5% steps; anything unusable means 100%.</summary>
+    public static double NormalizeZoom(double zoom) =>
+        double.IsFinite(zoom) ? Math.Round(Math.Clamp(zoom, MinimumZoom, MaximumZoom) * 20) / 20 : 1.0;
 
     private static IReadOnlyList<WebCardSettings> MigrateDashboard(string? dashboardUrl) =>
         IsAllowedUrl(dashboardUrl, out var uri) && uri is not null
@@ -208,6 +245,8 @@ internal sealed class SettingsStore
         public int? WebPanelCount { get; set; }
         public List<string>? WebPanelCardIds { get; set; }
         public double? WebSplitRatio { get; set; }
+        public StoredDisplay? Display { get; set; }
+        public bool? OpenFullScreen { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }
         [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; }
     }
@@ -218,10 +257,19 @@ internal sealed class SettingsStore
         public string? SelectedWidgetId { get; set; }
     }
 
+    private sealed class StoredDisplay
+    {
+        public string? DeviceId { get; set; }
+        public string? HardwareId { get; set; }
+        public int? Width { get; set; }
+        public int? Height { get; set; }
+    }
+
     private sealed class StoredWebCard
     {
         public string? Id { get; set; }
         public string? Name { get; set; }
         public string? Url { get; set; }
+        public double? Zoom { get; set; }
     }
 }

@@ -183,6 +183,48 @@ try
     Check(partial.WidgetSlots.Any(slot => slot.EnabledWidgetIds.Contains("audio")) &&
           partial.WidgetSlots.All(slot => slot.EnabledWidgetIds.All(id => !string.IsNullOrWhiteSpace(id))),
           "Partially malformed widget lists preserve usable entries without crashing");
+    const string edgePath = @"\\?\DISPLAY#CRX0A1B#5&1a2b3c&0&UID4352#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    const string edgeOtherPortPath = @"\\?\DISPLAY#CRX0A1B#5&9f8e7d&0&UID4356#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    const string mainPath = @"\\?\DISPLAY#GSM5B7F#5&1a2b3c&0&UID4353#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    var edge = new DisplayInfo(edgePath, 2560, 720);
+    var main = new DisplayInfo(mainPath, 3840, 2160);
+    var edgePreference = DisplayPlacement.PreferenceFor(edge);
+    Check(DisplayPlacement.HardwareIdFrom(edgePath) == "CRX0A1B" && DisplayPlacement.HardwareIdFrom("not-a-path") is null &&
+          edgePreference?.HardwareId == "CRX0A1B",
+          "Monitor model code is read from its device path");
+    Check(DisplayPlacement.FindPreferred([main, edge], edgePreference) == 1,
+          "The saved screen is found again by its device path");
+    Check(DisplayPlacement.FindPreferred([main, new DisplayInfo(edgeOtherPortPath, 2560, 720)], edgePreference) == 1,
+          "The saved screen is found by model after moving it to another port");
+    Check(DisplayPlacement.FindPreferred([main, new DisplayInfo("", 2560, 720)], edgePreference) == 1,
+          "A screen without a readable path is matched by its unique resolution");
+    Check(DisplayPlacement.FindPreferred([main], edgePreference) == -1 &&
+          DisplayPlacement.FindPreferred([main, new DisplayInfo(edgeOtherPortPath, 2560, 720), new DisplayInfo(edgeOtherPortPath.Replace("UID4356", "UID4357"), 2560, 720)],
+              edgePreference with { DeviceId = "gone" }) == -1 &&
+          DisplayPlacement.FindPreferred([main, edge], null) == -1,
+          "A missing or ambiguous screen is never guessed");
+    Check(SettingsStore.ResolveDataRoot() == Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)),
+          "The data folder resolves without a trailing separator");
+    Check(StartupApproval.AllowsRun(null) && StartupApproval.AllowsRun([]) &&
+          StartupApproval.AllowsRun([0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) && StartupApproval.AllowsRun([0x06]) &&
+          !StartupApproval.AllowsRun([0x03, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8]) && !StartupApproval.AllowsRun([0x07]),
+          "Sign-in start respects Windows' Startup apps switch");
+    var sizeOnly = DisplayPlacement.PreferenceFor(new DisplayInfo("", 2560, 720));
+    Check(sizeOnly is { DeviceId: null, HardwareId: null, Width: 2560, Height: 720 } &&
+          DisplayPlacement.FindPreferred([main, new DisplayInfo("", 2560, 720)], sizeOnly) == 1 &&
+          DisplayPlacement.PreferenceFor(new DisplayInfo("", 0, 0)) is null,
+          "A screen without a readable path is remembered and found by resolution");
+
+    store = new SettingsStore();
+    await store.SaveAsync(upgraded with { Display = edgePreference, OpenFullScreen = true });
+    var placed = await new SettingsStore().LoadAsync();
+    Check(placed.Display == edgePreference && placed.OpenFullScreen &&
+          placed.DashboardUrl == upgraded.DashboardUrl,
+          "Saved screen and full-screen choice survive restart without changing the layout");
+    await File.WriteAllTextAsync(file, """{"Display":{"DeviceId":"  ","Width":-5,"Height":99999999}}""");
+    var badDisplay = await new SettingsStore().LoadAsync();
+    Check(badDisplay.Display is null && !badDisplay.OpenFullScreen,
+          "An unusable saved screen is ignored and full screen stays off");
     Check(WebRecovery.RetryDelay(0) == TimeSpan.FromSeconds(5) && WebRecovery.RetryDelay(1) == TimeSpan.FromSeconds(10) &&
           WebRecovery.RetryDelay(3) == TimeSpan.FromSeconds(40) && WebRecovery.RetryDelay(4) == TimeSpan.FromSeconds(60) &&
           WebRecovery.RetryDelay(50) == TimeSpan.FromSeconds(60) && WebRecovery.RetryDelay(-1) == TimeSpan.FromSeconds(5),
@@ -201,6 +243,21 @@ try
           MediaNaming.FallbackName("Microsoft.ZuneMusic_8wekyb3d8bbwe!App") == "ZuneMusic" &&
           MediaNaming.FallbackName("somePlayer") == "SomePlayer" && MediaNaming.FallbackName("") == "Media app",
           "Media apps get readable names from desktop and packaged app IDs");
+    Check(SettingsStore.NormalizeZoom(0.8) == 0.8 && SettingsStore.NormalizeZoom(0.83) == 0.85 &&
+          SettingsStore.NormalizeZoom(5) == SettingsStore.MaximumZoom && SettingsStore.NormalizeZoom(0.1) == SettingsStore.MinimumZoom &&
+          SettingsStore.NormalizeZoom(double.NaN) == 1.0,
+          "Card zoom is clamped to 50-150% in 5% steps");
+    store = new SettingsStore();
+    await store.SaveAsync(twoCards with
+    {
+        WebCards = [twoCards.WebCards![0] with { Zoom = 0.75 }, twoCards.WebCards[1] with { Zoom = 9 }]
+    });
+    var zoomed = await new SettingsStore().LoadAsync();
+    Check(zoomed.WebCards?[0].Zoom == 0.75 && zoomed.WebCards[1].Zoom == SettingsStore.MaximumZoom,
+          "Each card keeps its own zoom across restart");
+    await File.WriteAllTextAsync(file, """{"WebCards":[{"Id":"old","Name":"Old","Url":"https://example.com/"}]}""");
+    Check((await new SettingsStore().LoadAsync()).WebCards?[0].Zoom == 1.0,
+          "Cards saved before zoom existed open at 100%");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally
