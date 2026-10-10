@@ -24,6 +24,12 @@
   even while a target check is stuck on an offline drive; the stuck check's
   result is dropped and cannot unlock a newer save. Build only (needs an
   offline drive and real input to exercise).
+- Third review: an invalid row is focused and scrolled to after the editor is
+  unlocked; tiles share one target check per item (a stuck check is joined,
+  not repeated, and a closed launcher stops waiting at once); the
+  any-process foreground grant was removed, so a launched app relies on the
+  shell's normal hand-over. Capture repeated: icons and the missing-item marker
+  still show. Tapping tiles still needs real input.
 
 ## Media source picker (10 October 2026)
 

@@ -4,9 +4,9 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 
 namespace EdgeDock.Controls;
 
@@ -155,7 +155,7 @@ internal sealed class LauncherWidget : UserControl
     private static async Task ShowTargetAsync(LauncherItem item, Button button, Grid iconHost, CancellationToken cancellation)
     {
         LauncherTargetKind kind;
-        try { kind = await Task.Run(() => LauncherTargets.Classify(item.Target), cancellation); }
+        try { kind = await ClassifyAsync(item.Target).WaitAsync(cancellation); }
         catch (OperationCanceledException) { return; }
         if (cancellation.IsCancellationRequested) return;
         if (kind == LauncherTargetKind.Invalid)
@@ -179,6 +179,20 @@ internal sealed class LauncherWidget : UserControl
         }
     }
 
+    // One check per target at a time. A check stuck on an offline drive cannot be interrupted,
+    // so reopening the launcher joins it instead of starting another; a cancelled tile stops
+    // waiting and is released straight away.
+    private static readonly ConcurrentDictionary<string, Task<LauncherTargetKind>> Checks = new(StringComparer.OrdinalIgnoreCase);
+
+    private static Task<LauncherTargetKind> ClassifyAsync(string target)
+    {
+        var check = Checks.GetOrAdd(target, key => Task.Run(() => LauncherTargets.Classify(key)));
+        // Forget a finished check so the next tap looks again (drives come and go). Done after
+        // the add, so a check that finished instantly is not left cached.
+        check.ContinueWith(_ => Checks.TryRemove(new KeyValuePair<string, Task<LauncherTargetKind>>(target, check)), TaskScheduler.Default);
+        return check;
+    }
+
     private const string GlobeGlyph = "\uE774";
     private const string FolderGlyph = "\uE8B7";
     private const string ErrorGlyph = "\uE783";
@@ -196,15 +210,14 @@ internal sealed class LauncherWidget : UserControl
         _status.Visibility = Visibility.Collapsed;
         // Re-check at the moment of use (a drive may have gone, or the file moved), off the
         // UI thread because the check can wait on a slow drive.
-        if (await Task.Run(() => LauncherTargets.Classify(item.Target)) == LauncherTargetKind.Invalid)
+        if (await ClassifyAsync(item.Target) == LauncherTargetKind.Invalid)
         {
             ShowStatus($"{item.Name} could not be found. Check it in Settings, under Launcher.");
             return;
         }
         try
         {
-            // EdgeDock just received the tap, so it may pass the foreground to what it opens.
-            AllowSetForegroundWindow(AnyProcess);
+            // The shell passes the foreground to what it opens from this tap; no wider grant.
             Process.Start(new ProcessStartInfo(item.Target.Trim()) { UseShellExecute = true })?.Dispose();
         }
         catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or FileNotFoundException)
@@ -221,8 +234,4 @@ internal sealed class LauncherWidget : UserControl
             ?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
     }
 
-    private const int AnyProcess = -1;
-
-    [DllImport("user32.dll")]
-    private static extern bool AllowSetForegroundWindow(int processId);
 }

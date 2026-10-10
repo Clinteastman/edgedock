@@ -464,6 +464,7 @@ public sealed partial class MainWindow : Window
         {
             UrlErrorText.Text = launcherError;
             UrlErrorText.Visibility = Visibility.Visible;
+            LauncherEditor.FocusInvalidRow();
             return;
         }
         // Saving with the toggle on also repairs an entry left pointing at a moved or older copy.

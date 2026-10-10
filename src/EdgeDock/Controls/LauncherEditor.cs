@@ -10,6 +10,7 @@ internal sealed class LauncherEditor : UserControl
 {
     private readonly StackPanel _rows = new() { Spacing = 14 };
     private readonly List<ItemRow> _editors = [];
+    private ItemRow? _invalidRow;
     private readonly Button _add = new() { Content = "Add launcher item", HorizontalAlignment = HorizontalAlignment.Left };
 
     internal LauncherEditor()
@@ -54,7 +55,9 @@ internal sealed class LauncherEditor : UserControl
             var (editor, name, target) = rows[index];
             if (kinds[index] == LauncherTargetKind.Invalid)
             {
-                editor.Target.Focus(FocusState.Programmatic);
+                // Focused by FocusInvalidRow once the caller has re-enabled the editor; a
+                // disabled control cannot take focus.
+                _invalidRow = editor;
                 return (false, [], string.IsNullOrEmpty(target)
                     ? $"Choose what {(string.IsNullOrEmpty(name) ? "the new launcher item" : name)} should open."
                     : $"{target} is not an existing file or folder, or an http or https address. Use Browse to pick one.");
@@ -62,6 +65,15 @@ internal sealed class LauncherEditor : UserControl
             result.Add(new LauncherItem(editor.Id, string.IsNullOrEmpty(name) ? LauncherTargets.DefaultName(target, kinds[index]) : name, target));
         }
         return (true, result, null);
+    }
+
+    /// <summary>Moves focus to, and scrolls to, the row the last check rejected.</summary>
+    internal void FocusInvalidRow()
+    {
+        if (_invalidRow is not { } row || !_editors.Contains(row)) return;
+        _invalidRow = null;
+        row.Target.Focus(FocusState.Programmatic);
+        row.Target.StartBringIntoView();
     }
 
     private void UpdateAddButton() => _add.IsEnabled = _editors.Count < SettingsStore.MaximumLaunchers;
