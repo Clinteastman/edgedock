@@ -26,6 +26,11 @@ contribute. This is not a signed installer or a finished consumer release.
 - Provides previous, play/pause and next controls when the player supports them.
 - Switches between windowed and full-screen modes using F11 or the controls drawer.
 - Keeps the app menu available while in full screen.
+- Reopens on the screen it was last on, in full screen if you left it that way.
+  If that screen disappears while EdgeDock is full screen on it, EdgeDock
+  minimises instead of covering your main screen, then returns when it is back.
+- Optionally starts when you sign in (Settings, **Startup**).
+- Runs as one copy: launching it again brings the open window forward.
 - Supports one to three native widget panels, with an optional web area.
 - Lets each panel switch between its chosen widgets independently.
 - Includes a local library of media, PC volume/mute and Windows Settings shortcuts.
@@ -93,7 +98,7 @@ kiosk browser.
 [Technology decisions](docs/technology.md) · [Contributing](CONTRIBUTING.md) ·
 [Developing widgets](docs/widget-development.md) · [MIT licence](LICENSE)
 
-Useful next steps after trying the prototype: saved page shortcuts, monitor
-placement, a media-session picker and a signed installer. These are ideas, not
+Useful next steps after trying the prototype: saved page shortcuts, a
+media-session picker and a signed installer. These are ideas, not
 features claimed by this build. The widget library currently contains bundled
 widgets; an online catalogue and third-party package installation are future work.

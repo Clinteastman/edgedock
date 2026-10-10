@@ -1,5 +1,52 @@
 # Testing
 
+## Start on the Edge (9 October 2026)
+
+- Debug and Release x64 builds: zero warnings/errors. 38 console checks pass, including
+  monitor matching by device path, by model after a port change, by unique
+  resolution, refusal to guess, and persistence of the screen and full-screen
+  choice.
+- Isolated profile on Windows 11 with three monitors (Xeneon Edge 2560x720 at
+  150%, plus two others). A profile remembering the Edge in full screen opened
+  full screen on the Edge by itself. A second launch exited and left one copy.
+- F11 saved full screen off together with the Edge's device path as read by
+  EdgeDock itself; the next launch opened windowed, centred on the Edge.
+  Moving the window to the main screen updated the remembered screen.
+- After review: a screen whose device path cannot be read is remembered by
+  resolution (console check); saving with sign-in start on rewrites an entry
+  pointing at another copy; moving the window to the Edge and closing it 0.4
+  seconds later still saved the Edge (runtime, isolated profile).
+- Second review: screen and full-screen saves now merge onto the saved file
+  inside the save lock; a data folder spelled with and without a trailing
+  slash shares one instance (runtime: the second spelling handed over). Moves
+  are ignored while the saved screen is disconnected (code only).
+- Third pass: screen saves merge onto the last successfully saved settings,
+  never a re-read of the file. Runtime: with settings.json damaged while
+  running, a drag rewrote the full layout (card and left placement kept) plus
+  the new screen. A failed screen save shows the "not saved" warning. Closing
+  0.4 seconds after a drag holds the close, saves, then closes; the new
+  screen was kept. Closing 1.6 seconds after a drag (debounce fired, save in
+  flight) also waits for the save; the new screen was kept.
+- Fifth pass, saved screen missing (fake monitor): a move 3 seconds after
+  launch was ignored; a move 14 seconds after launch replaced it, keeping the
+  card and full-screen choice. Two close requests straight after a drag still
+  saved the new screen.
+- Sixth pass: restoring a minimised window counts as a placement change, and
+  a later drag replaces a missing screen even after EdgeDock stepped aside.
+  Runtime: with the saved screen missing, a move right after restoring was
+  ignored and a move 13 seconds later was saved.
+- With no saved screen (first run or older settings), the screen the window
+  opened on is saved 1.5 seconds after launch (runtime: saved without any move,
+  card kept).
+- Seventh pass: a held close keeps waiting while new screen saves join the
+  chain (code only). Sign-in start honours Windows' Startup apps switch
+  (StartupApproved value; odd first byte means disabled; console check), and
+  turning it on in EdgeDock clears an earlier "disabled". Not run against the
+  real registry, to avoid creating a sign-in entry on this PC.
+- Not yet tested: unplugging or switching off the Edge while full screen
+  (minimise and return), sign-in start after a real reboot, and the Startup
+  toggle writing the Run key (only the isolated, disabled state was used).
+
 ## Web card recovery (9 October 2026)
 
 - Debug x64 build: zero warnings/errors. 28 console checks pass, including

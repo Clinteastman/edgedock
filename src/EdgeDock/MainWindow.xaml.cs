@@ -2,6 +2,7 @@ using EdgeDock.Controls;
 using EdgeDock.Widgets;
 using Microsoft.UI;
 using Microsoft.UI.Composition;
+using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -63,6 +64,23 @@ public sealed partial class MainWindow : Window
     private double _resizeStartX;
     private double _resizeStartWebSplitRatio;
     private double _resizeStartPanelWidth;
+    private DisplayPreference? _displayPreference;
+    // The settings as last written (or loaded) successfully. Display-only saves merge onto
+    // this rather than re-reading settings.json, which yields defaults if the file is locked
+    // or damaged and would then overwrite the whole layout.
+    private EdgeDockSettings? _savedSettings;
+    private bool _closeAfterPendingSave;
+    private bool _closeReady;
+    private DateTimeOffset _lastDisplayChange = DateTimeOffset.MinValue;
+    private bool _wasMinimized;
+    // Every screen save started, so closing can wait for one already past its debounce.
+    private Task _displaySaves = Task.CompletedTask;
+    private bool _openFullScreen;
+    private bool _awaitingPreferredDisplay;
+    private bool _minimizedForMissingDisplay;
+    private DisplayAreaWatcher? _displayWatcher;
+    private DispatcherQueueTimer? _displayChangeTimer;
+    private DispatcherQueueTimer? _windowMoveTimer;
     private readonly RecoveryBudget _browserRecoveries = new(3, TimeSpan.FromMinutes(10));
     private bool _recreatingWebPanels;
     private DateTimeOffset? _suspendedAt;
@@ -114,6 +132,7 @@ public sealed partial class MainWindow : Window
     {
         _ = _media.InitializeAsync();
         var settings = await _settings.LoadAsync();
+        _savedSettings = settings;
         _material = settings.Material;
         _backdropTransparency = settings.BackdropTransparency;
         ApplyBackdrop();
@@ -127,6 +146,12 @@ public sealed partial class MainWindow : Window
         _webPanelCount = settings.WebPanelCount;
         _webPanelCardIds = settings.WebPanelCardIds!;
         _configuredWebSplitRatio = settings.WebSplitRatio;
+        _displayPreference = settings.Display;
+        _openFullScreen = settings.OpenFullScreen;
+        // Move to the saved screen before WebView2 creates its child HWNDs, so pages
+        // render once at the right size and scale.
+        RestorePreferredDisplay();
+        StartDisplayTracking();
         BuildWidgetSlots();
         // Establish the final native/web bounds before WebView2 creates its child HWNDs.
         ApplyMediaLayout();
@@ -386,6 +411,14 @@ public sealed partial class MainWindow : Window
             UrlErrorText.Visibility = Visibility.Visible;
             return;
         }
+        // Saving with the toggle on also repairs an entry left pointing at a moved or older copy.
+        var startupNeedsChange = StartupToggle.IsOn ? !StartupRegistration.PointsHere() : StartupRegistration.IsEnabled();
+        if (StartupToggle.IsEnabled && startupNeedsChange && !StartupRegistration.SetEnabled(StartupToggle.IsOn))
+        {
+            UrlErrorText.Text = "Windows did not allow EdgeDock to change its sign-in setting. Your layout was not saved.";
+            UrlErrorText.Visibility = Visibility.Visible;
+            return;
+        }
         var placement = PlacementComboBox.SelectedIndex switch
         {
             1 => MediaPanelPlacement.Left,
@@ -397,7 +430,7 @@ public sealed partial class MainWindow : Window
             PanelWidthSlider.Value, ArtworkToggle.IsOn, WebVisibleToggle.IsOn, LibraryEditor.GetSlots(),
             MaterialSelector.SelectedIndex == 1 ? BackdropMaterial.Acrylic : BackdropMaterial.Mica,
             BackdropTransparencySlider.Value, cards, _webPanelCount, _webPanelCardIds,
-            _configuredWebSplitRatio));
+            _configuredWebSplitRatio, _displayPreference, _openFullScreen));
         if (!await PersistAsync(settings)) return;
         _material = settings.Material;
         _backdropTransparency = settings.BackdropTransparency;
@@ -423,20 +456,28 @@ public sealed partial class MainWindow : Window
     private async Task<bool> PersistAsync(EdgeDockSettings settings, bool alreadyApplied = false)
     {
         await _saveGate.WaitAsync();
-        try { await _settings.SaveAsync(settings); return true; }
+        try
+        {
+            await _settings.SaveAsync(settings);
+            _savedSettings = SettingsStore.Normalize(settings);
+            return true;
+        }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            if (!_closing)
-            {
-                SettingsPanel.Visibility = Visibility.Visible;
-                UrlErrorText.Text = alreadyApplied
-                    ? "Your change is active but was not saved. It may reset when EdgeDock closes. Check access to local app data."
-                    : "Could not save your layout. Check access to the local app data folder.";
-                UrlErrorText.Visibility = Visibility.Visible;
-            }
+            ShowSaveFailure(alreadyApplied);
             return false;
         }
         finally { _saveGate.Release(); }
+    }
+
+    private void ShowSaveFailure(bool alreadyApplied)
+    {
+        if (_closing) return;
+        SettingsPanel.Visibility = Visibility.Visible;
+        UrlErrorText.Text = alreadyApplied
+            ? "Your change is active but was not saved. It may reset when EdgeDock closes. Check access to local app data."
+            : "Could not save your layout. Check access to the local app data folder.";
+        UrlErrorText.Visibility = Visibility.Visible;
     }
 
     private async void ToggleMediaPanel_Click(object sender, RoutedEventArgs args)
@@ -462,7 +503,9 @@ public sealed partial class MainWindow : Window
         _webCards,
         _webPanelCount,
         _webPanelCardIds,
-        _configuredWebSplitRatio);
+        _configuredWebSplitRatio,
+        _displayPreference,
+        _openFullScreen);
 
     private void ApplyBackdrop()
     {
@@ -490,6 +533,9 @@ public sealed partial class MainWindow : Window
         WebVisibleToggle.IsOn = _isWebVisible;
         WebCardEditor.LoadCards(_webCards);
         LibraryEditor.LoadSlots(_widgetSlots, _registry);
+        // An isolated test profile must not rewrite the real sign-in entry.
+        StartupToggle.IsEnabled = !SettingsStore.IsIsolatedProfile;
+        StartupToggle.IsOn = StartupRegistration.IsEnabled();
     }
 
     private void PanelWidthSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs args)
@@ -510,6 +556,8 @@ public sealed partial class MainWindow : Window
             var slotIndex = index;
             WidgetHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             var slot = new WidgetSlotView(_registry, _media, _widgetSlots[index], _showArtwork);
+            // Full screen can already be active here, e.g. when reopening on the saved screen.
+            slot.SetEdgeToEdge(_isFullScreen);
             slot.SelectionChanged += async (_, selectedId) =>
             {
                 var updated = _widgetSlots.ToArray();
@@ -925,10 +973,53 @@ public sealed partial class MainWindow : Window
 
     private void FullScreen_Click(object sender, RoutedEventArgs args) => ToggleFullScreen();
 
-    private void ToggleFullScreen()
+    /// <summary>User-initiated: also remembers this screen and choice for the next launch.</summary>
+    private async void ToggleFullScreen()
+    {
+        SetFullScreen(!_isFullScreen);
+        _openFullScreen = _isFullScreen;
+        _awaitingPreferredDisplay = false;
+        _minimizedForMissingDisplay = false;
+        _displayPreference = DisplayPlacement.PreferenceFor(CurrentDisplay()) ?? _displayPreference;
+        await PersistDisplayAsync();
+    }
+
+    /// <summary>
+    /// Saves only the remembered screen and full-screen choice, merged inside the save gate
+    /// onto the last successfully saved settings. Snapshotting the whole in-memory layout
+    /// could overwrite a newer change that another handler saved but has not applied yet.
+    /// </summary>
+    private Task PersistDisplayAsync()
+    {
+        var save = PersistDisplayCoreAsync();
+        _displaySaves = Task.WhenAll(_displaySaves, save);
+        return save;
+    }
+
+    private async Task PersistDisplayCoreAsync()
+    {
+        await _saveGate.WaitAsync();
+        try { await SaveDisplayOntoSavedAsync(_displayPreference, _openFullScreen); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            ShowSaveFailure(alreadyApplied: true);
+        }
+        finally { _saveGate.Release(); }
+    }
+
+    /// <summary>Call only while holding the save gate.</summary>
+    private async Task SaveDisplayOntoSavedAsync(DisplayPreference? display, bool openFullScreen)
+    {
+        var merged = (_savedSettings ?? CurrentSettings()) with { Display = display, OpenFullScreen = openFullScreen };
+        await _settings.SaveAsync(merged);
+        _savedSettings = SettingsStore.Normalize(merged);
+    }
+
+    private void SetFullScreen(bool fullScreen)
     {
         CloseControlsDrawer();
-        if (_isFullScreen)
+        if (fullScreen == _isFullScreen) return;
+        if (!fullScreen)
         {
             AppWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
             _isFullScreen = false;
@@ -947,6 +1038,218 @@ public sealed partial class MainWindow : Window
             AutomationProperties.SetName(FullScreenButton, "Exit full screen");
         }
         ApplyFullscreenLayout();
+    }
+
+    /// <summary>Brings the window forward when EdgeDock is launched again while running.</summary>
+    internal void BringToFront()
+    {
+        if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter)
+            presenter.Restore();
+        Activate();
+        SetForegroundWindow(_windowHandle);
+    }
+
+    private void RestorePreferredDisplay()
+    {
+        if (_displayPreference is null) return;
+        if (!MoveToPreferredDisplay())
+        {
+            // The screen may still be waking up at sign-in; the display watcher finishes the job.
+            _awaitingPreferredDisplay = true;
+            return;
+        }
+        if (_openFullScreen) SetFullScreen(true);
+    }
+
+    private void StartDisplayTracking()
+    {
+        // Treat launch like a display change: early moves are Windows placing the window.
+        _lastDisplayChange = DateTimeOffset.Now;
+        _displayChangeTimer = DispatcherQueue.CreateTimer();
+        _displayChangeTimer.Interval = TimeSpan.FromMilliseconds(800);
+        _displayChangeTimer.IsRepeating = false;
+        _displayChangeTimer.Tick += (_, _) => OnDisplaysChanged();
+        _windowMoveTimer = DispatcherQueue.CreateTimer();
+        _windowMoveTimer.Interval = TimeSpan.FromSeconds(1.5);
+        _windowMoveTimer.IsRepeating = false;
+        _windowMoveTimer.Tick += async (_, _) => await RememberMovedWindowAsync();
+        AppWindow.Changed += AppWindow_Changed;
+        AppWindow.Closing += AppWindow_Closing;
+
+        _displayWatcher = DisplayArea.CreateWatcher();
+        _displayWatcher.Added += DisplayWatcher_Changed;
+        _displayWatcher.Removed += DisplayWatcher_Changed;
+        _displayWatcher.Updated += DisplayWatcher_Changed;
+        _displayWatcher.Start();
+        // First run, or settings from before screens were remembered: record where the window
+        // opened once placement settles, so the next launch returns to the same screen.
+        if (_displayPreference is null) _windowMoveTimer.Start();
+    }
+
+    // Watcher events arrive on a background thread, often several per change; settle them first.
+    private void DisplayWatcher_Changed(DisplayAreaWatcher sender, DisplayArea args) =>
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_closing) return;
+            _lastDisplayChange = DateTimeOffset.Now;
+            _displayChangeTimer?.Start();
+        });
+
+    private void OnDisplaysChanged()
+    {
+        if (_closing || _displayPreference is null) return;
+        var displays = ConnectedDisplays();
+        if (DisplayPlacement.FindPreferred(displays.Select(display => display.Info).ToArray(), _displayPreference) < 0)
+        {
+            // Windows moves a full-screen window to another monitor when its screen goes away.
+            // Step aside instead of covering the main screen, and come back when it returns.
+            if (_isFullScreen && !_minimizedForMissingDisplay)
+            {
+                _minimizedForMissingDisplay = true;
+                SetFullScreen(false);
+                (AppWindow.Presenter as OverlappedPresenter)?.Minimize();
+            }
+            return;
+        }
+
+        if (_minimizedForMissingDisplay || _awaitingPreferredDisplay)
+        {
+            var restoreFullScreen = _openFullScreen;
+            _minimizedForMissingDisplay = false;
+            _awaitingPreferredDisplay = false;
+            if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter)
+                presenter.Restore();
+            MoveToPreferredDisplay();
+            if (restoreFullScreen) SetFullScreen(true);
+        }
+        else if (_isFullScreen)
+        {
+            // A resolution or arrangement change can shuffle windows between monitors.
+            MoveToPreferredDisplay();
+        }
+    }
+
+    private bool MoveToPreferredDisplay()
+    {
+        var displays = ConnectedDisplays();
+        var index = DisplayPlacement.FindPreferred(displays.Select(display => display.Info).ToArray(), _displayPreference);
+        if (index < 0) return false;
+
+        var target = displays[index].Area;
+        var current = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest);
+        if (current?.DisplayId.Value == target.DisplayId.Value) return true;
+
+        var wasFullScreen = _isFullScreen;
+        if (wasFullScreen) AppWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
+        var work = target.WorkArea;
+        var width = Math.Min(AppWindow.Size.Width, work.Width);
+        var height = Math.Min(AppWindow.Size.Height, work.Height);
+        AppWindow.MoveAndResize(new RectInt32(work.X + (work.Width - width) / 2, work.Y + (work.Height - height) / 2, width, height));
+        // The full-screen presenter fills whichever monitor the window is on.
+        if (wasFullScreen) AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
+        return true;
+    }
+
+    private void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs args)
+    {
+        var minimized = AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized };
+        // Restoring puts the window wherever Windows last had it; like a display change,
+        // that placement is not a choice of screen, but a drag after it is.
+        if (_wasMinimized && !minimized) _lastDisplayChange = DateTimeOffset.Now;
+        _wasMinimized = minimized;
+        if (args.DidPositionChange && !_closing) _windowMoveTimer?.Start();
+    }
+
+    /// <summary>Dragging the window to another screen makes that screen the one to reopen on.</summary>
+    private async Task RememberMovedWindowAsync()
+    {
+        if (_closing || !CaptureMovedDisplay()) return;
+        await PersistDisplayAsync();
+    }
+
+    /// <summary>Updates the remembered screen from the window's position; true if it changed.</summary>
+    private bool CaptureMovedDisplay()
+    {
+        if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized }) return false;
+        // When the saved screen disconnects, Windows moves the window elsewhere straight away.
+        // That is not the user choosing a new screen, so keep the old one to return to. A move
+        // made later, while it is still missing, is a deliberate choice and replaces it.
+        if (_displayPreference is not null &&
+            DateTimeOffset.Now - _lastDisplayChange < TimeSpan.FromSeconds(10) &&
+            DisplayPlacement.FindPreferred(ConnectedDisplays().Select(display => display.Info).ToArray(), _displayPreference) < 0)
+            return false;
+        var preference = DisplayPlacement.PreferenceFor(CurrentDisplay());
+        if (preference is null || preference == _displayPreference) return false;
+        _displayPreference = preference;
+        _awaitingPreferredDisplay = false;
+        // The user chose a new screen after stepping aside; stop waiting for the old one.
+        _minimizedForMissingDisplay = false;
+        return true;
+    }
+
+    /// <summary>
+    /// Closing straight after a drag, or while its save is still writing, would otherwise lose
+    /// the move. Hold the close, finish the save normally on this thread (a blocking wait could stall behind another save
+    /// that needs this dispatcher), then close for real.
+    /// </summary>
+    private async void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        if (_closeReady) return;
+        var movePending = _windowMoveTimer?.IsRunning == true;
+        if (!_closeAfterPendingSave && !movePending && _displaySaves.IsCompleted) return;
+        args.Cancel = true;
+        // Already waiting: further close clicks must not end the process mid-save.
+        if (_closeAfterPendingSave) return;
+        _closeAfterPendingSave = true;
+        if (movePending)
+        {
+            _windowMoveTimer!.Stop();
+            if (CaptureMovedDisplay()) _ = PersistDisplayAsync();
+        }
+        // Covers saves started by the timer that are still waiting for the gate or the disk,
+        // and any started while waiting (the window stays usable, so F11 can add one).
+        Task pending;
+        do
+        {
+            pending = _displaySaves;
+            try { await pending; }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+        while (!ReferenceEquals(pending, _displaySaves));
+        _closeReady = true;
+        Close();
+    }
+
+    private DisplayInfo? CurrentDisplay()
+    {
+        var current = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest);
+        return current is null ? null : DescribeDisplay(current);
+    }
+
+    private static List<(DisplayArea Area, DisplayInfo Info)> ConnectedDisplays()
+    {
+        var displays = new List<(DisplayArea, DisplayInfo)>();
+        var areas = DisplayArea.FindAll();
+        // Index rather than foreach: enumerating this projected list is unreliable.
+        for (var index = 0; index < areas.Count; index++)
+            displays.Add((areas[index], DescribeDisplay(areas[index])));
+        return displays;
+    }
+
+    private static DisplayInfo DescribeDisplay(DisplayArea area) =>
+        new(MonitorDeviceId(area) ?? string.Empty, area.OuterBounds.Width, area.OuterBounds.Height);
+
+    /// <summary>The monitor's device interface path, which stays the same across restarts.</summary>
+    private static string? MonitorDeviceId(DisplayArea area)
+    {
+        var monitor = Win32Interop.GetMonitorFromDisplayId(area.DisplayId);
+        var info = new MonitorInfoEx { Size = Marshal.SizeOf<MonitorInfoEx>() };
+        if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref info)) return null;
+        var device = new DisplayDevice { Size = Marshal.SizeOf<DisplayDevice>() };
+        return EnumDisplayDevices(info.DeviceName, 0, ref device, GetDeviceInterfaceName) &&
+               !string.IsNullOrWhiteSpace(device.DeviceId)
+            ? device.DeviceId
+            : null;
     }
 
     private void ApplyFullscreenLayout()
@@ -986,6 +1289,19 @@ public sealed partial class MainWindow : Window
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
         _closing = true;
+        _displayChangeTimer?.Stop();
+        _windowMoveTimer?.Stop();
+        AppWindow.Changed -= AppWindow_Changed;
+        AppWindow.Closing -= AppWindow_Closing;
+        if (_displayWatcher is not null)
+        {
+            _displayWatcher.Added -= DisplayWatcher_Changed;
+            _displayWatcher.Removed -= DisplayWatcher_Changed;
+            _displayWatcher.Updated -= DisplayWatcher_Changed;
+            if (_displayWatcher.Status is DisplayAreaWatcherStatus.Started or DisplayAreaWatcherStatus.EnumerationCompleted)
+                _displayWatcher.Stop();
+            _displayWatcher = null;
+        }
         PowerManager.SystemSuspendStatusChanged -= PowerManager_SystemSuspendStatusChanged;
         _resumeReloadTimer?.Stop();
         WidgetGalleryRow.Children.Clear();
@@ -1006,6 +1322,7 @@ public sealed partial class MainWindow : Window
     private const uint NullMessage = 0x0000;
     private const uint WindowKeyDown = 0x0100;
     private const uint WindowSystemKeyDown = 0x0104;
+    private const uint GetDeviceInterfaceName = 0x00000001;
 
     private delegate IntPtr GetMessageHookProc(int code, IntPtr removeMessage, IntPtr messagePointer);
 
@@ -1042,4 +1359,43 @@ public sealed partial class MainWindow : Window
 
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct MonitorInfoEx
+    {
+        public int Size;
+        public NativeRect Monitor;
+        public NativeRect WorkArea;
+        public uint Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct DisplayDevice
+    {
+        public int Size;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
+        public uint StateFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceId;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfoEx info);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool EnumDisplayDevices(string? device, uint deviceIndex, ref DisplayDevice displayDevice, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr window);
 }

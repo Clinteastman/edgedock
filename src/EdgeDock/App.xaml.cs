@@ -1,10 +1,12 @@
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 
 namespace EdgeDock;
 
 public partial class App : Application
 {
-    private Window? _window;
+    private static MainWindow? _window;
+    private static DispatcherQueue? _dispatcher;
 
     public App()
     {
@@ -17,7 +19,11 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        _dispatcher = DispatcherQueue.GetForCurrentThread();
         _window = new MainWindow();
         _window.Activate();
     }
+
+    /// <summary>Called from another launch of EdgeDock; may arrive on a background thread.</summary>
+    internal static void ShowRunningWindow() => _dispatcher?.TryEnqueue(() => _window?.BringToFront());
 }

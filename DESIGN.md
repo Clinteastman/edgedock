@@ -13,6 +13,15 @@ content row, including in web-only mode. The drawer contains Settings, full
 screen, widget visibility, panel count and per-panel page selection. Configuration appears
 over content only when requested.
 F11 toggles full screen; Escape is left to active content.
+EdgeDock remembers the monitor it was last on (its device path, then its model
+code, then a unique resolution; never a guess between equal candidates) and
+whether it was full screen. Dragging the window to another screen updates the
+memory. If the remembered screen is missing at launch, EdgeDock opens windowed
+and moves there when it appears. If it disappears while full screen, EdgeDock
+minimises rather than covering another screen. Optional sign-in start uses the
+per-user Run key and is disabled for isolated `EDGEDOCK_DATA_DIR` profiles.
+A second launch brings the running window forward; each data folder has its
+own single-instance key.
 Full screen removes the title row and outer 10px inset. Dashboard panels meet
 the physical screen with square outside edges; internal 10px divider gaps stay.
 
