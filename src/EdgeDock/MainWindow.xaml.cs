@@ -465,10 +465,13 @@ public sealed partial class MainWindow : Window
         catch (OperationCanceledException) { } // Abandoned while checking targets.
         finally
         {
-            _persistingSave = false;
-            // An abandoned check was unlocked when it was abandoned; it must not unlock a
-            // newer save's check.
-            if (saveVersion == _settingsSaveVersion) UnlockSettingsEditors();
+            // An abandoned save was unlocked when it was abandoned; it must not unlock, or end
+            // the writing state of, a newer save.
+            if (saveVersion == _settingsSaveVersion)
+            {
+                _persistingSave = false;
+                UnlockSettingsEditors();
+            }
         }
     }
 
