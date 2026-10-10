@@ -61,11 +61,11 @@ Dashboard-only layout controls are unavailable while this mode is active.
   the remaining height and is capped at 180px.
 - Audio displays the default multimedia playback device, volume and mute state.
   Loading or refreshing it never changes system volume.
-- PC activity shows processor, memory, graphics (busiest engine type per
-  adapter, as Task Manager does), disk busy time with read/write rates, and
+- PC activity shows processor, memory, graphics (busiest engine, as Task
+  Manager does) with the busiest adapter's video memory, disk busy time with read/write rates, and
   network down/up. Each row has a 60-second sparkline; network draws both
   directions on one shared scale. It samples once a second on a background
-  thread and only while on screen. Unavailable counters read "Not available".
+  thread and only while actually visible (not hidden or minimised). Unavailable counters read "Not available".
 - PC shortcuts opens named Windows Settings pages. These are shortcuts, not
   embedded replacements for the OS settings interfaces.
 

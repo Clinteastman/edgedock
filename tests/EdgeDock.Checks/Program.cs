@@ -211,7 +211,11 @@ try
               ("not-a-gpu-instance", 99)]) == 70 &&
           StatsMath.GpuPercent([("pid_1_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 80), ("pid_2_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 60)]) == 100 &&
           StatsMath.GpuPercent([]) is null,
-          "Graphics use is the busiest engine type per adapter, capped at 100%");
+          "Graphics use adds every process's share of an engine, capped at 100%");
+    Check(StatsMath.GpuPercent([
+              ("pid_1_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 60),
+              ("pid_1_luid_0x0_0xA_phys_0_eng_1_engtype_3D", 60)]) == 60,
+          "Two engines of the same type are not added together");
     Check(StatsMath.FormatBytes(512) == "512 B" && StatsMath.FormatBytes(1536) == "1.5 KB" &&
           StatsMath.FormatBytes(17179869184) == "16.0 GB" && StatsMath.FormatRate(2_621_440) == "2.5 MB/s",
           "Sizes and rates are written in readable units");

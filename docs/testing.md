@@ -3,14 +3,20 @@
 ## PC activity widget (10 October 2026)
 
 - Debug x64 build: zero warnings/errors. 35 console checks pass, including
-  processor maths, byte rates, the graphics rule (busiest engine type per
-  adapter), readable units, graph mapping and history.
+  processor maths, byte rates, the graphics rule, readable units, graph mapping and history.
 - A console harness using the same service read, once a second: processor
   12-20% (Windows' own counter said 7% moments later), memory 31.5 of 63.4 GB,
   graphics 0.5% with 3.4 GB video memory, disk and network rates. Each reading
   took about 50 ms, which is why sampling runs off the UI thread.
 - A captured EdgeDock window (isolated profile, 720-pixel-tall panel) showed all
   five rows with live graphs and no clipping after tightening the row spacing.
+- After review: PDH "new data" readings are accepted; graphics load is the
+  busiest individual engine (two 3D engines at 60% read 60%, not 100%);
+  unavailable disk or network rates read "not available" rather than 0; video
+  memory shows the busiest adapter (`GPU Adapter Memory` has one instance per
+  adapter, confirmed on this PC: two). 36 console checks pass.
+- Sampling checks real visibility each second. EdgeDock's CPU time over 20
+  seconds: 625 ms with the widget showing, 109 ms with widgets hidden.
 
 ## Web card recovery (9 October 2026)
 

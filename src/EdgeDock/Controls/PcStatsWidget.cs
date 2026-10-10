@@ -22,7 +22,9 @@ internal sealed class PcStatsWidget : UserControl
     private readonly StatRow _gpu = new("Graphics", 100);
     private readonly StatRow _disk = new("Disk", 100);
     private readonly StatRow _network = new("Network", 0, secondLine: true);
-    private CancellationTokenSource? _sampling;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _timer;
+    private SystemStatsService? _stats;
+    private bool _sampleRunning;
 
     public PcStatsWidget()
     {
@@ -49,33 +51,56 @@ internal sealed class PcStatsWidget : UserControl
 
     private void StartSampling()
     {
-        if (_sampling is not null) return;
-        var sampling = new CancellationTokenSource();
-        _sampling = sampling;
-        var dispatcher = DispatcherQueue;
-        _ = Task.Run(async () =>
-        {
-            // Performance counters can take tens of milliseconds; keep them off the UI thread.
-            using var stats = new SystemStatsService();
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
-            try
-            {
-                do
-                {
-                    var snapshot = stats.Sample();
-                    dispatcher.TryEnqueue(() => { if (!sampling.IsCancellationRequested) Show(snapshot); });
-                }
-                while (await timer.WaitForNextTickAsync(sampling.Token));
-            }
-            catch (OperationCanceledException) { }
-        });
+        if (_timer is not null) return;
+        _timer = DispatcherQueue.CreateTimer();
+        _timer.Interval = TimeSpan.FromSeconds(1);
+        _timer.Tick += (_, _) => SampleIfOnScreen();
+        _timer.Start();
+        SampleIfOnScreen();
     }
 
     private void StopSampling()
     {
-        _sampling?.Cancel();
-        _sampling?.Dispose();
-        _sampling = null;
+        _timer?.Stop();
+        _timer = null;
+        // A sample still running on the thread pool disposes the service when it finishes.
+        if (!_sampleRunning) DisposeStats();
+    }
+
+    /// <summary>
+    /// Hiding widgets collapses their host without unloading them, and a minimised window
+    /// keeps them loaded too, so check real visibility before doing any work.
+    /// </summary>
+    private void SampleIfOnScreen()
+    {
+        if (_sampleRunning || _timer is null || !IsOnScreen()) return;
+        _sampleRunning = true;
+        _stats ??= new SystemStatsService();
+        var stats = _stats;
+        // Performance counters can take tens of milliseconds; keep them off the UI thread.
+        _ = Task.Run(stats.Sample).ContinueWith(task =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                _sampleRunning = false;
+                if (_timer is null) DisposeStats();
+                else if (task.Status == TaskStatus.RanToCompletion) Show(task.Result);
+            });
+        }, TaskScheduler.Default);
+    }
+
+    private bool IsOnScreen()
+    {
+        if (XamlRoot is not { IsHostVisible: true }) return false;
+        for (DependencyObject? element = this; element is not null; element = VisualTreeHelper.GetParent(element))
+            if (element is UIElement { Visibility: Visibility.Collapsed }) return false;
+        return true;
+    }
+
+    private void DisposeStats()
+    {
+        _stats?.Dispose();
+        _stats = null;
     }
 
     private void Show(SystemStatsSnapshot snapshot)
@@ -92,11 +117,14 @@ internal sealed class PcStatsWidget : UserControl
             snapshot.GpuMemoryBytes is { } gpuMemory ? $"{StatsMath.FormatBytes(gpuMemory)} video memory in use" : null);
 
         _disk.Show(snapshot.DiskBusyPercent, value => $"{value:0}%",
-            $"Read {StatsMath.FormatRate(snapshot.DiskReadBytesPerSecond)}  ·  Write {StatsMath.FormatRate(snapshot.DiskWriteBytesPerSecond)}");
+            $"Read {RateOrUnavailable(snapshot.DiskReadBytesPerSecond)}  ·  Write {RateOrUnavailable(snapshot.DiskWriteBytesPerSecond)}");
 
         _network.Show(snapshot.NetworkDownBytesPerSecond, value => "↓ " + StatsMath.FormatRate(value),
-            "↑ " + StatsMath.FormatRate(snapshot.NetworkUpBytesPerSecond), snapshot.NetworkUpBytesPerSecond);
+            "↑ " + RateOrUnavailable(snapshot.NetworkUpBytesPerSecond), snapshot.NetworkUpBytesPerSecond);
     }
+
+    private static string RateOrUnavailable(double? bytesPerSecond) =>
+        bytesPerSecond is { } rate ? StatsMath.FormatRate(rate) : "not available";
 
     /// <summary>A labelled value with a one-minute sparkline (two lines for network).</summary>
     private sealed class StatRow

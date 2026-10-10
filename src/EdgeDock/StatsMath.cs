@@ -21,9 +21,9 @@ internal static class StatsMath
         seconds <= 0 || current < previous ? 0 : (current - previous) / seconds;
 
     /// <summary>
-    /// GPU load the way Task Manager shows it: sum each engine type per adapter across
-    /// processes, then take the busiest. Instance names look like
-    /// <c>pid_1234_luid_0x0_0x0_phys_0_eng_0_engtype_3D</c>.
+    /// GPU load the way Task Manager shows it: add up every process's share of each physical
+    /// engine, then report the busiest engine. Two engines of the same type stay separate.
+    /// Instance names look like <c>pid_1234_luid_0x0_0x0_phys_0_eng_0_engtype_3D</c>.
     /// </summary>
     public static double? GpuPercent(IEnumerable<(string Instance, double Value)> engines)
     {
@@ -31,11 +31,9 @@ internal static class StatsMath
         foreach (var (instance, value) in engines)
         {
             if (!double.IsFinite(value) || value < 0) continue;
-            var luid = Segment(instance, "luid_", "_phys");
-            var type = Segment(instance, "engtype_", null);
-            if (luid is null || type is null) continue;
-            var key = luid + "|" + type;
-            totals[key] = totals.GetValueOrDefault(key) + value;
+            var engine = Segment(instance, "luid_", "_engtype");
+            if (engine is null) continue;
+            totals[engine] = totals.GetValueOrDefault(engine) + value;
         }
         return totals.Count == 0 ? null : Math.Clamp(totals.Values.Max(), 0, 100);
     }

@@ -11,10 +11,10 @@ internal sealed record SystemStatsSnapshot(
     double? GpuPercent,
     double? GpuMemoryBytes,
     double? DiskBusyPercent,
-    double DiskReadBytesPerSecond,
-    double DiskWriteBytesPerSecond,
-    double NetworkDownBytesPerSecond,
-    double NetworkUpBytesPerSecond);
+    double? DiskReadBytesPerSecond,
+    double? DiskWriteBytesPerSecond,
+    double? NetworkDownBytesPerSecond,
+    double? NetworkUpBytesPerSecond);
 
 /// <summary>
 /// Reads CPU, memory, GPU, disk and network activity from Windows itself: system times,
@@ -26,6 +26,8 @@ internal sealed class SystemStatsService : IDisposable
     private const uint FormatDouble = 0x00000200;
     private const uint FormatNoCap = 0x00008000;
     private const uint MoreData = 0x800007D2;
+    private const uint ValidData = 0;
+    private const uint NewData = 1;
 
     private IntPtr _query;
     private IntPtr _gpuEngines;
@@ -66,10 +68,10 @@ internal sealed class SystemStatsService : IDisposable
             hasMemory ? memory.TotalPhysical - memory.AvailablePhysical : 0,
             hasMemory ? memory.TotalPhysical : 0,
             counters ? StatsMath.GpuPercent(ArrayValues(_gpuEngines)) : null,
-            counters ? SumOrNull(ArrayValues(_gpuMemory)) : null,
+            counters ? BusiestOrNull(ArrayValues(_gpuMemory)) : null,
             diskIdle is { } idle ? Math.Clamp(100 - idle, 0, 100) : null,
-            counters ? SingleValue(_diskRead) ?? 0 : 0,
-            counters ? SingleValue(_diskWrite) ?? 0 : 0,
+            counters ? SingleValue(_diskRead) : null,
+            counters ? SingleValue(_diskWrite) : null,
             down,
             up);
     }
@@ -85,7 +87,7 @@ internal sealed class SystemStatsService : IDisposable
             : null;
     }
 
-    private (double Down, double Up) NetworkRates()
+    private (double? Down, double? Up) NetworkRates()
     {
         long down = 0, up = 0;
         try
@@ -101,13 +103,14 @@ internal sealed class SystemStatsService : IDisposable
         }
         catch (NetworkInformationException)
         {
-            return (0, 0);
+            _lastNetwork = null;
+            return (null, null);
         }
 
         var now = DateTime.UtcNow;
         var previous = _lastNetwork;
         _lastNetwork = (down, up, now);
-        if (previous is not { } last) return (0, 0);
+        if (previous is not { } last) return (null, null);
         var seconds = (now - last.At).TotalSeconds;
         return (StatsMath.Rate(last.Down, down, seconds), StatsMath.Rate(last.Up, up, seconds));
     }
@@ -115,13 +118,20 @@ internal sealed class SystemStatsService : IDisposable
     private IntPtr AddCounter(string path) =>
         PdhAddEnglishCounter(_query, path, IntPtr.Zero, out var counter) == 0 ? counter : IntPtr.Zero;
 
-    private static double? SumOrNull(IReadOnlyList<(string Instance, double Value)> values) =>
-        values.Count == 0 ? null : values.Sum(item => item.Value);
+    /// <summary>
+    /// One instance per graphics adapter (for example integrated and discrete). Show the
+    /// adapter using the most dedicated memory rather than adding unrelated adapters together.
+    /// </summary>
+    private static double? BusiestOrNull(IReadOnlyList<(string Instance, double Value)> values) =>
+        values.Count == 0 ? null : values.Max(item => item.Value);
+
+    // PDH documents both "valid" and "new data" as successful readings.
+    private static bool IsValid(uint status) => status is ValidData or NewData;
 
     private static double? SingleValue(IntPtr counter)
     {
         if (counter == IntPtr.Zero) return null;
-        return PdhGetFormattedCounterValue(counter, FormatDouble | FormatNoCap, out _, out var value) == 0 && value.Status == 0
+        return PdhGetFormattedCounterValue(counter, FormatDouble | FormatNoCap, out _, out var value) == 0 && IsValid(value.Status)
             ? value.Value
             : null;
     }
@@ -142,7 +152,7 @@ internal sealed class SystemStatsService : IDisposable
             for (var index = 0; index < count; index++)
             {
                 var item = Marshal.PtrToStructure<CounterItem>(buffer + index * itemSize);
-                if (item.Value.Status != 0) continue;
+                if (!IsValid(item.Value.Status)) continue;
                 items.Add((Marshal.PtrToStringUni(item.Name) ?? string.Empty, item.Value.Value));
             }
             return items;
