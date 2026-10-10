@@ -184,11 +184,13 @@ internal sealed class AudioWidget : UserControl
     private void ShowOutputs(IReadOnlyList<AudioDevice> devices)
     {
         _updating = true;
-        var current = _outputs.Items.Cast<ComboBoxItem>().Select(item => item.Tag as string).ToArray();
-        if (!current.SequenceEqual(devices.Select(device => device.Id)))
+        // Rebuild when devices or their names change (drivers can rename an endpoint in place).
+        var current = _outputs.Items.Cast<ComboBoxItem>().Select(item => (item.Tag as string, item.Content as string)).ToArray();
+        if (!current.SequenceEqual(devices.Select(device => ((string?)device.Id, (string?)device.Name))))
         {
             _outputs.Items.Clear();
-            foreach (var device in devices) _outputs.Items.Add(new ComboBoxItem { Content = device.Name, Tag = device.Id });
+            foreach (var device in devices)
+                _outputs.Items.Add(new ComboBoxItem { Content = device.Name, Tag = device.Id, MinHeight = 52 });
         }
         _outputs.SelectedItem = _outputs.Items.Cast<ComboBoxItem>()
             .FirstOrDefault(item => devices.Any(device => device.IsDefault && device.Id == (string?)item.Tag));

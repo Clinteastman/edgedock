@@ -117,6 +117,8 @@ internal sealed class SystemAudioService : IDisposable
                     Marshal.ThrowExceptionForHR(device.GetId(out var id));
                     devices.Add(new AudioDevice(id, GetFriendlyName(device), string.Equals(id, defaultId, StringComparison.OrdinalIgnoreCase)));
                 }
+                // A device that vanishes mid-enumeration is skipped; the others stay listed.
+                catch (Exception exception) when (exception is COMException or InvalidCastException) { }
                 finally { ReleaseComObject(device); }
             }
             return devices.OrderBy(device => device.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
