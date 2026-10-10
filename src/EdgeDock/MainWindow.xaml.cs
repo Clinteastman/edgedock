@@ -506,14 +506,6 @@ public sealed partial class MainWindow : Window
         UrlErrorText.Visibility = Visibility.Collapsed;
     }
 
-    /// <summary>Saves the current layout in turn with automatic switches.</summary>
-    private async Task PersistWithLayoutGateAsync()
-    {
-        await _profileGate.WaitAsync();
-        try { await PersistAsync(CurrentSettings(), alreadyApplied: true); }
-        finally { _profileGate.Release(); }
-    }
-
     private async Task<bool> PersistAsync(EdgeDockSettings settings, bool alreadyApplied = false)
     {
         await _saveGate.WaitAsync();
@@ -670,8 +662,8 @@ public sealed partial class MainWindow : Window
                 await _profileGate.WaitAsync();
                 try
                 {
-                    // The panel may have gone in a layout switch while waiting.
-                    if (slotIndex >= _widgetSlots.Count) return;
+                    // The panel may have been replaced in a layout switch while waiting.
+                    if (slotIndex >= _widgetSlots.Count || !WidgetHost.Children.Contains(slot)) return;
                     var updated = _widgetSlots.ToArray();
                     updated[slotIndex] = updated[slotIndex] with { SelectedWidgetId = selectedId };
                     _widgetSlots = updated;
@@ -758,10 +750,17 @@ public sealed partial class MainWindow : Window
     private async void Divider_PointerReleased(object sender, PointerRoutedEventArgs args)
     {
         if (sender is not PanelDivider divider || divider != _activeDivider || args.Pointer.PointerId != _activePointerId) return;
-        ApplyResizeDelta(divider, args.GetCurrentPoint(Root).Position.X - _resizeStartX);
-        CompleteResize(divider);
+        var delta = args.GetCurrentPoint(Root).Position.X - _resizeStartX;
         args.Handled = true;
-        await PersistWithLayoutGateAsync();
+        // The final size, and its save, wait their turn with automatic layout switches.
+        await _profileGate.WaitAsync();
+        try
+        {
+            ApplyResizeDelta(divider, delta);
+            CompleteResize(divider);
+            await PersistAsync(CurrentSettings(), alreadyApplied: true);
+        }
+        finally { _profileGate.Release(); }
     }
 
     private void Divider_PointerCanceled(object sender, PointerRoutedEventArgs args)
@@ -791,22 +790,28 @@ public sealed partial class MainWindow : Window
             args.Key is not (VirtualKey.Left or VirtualKey.Right)) return;
 
         var delta = args.Key == VirtualKey.Right ? 10 : -10;
-        if (divider == WebDivider)
-        {
-            var available = Math.Max(1, WebHost.ActualWidth - 10);
-            _configuredWebSplitRatio = PanelLayout.NormalizeWebSplitRatio(_configuredWebSplitRatio + delta / available);
-            ApplyWebSplitLayout();
-        }
-        else
-        {
-            _configuredPanelWidth = PanelLayout.ResizeSharedWidgetWidth(
-                _configuredPanelWidth, delta, _widgetSlots.Count, _mediaPlacement);
-            ApplyMediaLayout();
-            UpdateSettingsControls();
-        }
-
         args.Handled = true;
-        await PersistWithLayoutGateAsync();
+        // The change and its save wait their turn with automatic layout switches.
+        await _profileGate.WaitAsync();
+        try
+        {
+            if (!CanResize(divider)) return; // A layout switch may have removed it meanwhile.
+            if (divider == WebDivider)
+            {
+                var available = Math.Max(1, WebHost.ActualWidth - 10);
+                _configuredWebSplitRatio = PanelLayout.NormalizeWebSplitRatio(_configuredWebSplitRatio + delta / available);
+                ApplyWebSplitLayout();
+            }
+            else
+            {
+                _configuredPanelWidth = PanelLayout.ResizeSharedWidgetWidth(
+                    _configuredPanelWidth, delta, _widgetSlots.Count, _mediaPlacement);
+                ApplyMediaLayout();
+                UpdateSettingsControls();
+            }
+            await PersistAsync(CurrentSettings(), alreadyApplied: true);
+        }
+        finally { _profileGate.Release(); }
     }
 
     private void ApplyResizeDelta(PanelDivider divider, double delta)
