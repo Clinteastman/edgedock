@@ -1206,9 +1206,16 @@ public sealed partial class MainWindow : Window
             _windowMoveTimer!.Stop();
             if (CaptureMovedDisplay()) _ = PersistDisplayAsync();
         }
-        // Covers saves started by the timer that are still waiting for the gate or the disk.
-        try { await _displaySaves; }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        // Covers saves started by the timer that are still waiting for the gate or the disk,
+        // and any started while waiting (the window stays usable, so F11 can add one).
+        Task pending;
+        do
+        {
+            pending = _displaySaves;
+            try { await pending; }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+        while (!ReferenceEquals(pending, _displaySaves));
         _closeReady = true;
         Close();
     }

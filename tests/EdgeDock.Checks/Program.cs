@@ -205,6 +205,10 @@ try
           "A missing or ambiguous screen is never guessed");
     Check(SettingsStore.ResolveDataRoot() == Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)),
           "The data folder resolves without a trailing separator");
+    Check(StartupApproval.AllowsRun(null) && StartupApproval.AllowsRun([]) &&
+          StartupApproval.AllowsRun([0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) && StartupApproval.AllowsRun([0x06]) &&
+          !StartupApproval.AllowsRun([0x03, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8]) && !StartupApproval.AllowsRun([0x07]),
+          "Sign-in start respects Windows' Startup apps switch");
     var sizeOnly = DisplayPlacement.PreferenceFor(new DisplayInfo("", 2560, 720));
     Check(sizeOnly is { DeviceId: null, HardwareId: null, Width: 2560, Height: 720 } &&
           DisplayPlacement.FindPreferred([main, new DisplayInfo("", 2560, 720)], sizeOnly) == 1 &&

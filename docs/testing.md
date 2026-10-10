@@ -2,7 +2,7 @@
 
 ## Start on the Edge (9 October 2026)
 
-- Debug and Release x64 builds: zero warnings/errors. 34 console checks pass, including
+- Debug and Release x64 builds: zero warnings/errors. 38 console checks pass, including
   monitor matching by device path, by model after a port change, by unique
   resolution, refusal to guess, and persistence of the screen and full-screen
   choice.
@@ -38,6 +38,11 @@
 - With no saved screen (first run or older settings), the screen the window
   opened on is saved 1.5 seconds after launch (runtime: saved without any move,
   card kept).
+- Seventh pass: a held close keeps waiting while new screen saves join the
+  chain (code only). Sign-in start honours Windows' Startup apps switch
+  (StartupApproved value; odd first byte means disabled; console check), and
+  turning it on in EdgeDock clears an earlier "disabled". Not run against the
+  real registry, to avoid creating a sign-in entry on this PC.
 - Not yet tested: unplugging or switching off the Edge while full screen
   (minimise and return), sign-in start after a real reboot, and the Startup
   toggle writing the Run key (only the isolated, disabled state was used).
