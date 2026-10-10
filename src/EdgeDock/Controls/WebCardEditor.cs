@@ -77,8 +77,9 @@ internal sealed class WebCardEditor : UserControl
 
     private sealed class CardRow
     {
-        // Common zoom steps; a saved value between them is added so it is never lost.
-        private static readonly double[] ZoomSteps = [0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 1.0, 1.1, 1.25, 1.5];
+        // Every 5% step from 50% to 150%, matching what settings accept.
+        private static readonly double[] ZoomSteps = Enumerable.Range(0, 21)
+            .Select(step => SettingsStore.NormalizeZoom(SettingsStore.MinimumZoom + step * 0.05)).ToArray();
 
         internal string Id { get; }
         internal Grid Root { get; } = new() { ColumnSpacing = 10, RowSpacing = 6 };
