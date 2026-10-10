@@ -173,7 +173,12 @@
   </Border>
   <!-- Topmost: software dimming for monitors without DDC/CI, and the idle blank screen. -->
   <Rectangle x:Name="ScreenDimLayer" Grid.RowSpan="2" Fill="Black" Opacity="0" IsHitTestVisible="False"/>
+  <!-- While blank, keyboard focus sits on this invisible button, so a key pressed to wake
+       the screen cannot reach a hidden control or web page underneath. -->
   <Grid x:Name="ScreenBlankOverlay" Grid.RowSpan="2" Background="Black" Visibility="Collapsed"
-        PointerPressed="ScreenBlankOverlay_PointerPressed" AutomationProperties.Name="Screen blanked. Tap to wake."/>
+        PointerPressed="ScreenBlankOverlay_PointerPressed" PreviewKeyDown="ScreenBlankOverlay_PreviewKeyDown">
+   <Button x:Name="ScreenWakeButton" Opacity="0" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+           Click="ScreenWakeButton_Click" AutomationProperties.Name="Screen blanked. Tap or press any key to wake."/>
+  </Grid>
  </Grid>
 </Window>

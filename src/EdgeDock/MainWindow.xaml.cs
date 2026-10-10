@@ -1167,6 +1167,9 @@ public sealed partial class MainWindow : Window
     {
         _screenBlank = true;
         ScreenBlankOverlay.Visibility = Visibility.Visible;
+        // Take keyboard focus (from XAML controls and web pages alike) so wake keys land here.
+        _focusBeforeBlank = FocusManager.GetFocusedElement(Root.XamlRoot) as Control;
+        ScreenWakeButton.Focus(FocusState.Programmatic);
         // Check every second while blank so a touch or key wakes it promptly.
         if (_screenTimer is not null) _screenTimer.Interval = TimeSpan.FromSeconds(1);
         var monitor = MonitorBrightness.MonitorOf(_windowHandle);
@@ -1191,6 +1194,8 @@ public sealed partial class MainWindow : Window
     {
         _screenBlank = false;
         ScreenBlankOverlay.Visibility = Visibility.Collapsed;
+        if (_focusBeforeBlank is { } previous && previous != ScreenWakeButton) previous.Focus(FocusState.Programmatic);
+        _focusBeforeBlank = null;
         if (_screenTimer is not null) _screenTimer.Interval = TimeSpan.FromSeconds(5);
         var applied = true;
         if (scheduled is not null && scheduled != _appliedScheduleBrightness)
@@ -1363,6 +1368,17 @@ public sealed partial class MainWindow : Window
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return false; }
         finally { _saveGate.Release(); }
     }
+
+    private Control? _focusBeforeBlank;
+
+    private async void ScreenBlankOverlay_PreviewKeyDown(object sender, KeyRoutedEventArgs args)
+    {
+        // Any key only wakes the screen; nothing underneath sees it.
+        args.Handled = true;
+        await UpdateScreenAsync();
+    }
+
+    private async void ScreenWakeButton_Click(object sender, RoutedEventArgs args) => await UpdateScreenAsync();
 
     private async void ScreenBlankOverlay_PointerPressed(object sender, PointerRoutedEventArgs args)
     {
