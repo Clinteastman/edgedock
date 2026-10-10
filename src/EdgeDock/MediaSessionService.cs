@@ -367,7 +367,7 @@ internal sealed class MediaSessionService : IDisposable
             if (_session is not null)
             {
                 _session.MediaPropertiesChanged -= Session_Changed;
-                _session.PlaybackInfoChanged -= Session_Changed;
+                _session.PlaybackInfoChanged -= Session_PlaybackInfoChanged;
             }
 
             _session = session;
@@ -376,12 +376,22 @@ internal sealed class MediaSessionService : IDisposable
             if (_session is not null)
             {
                 _session.MediaPropertiesChanged += Session_Changed;
-                _session.PlaybackInfoChanged += Session_Changed;
+                _session.PlaybackInfoChanged += Session_PlaybackInfoChanged;
             }
         }
     }
 
     private void Session_Changed(GlobalSystemMediaTransportControlsSession sender, object args) => _ = RefreshAsync();
+
+    private void Session_PlaybackInfoChanged(GlobalSystemMediaTransportControlsSession sender, object args)
+    {
+        // With an app pinned, the shown session pausing may mean playback moved to another of
+        // its sessions (which may have reported "playing" first), so choose again.
+        GlobalSystemMediaTransportControlsSessionManager? manager;
+        lock (_gate) manager = _pinnedSourceId is not null && !_disposed ? _manager : null;
+        if (manager is not null) SelectAndAttach(manager);
+        _ = RefreshAsync();
+    }
 
     private async Task RefreshAsync(string? statusMessage = null)
     {
@@ -542,7 +552,7 @@ internal sealed class MediaSessionService : IDisposable
             if (_session is not null)
             {
                 _session.MediaPropertiesChanged -= Session_Changed;
-                _session.PlaybackInfoChanged -= Session_Changed;
+                _session.PlaybackInfoChanged -= Session_PlaybackInfoChanged;
                 _session = null;
             }
 

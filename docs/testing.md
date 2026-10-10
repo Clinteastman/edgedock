@@ -22,6 +22,9 @@
   after playback moved. The old code passed this run too, because Windows also
   moved its own current session; the change covers the case where Windows'
   current session belongs to another app, which was not reproduced.
+- Second review: the shown session pausing now also triggers a fresh choice,
+  covering B reporting "playing" before A reports "paused". Harness run with B
+  started 0.4 s before A paused: switched to "Track B". Plain order still passes.
 
 ## Clock and weather widget (10 October 2026)
 
