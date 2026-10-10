@@ -71,6 +71,7 @@ public sealed partial class MainWindow : Window
     private bool _closeAfterPendingSave;
     private bool _closeReady;
     private DateTimeOffset _lastDisplayChange = DateTimeOffset.MinValue;
+    private bool _wasMinimized;
     // Every screen save started, so closing can wait for one already past its debounce.
     private Task _displaySaves = Task.CompletedTask;
     private bool _openFullScreen;
@@ -1072,6 +1073,11 @@ public sealed partial class MainWindow : Window
 
     private void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs args)
     {
+        var minimized = AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized };
+        // Restoring puts the window wherever Windows last had it; like a display change,
+        // that placement is not a choice of screen, but a drag after it is.
+        if (_wasMinimized && !minimized) _lastDisplayChange = DateTimeOffset.Now;
+        _wasMinimized = minimized;
         if (args.DidPositionChange && !_closing) _windowMoveTimer?.Start();
     }
 
@@ -1085,8 +1091,7 @@ public sealed partial class MainWindow : Window
     /// <summary>Updates the remembered screen from the window's position; true if it changed.</summary>
     private bool CaptureMovedDisplay()
     {
-        if (_minimizedForMissingDisplay ||
-            AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized }) return false;
+        if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized }) return false;
         // When the saved screen disconnects, Windows moves the window elsewhere straight away.
         // That is not the user choosing a new screen, so keep the old one to return to. A move
         // made later, while it is still missing, is a deliberate choice and replaces it.
@@ -1098,6 +1103,8 @@ public sealed partial class MainWindow : Window
         if (preference is null || preference == _displayPreference) return false;
         _displayPreference = preference;
         _awaitingPreferredDisplay = false;
+        // The user chose a new screen after stepping aside; stop waiting for the old one.
+        _minimizedForMissingDisplay = false;
         return true;
     }
 

@@ -31,6 +31,10 @@
   launch was ignored; a move 14 seconds after launch replaced it, keeping the
   card and full-screen choice. Two close requests straight after a drag still
   saved the new screen.
+- Sixth pass: restoring a minimised window counts as a placement change, and
+  a later drag replaces a missing screen even after EdgeDock stepped aside.
+  Runtime: with the saved screen missing, a move right after restoring was
+  ignored and a move 13 seconds later was saved.
 - Not yet tested: unplugging or switching off the Edge while full screen
   (minimise and return), sign-in start after a real reboot, and the Startup
   toggle writing the Run key (only the isolated, disabled state was used).
