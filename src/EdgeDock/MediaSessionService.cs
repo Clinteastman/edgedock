@@ -96,12 +96,15 @@ internal sealed class MediaSessionService : IDisposable
         if (manager is null) return [];
         try
         {
+            // An app with several players has several sessions but one ID; list it once.
             return manager.GetSessions()
-                .Select(session => new MediaSource(
-                    session.SourceAppUserModelId,
-                    NameFor(session.SourceAppUserModelId),
-                    IsPlaying(session),
-                    ReferenceEquals(session, attached) || session.SourceAppUserModelId == attached?.SourceAppUserModelId))
+                .GroupBy(session => session.SourceAppUserModelId, StringComparer.OrdinalIgnoreCase)
+                .Select(app => new MediaSource(
+                    app.Key,
+                    NameFor(app.Key),
+                    app.Any(IsPlaying),
+                    app.Any(session => ReferenceEquals(session, attached)) ||
+                        string.Equals(app.Key, attached?.SourceAppUserModelId, StringComparison.OrdinalIgnoreCase)))
                 .OrderByDescending(source => source.IsPlaying)
                 .ThenBy(source => source.Name, StringComparer.CurrentCultureIgnoreCase)
                 .ToArray();
@@ -160,8 +163,11 @@ internal sealed class MediaSessionService : IDisposable
         try
         {
             if (pinned is not null)
-                match = manager.GetSessions().FirstOrDefault(session =>
-                    string.Equals(session.SourceAppUserModelId, pinned, StringComparison.OrdinalIgnoreCase));
+                // Of the pinned app's sessions, prefer one that is playing.
+                match = manager.GetSessions()
+                    .Where(session => string.Equals(session.SourceAppUserModelId, pinned, StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(IsPlaying)
+                    .FirstOrDefault();
             target = match ?? manager.GetCurrentSession();
         }
         catch (Exception exception) when (exception is InvalidOperationException or System.Runtime.InteropServices.COMException)
@@ -216,7 +222,7 @@ internal sealed class MediaSessionService : IDisposable
         if (manager is null) return 0;
         try
         {
-            var count = manager.GetSessions().Count;
+            var count = manager.GetSessions().Select(session => session.SourceAppUserModelId).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             lock (_gate) _lastSourceCount = count;
             return count;
         }
@@ -392,8 +398,12 @@ internal sealed class MediaSessionService : IDisposable
         catch (Exception exception) when (exception is InvalidOperationException or System.Runtime.InteropServices.COMException)
         {
             // Keep the count so the picker stays available to switch to a healthy app.
+            // Keep naming the app the controls still target.
+            string? sourceName;
+            try { sourceName = NameFor(session.SourceAppUserModelId); }
+            catch (Exception nameException) when (nameException is InvalidOperationException or System.Runtime.InteropServices.COMException) { sourceName = null; }
             Raise(new("Nothing playing", "The previous media session ended", false, false, false, false, false,
-                statusMessage ?? "Waiting for a media app.", Version: refreshGeneration, SourceCount: sourceCount),
+                statusMessage ?? "Waiting for a media app.", Version: refreshGeneration, SourceName: sourceName, SourceCount: sourceCount),
                 generation, session, refreshGeneration);
         }
     }
