@@ -190,7 +190,7 @@ public sealed partial class MediaWidget : UserControl
     {
         if (_service is null) return;
         var menu = new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft };
-        var automatic = new ToggleMenuFlyoutItem { Text = "Automatic (what Windows is playing)", IsChecked = !_service.IsPinned, MinHeight = 48 };
+        var automatic = new ToggleMenuFlyoutItem { Text = "Automatic (what Windows is playing)", IsChecked = !_service.IsPinned, MinHeight = 52 };
         automatic.Click += async (_, _) => await _service.ChooseSourceAsync(null);
         menu.Items.Add(automatic);
         menu.Items.Add(new MenuFlyoutSeparator());
@@ -200,7 +200,7 @@ public sealed partial class MediaWidget : UserControl
             {
                 Text = source.IsPlaying ? $"{source.Name}  ·  playing" : source.Name,
                 IsChecked = _service.IsPinned && source.IsSelected,
-                MinHeight = 48
+                MinHeight = 52
             };
             var id = source.Id;
             item.Click += async (_, _) => await _service.ChooseSourceAsync(id);

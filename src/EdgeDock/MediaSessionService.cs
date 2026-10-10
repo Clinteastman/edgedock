@@ -30,6 +30,9 @@ internal sealed class MediaSessionService : IDisposable
     private string? _pinnedSourceId;
     // Bumped by every user choice, so a slower background re-selection cannot undo it.
     private int _selectionGeneration;
+    // Manager callbacks and user choices re-select one at a time, so a slower callback that
+    // read an older state can never attach after a newer one.
+    private readonly object _selectionGate = new();
     private readonly Dictionary<string, string> _sourceNames = new(StringComparer.OrdinalIgnoreCase);
     private MediaSnapshot _currentSnapshot = new(
         "Nothing playing",
@@ -139,6 +142,11 @@ internal sealed class MediaSessionService : IDisposable
     /// the lock; the result is applied only if no newer choice was made meanwhile.
     /// </summary>
     private void SelectAndAttach(GlobalSystemMediaTransportControlsSessionManager manager)
+    {
+        lock (_selectionGate) SelectAndAttachLocked(manager);
+    }
+
+    private void SelectAndAttachLocked(GlobalSystemMediaTransportControlsSessionManager manager)
     {
         int generation;
         string? pinned;
