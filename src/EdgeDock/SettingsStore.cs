@@ -191,7 +191,7 @@ internal sealed class SettingsStore
 
     private static MediaPanelPlacement ParsePlacement(string? value, MediaPanelPlacement fallback, bool allowHidden) => Enum.TryParse<MediaPanelPlacement>(value, true, out var parsed) && Enum.IsDefined(parsed) && (allowHidden || parsed != MediaPanelPlacement.Hidden) ? parsed : fallback;
     private static BackdropMaterial ParseMaterial(string? value) => Enum.TryParse<BackdropMaterial>(value, true, out var parsed) && Enum.IsDefined(parsed) ? parsed : BackdropMaterial.Mica;
-    private static WidgetSlotSettings[] DefaultSlots() => [new(["media", "audio", "pc"], "media")];
+    private static WidgetSlotSettings[] DefaultSlots() => [new(["media", "audio", "stats", "pc"], "media")];
     private static EdgeDockSettings Defaults() => Normalize(new(null, MediaPanelPlacement.Right, MediaPanelPlacement.Right, 340, true, true, DefaultSlots()));
 
     private sealed class StoredSettings

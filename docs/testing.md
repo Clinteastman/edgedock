@@ -1,5 +1,34 @@
 # Testing
 
+## PC activity widget (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 35 console checks pass, including
+  processor maths, byte rates, the graphics rule, readable units, graph mapping and history.
+- A console harness using the same service read, once a second: processor
+  12-20% (Windows' own counter said 7% moments later), memory 31.5 of 63.4 GB,
+  graphics 0.5% with 3.4 GB video memory, disk and network rates. Each reading
+  took about 50 ms, which is why sampling runs off the UI thread.
+- A captured EdgeDock window (isolated profile, 720-pixel-tall panel) showed all
+  five rows with live graphs and no clipping after tightening the row spacing.
+- After review: PDH "new data" readings are accepted; graphics load is the
+  busiest individual engine (two 3D engines at 60% read 60%, not 100%);
+  unavailable disk or network rates read "not available" rather than 0; video
+  memory shows the busiest adapter (`GPU Adapter Memory` has one instance per
+  adapter, confirmed on this PC: two). 36 console checks pass.
+- Second review: performance counters are opened on the thread pool too, and
+  network rates are tracked per adapter, so an adapter connecting or leaving
+  causes no spike or drop (console check). 37 console checks pass; a fresh
+  capture still showed all five rows live.
+- Third review: visibility now also requires the widget to intersect the
+  window, so a card scrolled out of view in Widget view stops sampling (code
+  only; Widget view needs input to open). Repeat CPU check: 563 ms visible,
+  16 ms hidden over 20 seconds.
+- Fourth review: coming back into view re-primes the counters and clears the
+  graphs, so no reading averages the hidden gap. Capture still live; a
+  minimised window used 47 ms of CPU over 15 seconds.
+- Sampling checks real visibility each second. EdgeDock's CPU time over 20
+  seconds: 625 ms with the widget showing, 109 ms with widgets hidden.
+
 ## Web card recovery (9 October 2026)
 
 - Debug x64 build: zero warnings/errors. 28 console checks pass, including
