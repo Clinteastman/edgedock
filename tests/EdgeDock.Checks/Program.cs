@@ -196,6 +196,33 @@ try
     Check(budget.TryConsume(asleep) && budget.TryConsume(asleep.AddMinutes(1)) && budget.TryConsume(asleep.AddMinutes(2)) &&
           !budget.TryConsume(asleep.AddMinutes(3)) && budget.TryConsume(asleep.AddMinutes(10)),
           "Automatic crash recovery stops after three tries in ten minutes, then allows more later");
+    // Idle +50, kernel (including idle) +200, user +100: 250 of 300 ticks busy.
+    Check(StatsMath.CpuPercent(100, 200, 100, 150, 400, 200) is { } cpu && Math.Abs(cpu - 250.0 / 3) < 0.001,
+          "Processor use counts kernel and user time minus idle");
+    Check(StatsMath.CpuPercent(10, 10, 10, 10, 10, 10) is null && StatsMath.CpuPercent(10, 20, 20, 5, 30, 30) is null,
+          "Processor use is unavailable for an empty or reset interval");
+    Check(StatsMath.Rate(1000, 3000, 2) == 1000 && StatsMath.Rate(5000, 10, 1) == 0 && StatsMath.Rate(0, 10, 0) == 0,
+          "Byte rates handle normal, reset and zero-length intervals");
+    Check(StatsMath.GpuPercent([
+              ("pid_1_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 30),
+              ("pid_2_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 25),
+              ("pid_2_luid_0x0_0xA_phys_0_eng_4_engtype_VideoDecode", 70),
+              ("pid_3_luid_0x0_0xB_phys_0_eng_0_engtype_3D", 10),
+              ("not-a-gpu-instance", 99)]) == 70 &&
+          StatsMath.GpuPercent([("pid_1_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 80), ("pid_2_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 60)]) == 100 &&
+          StatsMath.GpuPercent([]) is null,
+          "Graphics use is the busiest engine type per adapter, capped at 100%");
+    Check(StatsMath.FormatBytes(512) == "512 B" && StatsMath.FormatBytes(1536) == "1.5 KB" &&
+          StatsMath.FormatBytes(17179869184) == "16.0 GB" && StatsMath.FormatRate(2_621_440) == "2.5 MB/s",
+          "Sizes and rates are written in readable units");
+    var line = StatsMath.Sparkline([0, 50, 100], 60, 590, 30, 100);
+    Check(line.Count == 3 && line[^1] == (590.0, 0.0) && line[0] == (570.0, 30.0) && line[1].Y == 15 &&
+          StatsMath.Sparkline([], 60, 100, 30, 100).Count == 0,
+          "Graphs put the newest sample on the right and scale to the panel");
+    var history = new SampleHistory(3);
+    foreach (var sample in new[] { 1.0, 2, double.NaN, 4 }) history.Add(sample);
+    Check(history.Values.SequenceEqual([2.0, 0, 4]),
+          "Graph history keeps the newest samples and ignores invalid ones");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally

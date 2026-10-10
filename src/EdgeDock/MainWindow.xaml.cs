@@ -843,7 +843,7 @@ public sealed partial class MainWindow : Window
         if (count == _widgetSlots.Count) return;
         var slots = _widgetSlots.Take(count).ToList();
         while (slots.Count < count)
-            slots.Add(new WidgetSlotSettings(["media", "audio", "pc"], "media"));
+            slots.Add(new WidgetSlotSettings(["media", "audio", "stats", "pc"], "media"));
         _widgetSlots = slots;
         BuildWidgetSlots();
         ApplyMediaLayout();

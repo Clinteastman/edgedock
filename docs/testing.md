@@ -1,5 +1,17 @@
 # Testing
 
+## PC activity widget (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 35 console checks pass, including
+  processor maths, byte rates, the graphics rule (busiest engine type per
+  adapter), readable units, graph mapping and history.
+- A console harness using the same service read, once a second: processor
+  12-20% (Windows' own counter said 7% moments later), memory 31.5 of 63.4 GB,
+  graphics 0.5% with 3.4 GB video memory, disk and network rates. Each reading
+  took about 50 ms, which is why sampling runs off the UI thread.
+- A captured EdgeDock window (isolated profile, 720-pixel-tall panel) showed all
+  five rows with live graphs and no clipping after tightening the row spacing.
+
 ## Web card recovery (9 October 2026)
 
 - Debug x64 build: zero warnings/errors. 28 console checks pass, including
