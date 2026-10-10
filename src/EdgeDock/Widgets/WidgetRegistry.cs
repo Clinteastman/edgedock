@@ -27,6 +27,7 @@ public sealed class WidgetRegistry
         new WidgetDescriptor("media", "Media", "Current Windows media and playback controls.", () => new MediaWidget()),
         new WidgetDescriptor("audio", "Audio", "Windows volume and audio output controls.", () => new AudioWidget()),
         new WidgetDescriptor("launcher", "Launcher", "Tiles that open your chosen apps, files, folders and web pages.", () => new LauncherWidget(launcherItems)),
-        new WidgetDescriptor("pc", "PC shortcuts", "Open selected Windows Settings pages.", () => new PcShortcutsWidget())
+        new WidgetDescriptor("pc", "PC shortcuts", "Open selected Windows Settings pages.", () => new PcShortcutsWidget()),
+        new WidgetDescriptor("stats", "PC activity", "Live processor, memory, graphics, disk and network use.", () => new PcStatsWidget())
     ]);
 }

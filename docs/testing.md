@@ -21,6 +21,88 @@
 - Not yet tested: tapping a tile to open it, the Browse buttons, and the
   Settings save path (all need real input).
 
+## PC activity widget (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 35 console checks pass, including
+  processor maths, byte rates, the graphics rule, readable units, graph mapping and history.
+- A console harness using the same service read, once a second: processor
+  12-20% (Windows' own counter said 7% moments later), memory 31.5 of 63.4 GB,
+  graphics 0.5% with 3.4 GB video memory, disk and network rates. Each reading
+  took about 50 ms, which is why sampling runs off the UI thread.
+- A captured EdgeDock window (isolated profile, 720-pixel-tall panel) showed all
+  five rows with live graphs and no clipping after tightening the row spacing.
+- After review: PDH "new data" readings are accepted; graphics load is the
+  busiest individual engine (two 3D engines at 60% read 60%, not 100%);
+  unavailable disk or network rates read "not available" rather than 0; video
+  memory shows the busiest adapter (`GPU Adapter Memory` has one instance per
+  adapter, confirmed on this PC: two). 36 console checks pass.
+- Second review: performance counters are opened on the thread pool too, and
+  network rates are tracked per adapter, so an adapter connecting or leaving
+  causes no spike or drop (console check). 37 console checks pass; a fresh
+  capture still showed all five rows live.
+- Third review: visibility now also requires the widget to intersect the
+  window, so a card scrolled out of view in Widget view stops sampling (code
+  only; Widget view needs input to open). Repeat CPU check: 563 ms visible,
+  16 ms hidden over 20 seconds.
+- Fourth review: coming back into view re-primes the counters and clears the
+  graphs, so no reading averages the hidden gap. Capture still live; a
+  minimised window used 47 ms of CPU over 15 seconds.
+- Fifth review: a gap of more than 3 seconds between samples (sleep, stall)
+  re-primes before showing values, and a reading that becomes unavailable
+  clears its graph instead of leaving old activity in place (code; capture
+  unchanged and live).
+- Sampling checks real visibility each second. EdgeDock's CPU time over 20
+  seconds: 625 ms with the widget showing, 109 ms with widgets hidden.
+
+## Start on the Edge (9 October 2026)
+
+- Debug and Release x64 builds: zero warnings/errors. 38 console checks pass, including
+  monitor matching by device path, by model after a port change, by unique
+  resolution, refusal to guess, and persistence of the screen and full-screen
+  choice.
+- Isolated profile on Windows 11 with three monitors (Xeneon Edge 2560x720 at
+  150%, plus two others). A profile remembering the Edge in full screen opened
+  full screen on the Edge by itself. A second launch exited and left one copy.
+- F11 saved full screen off together with the Edge's device path as read by
+  EdgeDock itself; the next launch opened windowed, centred on the Edge.
+  Moving the window to the main screen updated the remembered screen.
+- After review: a screen whose device path cannot be read is remembered by
+  resolution (console check); saving with sign-in start on rewrites an entry
+  pointing at another copy; moving the window to the Edge and closing it 0.4
+  seconds later still saved the Edge (runtime, isolated profile).
+- Second review: screen and full-screen saves now merge onto the saved file
+  inside the save lock; a data folder spelled with and without a trailing
+  slash shares one instance (runtime: the second spelling handed over). Moves
+  are ignored while the saved screen is disconnected (code only).
+- Third pass: screen saves merge onto the last successfully saved settings,
+  never a re-read of the file. Runtime: with settings.json damaged while
+  running, a drag rewrote the full layout (card and left placement kept) plus
+  the new screen. A failed screen save shows the "not saved" warning. Closing
+  0.4 seconds after a drag holds the close, saves, then closes; the new
+  screen was kept. Closing 1.6 seconds after a drag (debounce fired, save in
+  flight) also waits for the save; the new screen was kept.
+- Fifth pass, saved screen missing (fake monitor): a move 3 seconds after
+  launch was ignored; a move 14 seconds after launch replaced it, keeping the
+  card and full-screen choice. Two close requests straight after a drag still
+  saved the new screen.
+- Sixth pass: restoring a minimised window counts as a placement change, and
+  a later drag replaces a missing screen even after EdgeDock stepped aside.
+  Runtime: with the saved screen missing, a move right after restoring was
+  ignored and a move 13 seconds later was saved.
+- With no saved screen (first run or older settings), the screen the window
+  opened on is saved 1.5 seconds after launch (runtime: saved without any move,
+  card kept).
+- Seventh pass: a held close keeps waiting while new screen saves join the
+  chain (code only). Sign-in start honours Windows' Startup apps switch
+  (StartupApproved value; odd first byte means disabled; console check), and
+  turning it on in EdgeDock clears an earlier "disabled". Not run against the
+  real registry, to avoid creating a sign-in entry on this PC.
+- Eighth pass: a windowed EdgeDock whose screen disconnects is marked to move
+  back when the screen returns (code only; needs a real disconnect).
+- Not yet tested: unplugging or switching off the Edge while full screen
+  (minimise and return), sign-in start after a real reboot, and the Startup
+  toggle writing the Run key (only the isolated, disabled state was used).
+
 ## Page zoom per card (10 October 2026)
 
 - Debug x64 build: zero warnings/errors. 31 console checks pass, including zoom

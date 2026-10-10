@@ -183,6 +183,48 @@ try
     Check(partial.WidgetSlots.Any(slot => slot.EnabledWidgetIds.Contains("audio")) &&
           partial.WidgetSlots.All(slot => slot.EnabledWidgetIds.All(id => !string.IsNullOrWhiteSpace(id))),
           "Partially malformed widget lists preserve usable entries without crashing");
+    const string edgePath = @"\\?\DISPLAY#CRX0A1B#5&1a2b3c&0&UID4352#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    const string edgeOtherPortPath = @"\\?\DISPLAY#CRX0A1B#5&9f8e7d&0&UID4356#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    const string mainPath = @"\\?\DISPLAY#GSM5B7F#5&1a2b3c&0&UID4353#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    var edge = new DisplayInfo(edgePath, 2560, 720);
+    var main = new DisplayInfo(mainPath, 3840, 2160);
+    var edgePreference = DisplayPlacement.PreferenceFor(edge);
+    Check(DisplayPlacement.HardwareIdFrom(edgePath) == "CRX0A1B" && DisplayPlacement.HardwareIdFrom("not-a-path") is null &&
+          edgePreference?.HardwareId == "CRX0A1B",
+          "Monitor model code is read from its device path");
+    Check(DisplayPlacement.FindPreferred([main, edge], edgePreference) == 1,
+          "The saved screen is found again by its device path");
+    Check(DisplayPlacement.FindPreferred([main, new DisplayInfo(edgeOtherPortPath, 2560, 720)], edgePreference) == 1,
+          "The saved screen is found by model after moving it to another port");
+    Check(DisplayPlacement.FindPreferred([main, new DisplayInfo("", 2560, 720)], edgePreference) == 1,
+          "A screen without a readable path is matched by its unique resolution");
+    Check(DisplayPlacement.FindPreferred([main], edgePreference) == -1 &&
+          DisplayPlacement.FindPreferred([main, new DisplayInfo(edgeOtherPortPath, 2560, 720), new DisplayInfo(edgeOtherPortPath.Replace("UID4356", "UID4357"), 2560, 720)],
+              edgePreference with { DeviceId = "gone" }) == -1 &&
+          DisplayPlacement.FindPreferred([main, edge], null) == -1,
+          "A missing or ambiguous screen is never guessed");
+    Check(SettingsStore.ResolveDataRoot() == Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)),
+          "The data folder resolves without a trailing separator");
+    Check(StartupApproval.AllowsRun(null) && StartupApproval.AllowsRun([]) &&
+          StartupApproval.AllowsRun([0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) && StartupApproval.AllowsRun([0x06]) &&
+          !StartupApproval.AllowsRun([0x03, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8]) && !StartupApproval.AllowsRun([0x07]),
+          "Sign-in start respects Windows' Startup apps switch");
+    var sizeOnly = DisplayPlacement.PreferenceFor(new DisplayInfo("", 2560, 720));
+    Check(sizeOnly is { DeviceId: null, HardwareId: null, Width: 2560, Height: 720 } &&
+          DisplayPlacement.FindPreferred([main, new DisplayInfo("", 2560, 720)], sizeOnly) == 1 &&
+          DisplayPlacement.PreferenceFor(new DisplayInfo("", 0, 0)) is null,
+          "A screen without a readable path is remembered and found by resolution");
+
+    store = new SettingsStore();
+    await store.SaveAsync(upgraded with { Display = edgePreference, OpenFullScreen = true });
+    var placed = await new SettingsStore().LoadAsync();
+    Check(placed.Display == edgePreference && placed.OpenFullScreen &&
+          placed.DashboardUrl == upgraded.DashboardUrl,
+          "Saved screen and full-screen choice survive restart without changing the layout");
+    await File.WriteAllTextAsync(file, """{"Display":{"DeviceId":"  ","Width":-5,"Height":99999999}}""");
+    var badDisplay = await new SettingsStore().LoadAsync();
+    Check(badDisplay.Display is null && !badDisplay.OpenFullScreen,
+          "An unusable saved screen is ignored and full screen stays off");
     Check(WebRecovery.RetryDelay(0) == TimeSpan.FromSeconds(5) && WebRecovery.RetryDelay(1) == TimeSpan.FromSeconds(10) &&
           WebRecovery.RetryDelay(3) == TimeSpan.FromSeconds(40) && WebRecovery.RetryDelay(4) == TimeSpan.FromSeconds(60) &&
           WebRecovery.RetryDelay(50) == TimeSpan.FromSeconds(60) && WebRecovery.RetryDelay(-1) == TimeSpan.FromSeconds(5),
@@ -234,6 +276,42 @@ try
               Launchers = Enumerable.Range(0, 40).Select(index => new LauncherItem($"i{index}", "x", "https://example.com/")).ToArray()
           }).Launchers!.Count == SettingsStore.MaximumLaunchers,
           "The launcher is limited to 24 items");
+    // Idle +50, kernel (including idle) +200, user +100: 250 of 300 ticks busy.
+    Check(StatsMath.CpuPercent(100, 200, 100, 150, 400, 200) is { } cpu && Math.Abs(cpu - 250.0 / 3) < 0.001,
+          "Processor use counts kernel and user time minus idle");
+    Check(StatsMath.CpuPercent(10, 10, 10, 10, 10, 10) is null && StatsMath.CpuPercent(10, 20, 20, 5, 30, 30) is null,
+          "Processor use is unavailable for an empty or reset interval");
+    Check(StatsMath.Rate(1000, 3000, 2) == 1000 && StatsMath.Rate(5000, 10, 1) == 0 && StatsMath.Rate(0, 10, 0) == 0,
+          "Byte rates handle normal, reset and zero-length intervals");
+    Check(StatsMath.GpuPercent([
+              ("pid_1_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 30),
+              ("pid_2_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 25),
+              ("pid_2_luid_0x0_0xA_phys_0_eng_4_engtype_VideoDecode", 70),
+              ("pid_3_luid_0x0_0xB_phys_0_eng_0_engtype_3D", 10),
+              ("not-a-gpu-instance", 99)]) == 70 &&
+          StatsMath.GpuPercent([("pid_1_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 80), ("pid_2_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 60)]) == 100 &&
+          StatsMath.GpuPercent([]) is null,
+          "Graphics use adds every process's share of an engine, capped at 100%");
+    Check(StatsMath.GpuPercent([
+              ("pid_1_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 60),
+              ("pid_1_luid_0x0_0xA_phys_0_eng_1_engtype_3D", 60)]) == 60,
+          "Two engines of the same type are not added together");
+    Check(StatsMath.FormatBytes(512) == "512 B" && StatsMath.FormatBytes(1536) == "1.5 KB" &&
+          StatsMath.FormatBytes(17179869184) == "16.0 GB" && StatsMath.FormatRate(2_621_440) == "2.5 MB/s",
+          "Sizes and rates are written in readable units");
+    var line = StatsMath.Sparkline([0, 50, 100], 60, 590, 30, 100);
+    Check(line.Count == 3 && line[^1] == (590.0, 0.0) && line[0] == (570.0, 30.0) && line[1].Y == 15 &&
+          StatsMath.Sparkline([], 60, 100, 30, 100).Count == 0,
+          "Graphs put the newest sample on the right and scale to the panel");
+    var before = new Dictionary<string, (long Down, long Up)> { ["wifi"] = (1000, 500), ["gone"] = (9000, 9000) };
+    var after = new Dictionary<string, (long Down, long Up)> { ["wifi"] = (3000, 1500), ["vpn"] = (50_000_000, 40_000_000) };
+    Check(StatsMath.NetworkRates(before, after, 2) == (1000.0, 500.0) &&
+          StatsMath.NetworkRates(after, new Dictionary<string, (long, long)> { ["wifi"] = (10, 10) }, 1) == (0.0, 0.0),
+          "A newly connected or removed network adapter causes no spike or drop");
+    var history = new SampleHistory(3);
+    foreach (var sample in new[] { 1.0, 2, double.NaN, 4 }) history.Add(sample);
+    Check(history.Values.SequenceEqual([2.0, 0, 4]),
+          "Graph history keeps the newest samples and ignores invalid ones");
     Check(SettingsStore.NormalizeZoom(0.8) == 0.8 && SettingsStore.NormalizeZoom(0.83) == 0.85 &&
           SettingsStore.NormalizeZoom(5) == SettingsStore.MaximumZoom && SettingsStore.NormalizeZoom(0.1) == SettingsStore.MinimumZoom &&
           SettingsStore.NormalizeZoom(double.NaN) == 1.0,
