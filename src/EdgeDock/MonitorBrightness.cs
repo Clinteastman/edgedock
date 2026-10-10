@@ -6,7 +6,7 @@ namespace EdgeDock;
 /// Reads and sets a monitor's own backlight over DDC/CI (VCP code 0x10), the same channel as
 /// its on-screen menu. Not every monitor or cable supports it; callers fall back to dimming
 /// EdgeDock's window. DDC is slow (tens of milliseconds per call), so calls run off the UI
-/// thread and one at a time.
+/// thread and one at a time. Monitors are given as HMONITOR handles.
 /// </summary>
 internal static class MonitorBrightness
 {
@@ -14,23 +14,25 @@ internal static class MonitorBrightness
     private const uint DefaultToNearest = 2;
     private static readonly SemaphoreSlim Gate = new(1, 1);
 
-    /// <summary>Brightness 0-100 of the monitor showing <paramref name="window"/>, or null if unsupported.</summary>
-    public static Task<int?> GetAsync(IntPtr window) => RunAsync(window, monitor =>
-        GetVCPFeatureAndVCPFeatureReply(monitor, BrightnessCode, IntPtr.Zero, out var current, out var maximum) && maximum > 0
+    /// <summary>The monitor showing <paramref name="window"/>.</summary>
+    public static IntPtr MonitorOf(IntPtr window) => MonitorFromWindow(window, DefaultToNearest);
+
+    /// <summary>Brightness 0-100, or null if the monitor does not support DDC/CI.</summary>
+    public static Task<int?> GetAsync(IntPtr monitor) => RunAsync(monitor, physical =>
+        GetVCPFeatureAndVCPFeatureReply(physical, BrightnessCode, IntPtr.Zero, out var current, out var maximum) && maximum > 0
             ? (int?)Math.Round(current * 100.0 / maximum)
             : null);
 
-    public static async Task<bool> SetAsync(IntPtr window, int percent) =>
-        await RunAsync(window, monitor =>
+    public static async Task<bool> SetAsync(IntPtr monitor, int percent) =>
+        await RunAsync(monitor, physical =>
         {
-            if (!GetVCPFeatureAndVCPFeatureReply(monitor, BrightnessCode, IntPtr.Zero, out _, out var maximum) || maximum == 0)
+            if (!GetVCPFeatureAndVCPFeatureReply(physical, BrightnessCode, IntPtr.Zero, out _, out var maximum) || maximum == 0)
                 return (int?)null;
-            return SetVCPFeature(monitor, BrightnessCode, (uint)Math.Round(Math.Clamp(percent, 0, 100) * maximum / 100.0)) ? 1 : null;
+            return SetVCPFeature(physical, BrightnessCode, (uint)Math.Round(Math.Clamp(percent, 0, 100) * maximum / 100.0)) ? 1 : null;
         }) is not null;
 
-    private static async Task<int?> RunAsync(IntPtr window, Func<IntPtr, int?> action)
+    private static async Task<int?> RunAsync(IntPtr display, Func<IntPtr, int?> action)
     {
-        var display = MonitorFromWindow(window, DefaultToNearest);
         if (display == IntPtr.Zero) return null;
         await Gate.WaitAsync();
         try

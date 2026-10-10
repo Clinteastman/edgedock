@@ -25,7 +25,8 @@ internal sealed record EdgeDockSettings(
     double WebSplitRatio = 0.5,
     DisplayPreference? Display = null,
     bool OpenFullScreen = false,
-    ScreenScheduleSettings? Screen = null);
+    ScreenScheduleSettings? Screen = null,
+    BrightnessRestore? PendingBrightness = null);
 
 internal sealed class SettingsStore
 {
@@ -95,6 +96,11 @@ internal sealed class SettingsStore
                         TimeSpan.TryParse(screen.NightStart, System.Globalization.CultureInfo.InvariantCulture, out var start) ? start : ScreenScheduleSettings.Default.NightStart,
                         TimeSpan.TryParse(screen.NightEnd, System.Globalization.CultureInfo.InvariantCulture, out var end) ? end : ScreenScheduleSettings.Default.NightEnd,
                         screen.BlankAfterMinutes ?? 0)
+                    : null,
+                PendingBrightness: stored?.PendingBrightness is { Monitor: { } restoreMonitor, Brightness: { } restoreLevel }
+                    ? new BrightnessRestore(
+                        new DisplayPreference(restoreMonitor.DeviceId, restoreMonitor.HardwareId, restoreMonitor.Width ?? 0, restoreMonitor.Height ?? 0),
+                        restoreLevel)
                     : null));
         }
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
@@ -139,6 +145,19 @@ internal sealed class SettingsStore
                     NightEnd = settings.Screen.NightEnd.ToString(@"hh\:mm", System.Globalization.CultureInfo.InvariantCulture),
                     BlankAfterMinutes = settings.Screen.BlankAfterMinutes
                 },
+                PendingBrightness = settings.PendingBrightness is { } restore
+                    ? new StoredRestore
+                    {
+                        Monitor = new StoredDisplay
+                        {
+                            DeviceId = restore.Monitor.DeviceId,
+                            HardwareId = restore.Monitor.HardwareId,
+                            Width = restore.Monitor.Width,
+                            Height = restore.Monitor.Height
+                        },
+                        Brightness = restore.Brightness
+                    }
+                    : null,
                 WidgetSlots = settings.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
                 ExtensionData = _extensionData
             };
@@ -190,7 +209,10 @@ internal sealed class SettingsStore
             WebPanelCardIds = selections,
             WebSplitRatio = PanelLayout.NormalizeWebSplitRatio(value.WebSplitRatio),
             Display = NormalizeDisplay(value.Display),
-            Screen = ScreenSchedule.Normalize(value.Screen)
+            Screen = ScreenSchedule.Normalize(value.Screen),
+            PendingBrightness = value.PendingBrightness is { } restore && NormalizeDisplay(restore.Monitor) is { } restoreMonitor
+                ? new BrightnessRestore(restoreMonitor, Math.Clamp(restore.Brightness, 0, 100))
+                : null
         };
     }
 
@@ -268,6 +290,7 @@ internal sealed class SettingsStore
         public StoredDisplay? Display { get; set; }
         public bool? OpenFullScreen { get; set; }
         public StoredScreen? Screen { get; set; }
+        public StoredRestore? PendingBrightness { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }
         [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; }
     }
@@ -276,6 +299,12 @@ internal sealed class SettingsStore
     {
         public List<string>? EnabledWidgetIds { get; set; }
         public string? SelectedWidgetId { get; set; }
+    }
+
+    private sealed class StoredRestore
+    {
+        public StoredDisplay? Monitor { get; set; }
+        public int? Brightness { get; set; }
     }
 
     private sealed class StoredScreen

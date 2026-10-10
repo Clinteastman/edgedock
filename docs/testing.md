@@ -17,6 +17,14 @@
   in use just before blanking; waking outside full screen clears software
   dimming; the dim and blank layers are now topmost, above the drawer and
   Settings. Build, checks and a normal capture repeated (code otherwise).
+- Second review: the monitor's level from before EdgeDock first changed it is
+  saved with the layout and restored, only to that monitor (same matcher as
+  the saved screen, never a guess), when the schedule is off, outside full
+  screen, and on close. Runtime: a saved restore for the connected Edge (95,
+  no visible change) was applied and cleared within one tick; one for a
+  monitor that is not connected stayed saved through running and closing,
+  and closing was not blocked. Waking applies a day/night change that
+  happened while blank. 55 console checks pass.
 - Not tested at runtime: night transitions, idle blanking and waking (need
   real time of day and five or more idle minutes).
 

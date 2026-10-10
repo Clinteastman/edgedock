@@ -35,9 +35,11 @@ contribute. This is not a signed installer or a finished consumer release.
 - Runs as one copy: launching it again brings the open window forward.
 - Optionally dims the screen at night and blanks it when the PC is idle
   (Settings, **Screen**). It uses the monitor's own brightness control
-  (DDC/CI) when available, otherwise darkens itself, and only acts while
-  EdgeDock is full screen, so it never dims your main monitor. Any input or a
-  tap wakes it.
+  (DDC/CI) when available, otherwise darkens itself. It acts only while
+  EdgeDock is full screen, on the screen it is full screen on; a windowed
+  EdgeDock changes no monitor. Any input or a tap wakes it. Turning it off,
+  leaving full screen or closing EdgeDock restores the monitor's brightness,
+  even after a restart if the monitor was unplugged at the time.
 - Supports one to three native widget panels, with an optional web area.
 - Lets each panel switch between its chosen widgets independently.
 - Includes a local library of media, PC volume/mute, PC activity and Windows

@@ -12,6 +12,12 @@ internal sealed record ScreenScheduleSettings(
     public static ScreenScheduleSettings Default { get; } = new(NightStart: new TimeSpan(22, 30, 0), NightEnd: new TimeSpan(7, 0, 0));
 }
 
+/// <summary>
+/// A monitor's brightness from before EdgeDock first changed it, saved with the layout so it
+/// can be put back even after EdgeDock closes, crashes or the monitor is unplugged meanwhile.
+/// </summary>
+internal sealed record BrightnessRestore(DisplayPreference Monitor, int Brightness);
+
 /// <summary>What the screen should look like now.</summary>
 internal sealed record ScreenState(int? Brightness, bool Blank);
 

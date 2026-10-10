@@ -118,7 +118,7 @@
               ValueChanged="BackdropTransparencySlider_ValueChanged" AutomationProperties.Name="Background visibility"/>
       <TextBlock x:Name="BackdropHelpText" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
       <TextBlock Text="Screen" FontSize="18" FontWeight="SemiBold"/>
-      <TextBlock Text="These apply while EdgeDock is full screen, so they never dim your main monitor. Brightness uses the monitor's own control where it allows it; otherwise EdgeDock darkens itself."
+      <TextBlock Text="These apply only while EdgeDock is full screen, to the screen it is on; a windowed EdgeDock never changes any monitor. Brightness uses the monitor's own control where it allows it; otherwise EdgeDock darkens itself. Turning this off, leaving full screen or closing EdgeDock puts the monitor's brightness back."
                  TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
       <ToggleSwitch x:Name="DimAtNightToggle" Header="Dim at night" AutomationProperties.Name="Dim the screen at night"/>
       <Grid ColumnSpacing="10">

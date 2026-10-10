@@ -312,6 +312,14 @@ try
     Check(screenSaved.Screen == ScreenSchedule.Normalize(dimming with { NightStart = new TimeSpan(21, 45, 0) }) &&
           (await new SettingsStore().LoadAsync()).DashboardUrl == upgraded.DashboardUrl,
           "The screen schedule survives restart");
+    var restorePoint = new BrightnessRestore(edgePreference!, 95);
+    store = new SettingsStore();
+    await store.SaveAsync(upgraded with { PendingBrightness = restorePoint });
+    var restoreSaved = await new SettingsStore().LoadAsync();
+    Check(restoreSaved.PendingBrightness == restorePoint &&
+          SettingsStore.Normalize(upgraded with { PendingBrightness = restorePoint with { Brightness = 140 } }).PendingBrightness?.Brightness == 100 &&
+          SettingsStore.Normalize(upgraded with { PendingBrightness = new BrightnessRestore(new DisplayPreference(null, null, 0, 0), 50) }).PendingBrightness is null,
+          "A monitor's original brightness survives restart so it can be put back later");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally
