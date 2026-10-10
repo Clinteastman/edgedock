@@ -67,10 +67,7 @@ internal sealed class PcStatsWidget : UserControl
         if (!_sampleRunning) DisposeStats();
     }
 
-    /// <summary>
-    /// Hiding widgets collapses their host without unloading them, and a minimised window
-    /// keeps them loaded too, so check real visibility before doing any work.
-    /// </summary>
+    /// <summary>Checks real visibility before doing any work; see <see cref="WidgetVisibility"/>.</summary>
     private void SampleIfOnScreen()
     {
         if (_sampleRunning || _timer is null || !IsOnScreen()) return;
@@ -97,13 +94,7 @@ internal sealed class PcStatsWidget : UserControl
         }, TaskScheduler.Default);
     }
 
-    private bool IsOnScreen()
-    {
-        if (XamlRoot is not { IsHostVisible: true }) return false;
-        for (DependencyObject? element = this; element is not null; element = VisualTreeHelper.GetParent(element))
-            if (element is UIElement { Visibility: Visibility.Collapsed }) return false;
-        return true;
-    }
+    private bool IsOnScreen() => WidgetVisibility.IsOnScreen(this);
 
     private void DisposeStats()
     {

@@ -19,6 +19,10 @@
   network rates are tracked per adapter, so an adapter connecting or leaving
   causes no spike or drop (console check). 37 console checks pass; a fresh
   capture still showed all five rows live.
+- Third review: visibility now also requires the widget to intersect the
+  window, so a card scrolled out of view in Widget view stops sampling (code
+  only; Widget view needs input to open). Repeat CPU check: 563 ms visible,
+  16 ms hidden over 20 seconds.
 - Sampling checks real visibility each second. EdgeDock's CPU time over 20
   seconds: 625 ms with the widget showing, 109 ms with widgets hidden.
 
