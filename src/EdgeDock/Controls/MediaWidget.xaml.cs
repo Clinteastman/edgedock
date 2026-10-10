@@ -20,7 +20,15 @@ public sealed partial class MediaWidget : UserControl
         InitializeComponent();
         Loaded += MediaWidget_Loaded;
         Unloaded += MediaWidget_Unloaded;
+        SizeChanged += (_, _) => LimitSourceWidth();
     }
+
+    /// <summary>
+    /// A horizontal stack gives text unlimited width, so long app names would never trim. Cap
+    /// the label to the panel, leaving room for the arrow and the controls handle that
+    /// overlaps this corner of the rightmost panel.
+    /// </summary>
+    private void LimitSourceWidth() => SourceText.MaxWidth = Math.Max(80, ActualWidth - 40 - 24 - 64);
 
     internal bool ShowArtwork
     {
@@ -110,6 +118,7 @@ public sealed partial class MediaWidget : UserControl
 
         _displayedMediaVersion = snapshot.Version;
         _lastSnapshot = snapshot;
+        ShowSource(snapshot);
         TrackTitle.Text = snapshot.Title;
         TrackArtist.Text = snapshot.Artist;
         PreviousButton.IsEnabled = snapshot.CanGoPrevious;
@@ -165,6 +174,43 @@ public sealed partial class MediaWidget : UserControl
                 ShowArtworkFallback();
             }
         }
+    }
+
+    /// <summary>Names the controlled app; offers a choice once two or more apps have media.</summary>
+    private void ShowSource(MediaSnapshot snapshot)
+    {
+        SourceText.Text = string.IsNullOrWhiteSpace(snapshot.SourceName) ? "Now playing" : $"Now playing · {snapshot.SourceName}";
+        var canChoose = snapshot.SourceCount > 1 || _service?.IsPinned == true;
+        SourceChevron.Visibility = canChoose ? Visibility.Visible : Visibility.Collapsed;
+        SourceButton.IsHitTestVisible = canChoose;
+        SourceButton.IsTabStop = canChoose;
+        // Screen readers hear which app is controlled, not just the action.
+        AutomationProperties.SetName(SourceButton, canChoose
+            ? $"{SourceText.Text}. Choose which media app to control"
+            : SourceText.Text);
+    }
+
+    private void SourceButton_Click(object sender, RoutedEventArgs args)
+    {
+        if (_service is null) return;
+        var menu = new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft };
+        var automatic = new ToggleMenuFlyoutItem { Text = "Automatic (what Windows is playing)", IsChecked = !_service.IsPinned, MinHeight = 52 };
+        automatic.Click += async (_, _) => await _service.ChooseSourceAsync(null);
+        menu.Items.Add(automatic);
+        menu.Items.Add(new MenuFlyoutSeparator());
+        foreach (var source in _service.GetSources())
+        {
+            var item = new ToggleMenuFlyoutItem
+            {
+                Text = source.IsPlaying ? $"{source.Name}  ·  playing" : source.Name,
+                IsChecked = _service.IsPinned && source.IsSelected,
+                MinHeight = 52
+            };
+            var id = source.Id;
+            item.Click += async (_, _) => await _service.ChooseSourceAsync(id);
+            menu.Items.Add(item);
+        }
+        menu.ShowAt(SourceButton);
     }
 
     private void ShowArtworkFallback()

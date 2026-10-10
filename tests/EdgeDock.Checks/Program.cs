@@ -268,6 +268,12 @@ try
           AudioNaming.KeyFor(40, false, null) != AudioNaming.KeyFor(41, false, null) &&
           AudioNaming.KeyFor(40, true, player) == "system",
           "One audio row per program, even across processes; process ID only as a fallback");
+
+    Check(MediaNaming.FallbackName("chrome.exe") == "Chrome" && MediaNaming.FallbackName(@"C:\Apps\Foo\musicbee.exe") == "MusicBee" &&
+          MediaNaming.FallbackName("SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify") == "Spotify" &&
+          MediaNaming.FallbackName("Microsoft.ZuneMusic_8wekyb3d8bbwe!App") == "ZuneMusic" &&
+          MediaNaming.FallbackName("somePlayer") == "SomePlayer" && MediaNaming.FallbackName("") == "Media app",
+          "Media apps get readable names from desktop and packaged app IDs");
     // Idle +50, kernel (including idle) +200, user +100: 250 of 300 ticks busy.
     Check(StatsMath.CpuPercent(100, 200, 100, 150, 400, 200) is { } cpu && Math.Abs(cpu - 250.0 / 3) < 0.001,
           "Processor use counts kernel and user time minus idle");
