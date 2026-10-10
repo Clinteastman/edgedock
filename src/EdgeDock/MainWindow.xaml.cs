@@ -52,6 +52,9 @@ public sealed partial class MainWindow : Window
     private IReadOnlyList<WidgetSlotSettings> _widgetSlots = [new(["media"], "media")];
     private readonly WidgetRegistry _registry;
     private IReadOnlyList<LauncherItem> _launchers = [];
+    // Bumped by each Save and by closing Settings; a save still checking launcher targets
+    // when it changes is stale (cancelled, or overtaken by a newer save) and is dropped.
+    private int _settingsSaveVersion;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly SemaphoreSlim _webPanelGate = new(1, 1);
     private bool _closing;
@@ -364,6 +367,7 @@ public sealed partial class MainWindow : Window
         CloseControlsDrawer(restoreFocus: false);
         if (SettingsPanel.Visibility == Visibility.Visible)
         {
+            _settingsSaveVersion++;
             SettingsPanel.Visibility = Visibility.Collapsed;
             return;
         }
@@ -375,6 +379,7 @@ public sealed partial class MainWindow : Window
 
     private void CancelSettings_Click(object sender, RoutedEventArgs args)
     {
+        _settingsSaveVersion++;
         SettingsPanel.Visibility = Visibility.Collapsed;
         UrlErrorText.Visibility = Visibility.Collapsed;
     }
@@ -389,7 +394,9 @@ public sealed partial class MainWindow : Window
             UrlErrorText.Visibility = Visibility.Visible;
             return;
         }
+        var saveVersion = ++_settingsSaveVersion;
         var (launchersValid, launchers, launcherError) = await LauncherEditor.TryGetItemsAsync();
+        if (saveVersion != _settingsSaveVersion) return;
         if (!launchersValid)
         {
             UrlErrorText.Text = launcherError;
@@ -895,6 +902,7 @@ public sealed partial class MainWindow : Window
     private void EnterWidgetView()
     {
         if (_isWidgetView) return;
+        _settingsSaveVersion++;
         SettingsPanel.Visibility = Visibility.Collapsed;
         WidgetHost.Children.Clear();
         WidgetHost.ColumnDefinitions.Clear();

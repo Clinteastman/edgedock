@@ -16,6 +16,8 @@
   for each launcher row now follow the Name field as it is typed.
 - Second review: Save layout checks launcher targets on the thread pool, and
   folder names keep their dots (`Projects.v2`, `.config`; console check).
+- Third review: a save still checking launcher targets is dropped if Settings
+  closes (Cancel, toggle, Widget view) or a newer save starts (code only).
 - Not yet tested: tapping a tile to open it, the Browse buttons, and the
   Settings save path (all need real input).
 
