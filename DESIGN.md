@@ -33,6 +33,13 @@ adjustment, save after an adjustment finishes, and restore the prior size if a
 pointer gesture is cancelled. Viewport constraints clamp only the rendered
 layout, so a preferred split returns when more space is available.
 
+Each web card has a page zoom (50-150% in 5% steps, default 100%). It behaves
+like browser zoom: the page lays out on a viewport of the panel size divided by
+the zoom, and the result is scaled to fit, via the WebView2 DevTools protocol
+(`Emulation.setDeviceMetricsOverride`). CSS `zoom` is not used because it
+shrinks `100vh` layouts and leaves an empty band. Zoom is re-applied when the
+panel resizes and survives navigation.
+
 Web cards recover without attention. Connection-type load failures retry after
 5, 10, 20 and 40 seconds, then every 60, with a "Waiting for connection" status
 and Try again. Certificate, credential and redirect errors still stop and ask.
