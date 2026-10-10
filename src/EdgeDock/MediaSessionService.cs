@@ -33,6 +33,8 @@ internal sealed class MediaSessionService : IDisposable
     // Manager callbacks and user choices re-select one at a time, so a slower callback that
     // read an older state can never attach after a newer one.
     private readonly object _selectionGate = new();
+    // The pinned app's other sessions, watched so control follows whichever one starts playing.
+    private readonly List<GlobalSystemMediaTransportControlsSession> _siblings = [];
     private readonly Dictionary<string, string> _sourceNames = new(StringComparer.OrdinalIgnoreCase);
     private MediaSnapshot _currentSnapshot = new(
         "Nothing playing",
@@ -160,14 +162,22 @@ internal sealed class MediaSessionService : IDisposable
         }
         GlobalSystemMediaTransportControlsSession? match = null;
         GlobalSystemMediaTransportControlsSession? target;
+        GlobalSystemMediaTransportControlsSession[] siblings = [];
         try
         {
             if (pinned is not null)
-                // Of the pinned app's sessions, prefer one that is playing.
-                match = manager.GetSessions()
+            {
+                GlobalSystemMediaTransportControlsSession? attached;
+                lock (_gate) attached = _session;
+                siblings = manager.GetSessions()
                     .Where(session => string.Equals(session.SourceAppUserModelId, pinned, StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+                // Of the pinned app's sessions, prefer one that is playing, then the one already shown.
+                match = siblings
                     .OrderByDescending(IsPlaying)
+                    .ThenByDescending(session => ReferenceEquals(session, attached))
                     .FirstOrDefault();
+            }
             target = match ?? manager.GetCurrentSession();
         }
         catch (Exception exception) when (exception is InvalidOperationException or System.Runtime.InteropServices.COMException)
@@ -186,7 +196,40 @@ internal sealed class MediaSessionService : IDisposable
                 _selectionGeneration++;
             }
             AttachSession(target);
+            WatchSiblings(siblings.Where(session => !ReferenceEquals(session, target)));
         }
+    }
+
+    /// <summary>
+    /// Watches the pinned app's other sessions: when playback moves to one of them (a second
+    /// tab or player in the same app), control moves with it.
+    /// </summary>
+    private void WatchSiblings(IEnumerable<GlobalSystemMediaTransportControlsSession> sessions)
+    {
+        lock (_gate)
+        {
+            foreach (var old in _siblings) old.PlaybackInfoChanged -= Sibling_PlaybackInfoChanged;
+            _siblings.Clear();
+            if (_disposed) return;
+            foreach (var session in sessions)
+            {
+                session.PlaybackInfoChanged += Sibling_PlaybackInfoChanged;
+                _siblings.Add(session);
+            }
+        }
+    }
+
+    private void Sibling_PlaybackInfoChanged(GlobalSystemMediaTransportControlsSession sender, object args)
+    {
+        GlobalSystemMediaTransportControlsSessionManager? manager;
+        lock (_gate)
+        {
+            if (_disposed || _pinnedSourceId is null) return;
+            manager = _manager;
+        }
+        if (manager is null || !IsPlaying(sender)) return;
+        SelectAndAttach(manager);
+        _ = RefreshAsync();
     }
 
     private static bool IsPlaying(GlobalSystemMediaTransportControlsSession session)
@@ -502,6 +545,9 @@ internal sealed class MediaSessionService : IDisposable
                 _session.PlaybackInfoChanged -= Session_Changed;
                 _session = null;
             }
+
+            foreach (var sibling in _siblings) sibling.PlaybackInfoChanged -= Sibling_PlaybackInfoChanged;
+            _siblings.Clear();
 
             if (_manager is not null)
             {

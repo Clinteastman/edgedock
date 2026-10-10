@@ -16,6 +16,12 @@
   the app count so the picker stays usable; long app names are capped to the
   panel width so they trim. Both harness scenarios repeated with the same
   results.
+- After review: a pinned app with several sessions (for example two players
+  or tabs) now follows whichever of them starts playing. Harness with one test
+  app holding two silent sessions: pinned showed "Track A", then "Track B"
+  after playback moved. The old code passed this run too, because Windows also
+  moved its own current session; the change covers the case where Windows'
+  current session belongs to another app, which was not reproduced.
 
 ## PC activity widget (10 October 2026)
 
