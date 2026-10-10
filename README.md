@@ -37,8 +37,11 @@ contribute. This is not a signed installer or a finished consumer release.
 - Runs as one copy: launching it again brings the open window forward.
 - Supports one to three native widget panels, with an optional web area.
 - Lets each panel switch between its chosen widgets independently.
-- Includes a local library of media, clock and weather, PC volume/mute, PC
+- Includes a local library of media, clock and weather, PC audio, PC
   activity, launcher and Windows Settings shortcuts.
+- **PC audio** switches the Windows output device, sets master volume and mute,
+  mutes the microphone with an unmistakable red state, and gives every app
+  making sound its own volume slider and mute, with its icon.
 - **Launcher** turns the panel into a touch shortcut pad: tiles open your chosen
   apps, documents, folders or web pages, exactly like double-clicking them in
   File Explorer. Add them in Settings, under Launcher. Tiles show the real

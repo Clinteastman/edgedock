@@ -277,6 +277,37 @@ try
           }).Launchers!.Count == SettingsStore.MaximumLaunchers,
           "The launcher is limited to 24 items");
 
+    Check(AudioNaming.DisplayName("Spotify Premium", "Spotify", "spotify", false) == "Spotify Premium" &&
+          AudioNaming.DisplayName(@"@%SystemRoot%\System32\AudioSrv.Dll,-202", "Desktop Window Manager", "dwm", false) == "Desktop Window Manager" &&
+          AudioNaming.DisplayName(null, null, "discord", false) == "Discord" &&
+          AudioNaming.DisplayName("anything", null, null, true) == "System sounds" &&
+          AudioNaming.DisplayName(null, " ", null, false) == "App",
+          "App audio rows get readable names, never resource references");
+    AudioSessionInfo Session(uint pid, string name, bool active, bool system = false) =>
+        new(AudioNaming.KeyFor(pid, system), pid, name, null, 50, false, system, active);
+    var arranged = AudioNaming.Arrange([
+        Session(0, "System sounds", false, system: true),
+        Session(10, "Zoom", false),
+        Session(20, "Chrome", false),
+        Session(20, "Chrome", true),
+        Session(30, "Spotify", true)]);
+    Check(arranged.Select(session => session.Name).SequenceEqual(["Chrome", "Spotify", "Zoom", "System sounds"]) &&
+          arranged[0].IsActive,
+          "App audio rows: one per app, playing first, System sounds last");
+    var partlyMuted = AudioNaming.Arrange([
+        Session(20, "Chrome", true) with { IsMuted = true },
+        Session(20, "Chrome", false)]);
+    var allMuted = AudioNaming.Arrange([
+        Session(20, "Chrome", true) with { IsMuted = true },
+        Session(20, "Chrome", false) with { IsMuted = true }]);
+    Check(!partlyMuted[0].IsMuted && allMuted[0].IsMuted,
+          "An app reads as muted only when all its sessions are muted");
+    const string player = @"C:\Apps\Player\player.exe";
+    Check(AudioNaming.KeyFor(40, false, player) == AudioNaming.KeyFor(41, false, player.ToLowerInvariant()) &&
+          AudioNaming.KeyFor(40, false, null) != AudioNaming.KeyFor(41, false, null) &&
+          AudioNaming.KeyFor(40, true, player) == "system",
+          "One audio row per program, even across processes; process ID only as a fallback");
+
     Check(MediaNaming.FallbackName("chrome.exe") == "Chrome" && MediaNaming.FallbackName(@"C:\Apps\Foo\musicbee.exe") == "MusicBee" &&
           MediaNaming.FallbackName("SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify") == "Spotify" &&
           MediaNaming.FallbackName("Microsoft.ZuneMusic_8wekyb3d8bbwe!App") == "ZuneMusic" &&
