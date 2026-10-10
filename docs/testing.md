@@ -16,6 +16,10 @@
   sliders and mute buttons are 52px touch targets; app icons load off the UI
   thread (shared ShellIcons); sampling uses the shared visibility check. Harness
   and capture repeated with the same results.
+- Second review: rows are not moved or removed while a slider is held (values
+  still update; order catches up after release); the switch error sits under
+  the output picker and clears when the default output changes by any route;
+  one failing session no longer stops an app's other sessions changing.
 - Deliberately not tested on this PC: switching the default output device and
   muting the real microphone (both would disrupt the user's audio). The output
   switch uses the same call as the Sound control panel.

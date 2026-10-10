@@ -23,9 +23,9 @@ internal sealed class AudioWidget : UserControl
     private readonly Slider _volume = NewSlider("System volume");
     private readonly TextBlock _volumeText = new() { FontSize = 16, VerticalAlignment = VerticalAlignment.Center, MinWidth = 44, TextAlignment = TextAlignment.Right };
     private readonly Button _mute = new() { MinWidth = 52, Padding = new Thickness(0) };
-    private readonly FontIcon _muteIcon = new() { Glyph = "" };
+    private readonly FontIcon _muteIcon = new() { Glyph = "\uE767" };
     private readonly Button _microphone = new() { HorizontalAlignment = HorizontalAlignment.Stretch, MinHeight = 52 };
-    private readonly FontIcon _microphoneIcon = new() { Glyph = "" };
+    private readonly FontIcon _microphoneIcon = new() { Glyph = "\uE720" };
     private readonly TextBlock _microphoneText = new() { FontSize = 16 };
     private readonly StackPanel _apps = new() { Spacing = 12 };
     private readonly TextBlock _noApps = new()
@@ -46,6 +46,7 @@ internal sealed class AudioWidget : UserControl
     private int _tick;
     // Kept until the user acts again or a switch succeeds; refreshes must not wipe it.
     private string? _switchError;
+    private string? _defaultWhenSwitchFailed;
 
     public AudioWidget()
     {
@@ -88,10 +89,10 @@ internal sealed class AudioWidget : UserControl
         var content = new StackPanel { Spacing = 14 };
         content.Children.Add(new TextBlock { Text = "PC audio", FontSize = 20, FontWeight = FontWeights.SemiBold });
         content.Children.Add(outputRow);
+        content.Children.Add(_status);
         content.Children.Add(volumeRow);
         content.Children.Add(_microphone);
         content.Children.Add(appsArea);
-        content.Children.Add(_status);
 
         Content = new Border
         {
@@ -172,7 +173,7 @@ internal sealed class AudioWidget : UserControl
         _volume.IsEnabled = snapshot.IsAvailable;
         _mute.IsEnabled = snapshot.IsAvailable;
         _volumeText.Text = snapshot.IsAvailable ? $"{snapshot.VolumePercent:0}%" : "--";
-        _muteIcon.Glyph = snapshot.IsMuted ? "" : "";
+        _muteIcon.Glyph = snapshot.IsMuted ? "\uE74F" : "\uE767";
         var label = snapshot.IsMuted ? "Unmute sound" : "Mute sound";
         AutomationProperties.SetName(_mute, label);
         ToolTipService.SetToolTip(_mute, label);
@@ -191,6 +192,13 @@ internal sealed class AudioWidget : UserControl
         }
         _outputs.SelectedItem = _outputs.Items.Cast<ComboBoxItem>()
             .FirstOrDefault(item => devices.Any(device => device.IsDefault && device.Id == (string?)item.Tag));
+        // The user may follow the advice and switch in Sound settings; drop the error then.
+        var defaultId = devices.FirstOrDefault(device => device.IsDefault)?.Id;
+        if (_switchError is not null && defaultId != _defaultWhenSwitchFailed)
+        {
+            _switchError = null;
+            ShowStatus(null);
+        }
         _outputs.IsEnabled = devices.Count > 1;
         _updating = false;
     }
@@ -200,9 +208,11 @@ internal sealed class AudioWidget : UserControl
         if (_updating || _audio is null || _outputs.SelectedItem is not ComboBoxItem { Tag: string id }) return;
         if (!_audio.SetDefaultOutput(id))
         {
+            var outputs = _audio.GetOutputs();
+            _defaultWhenSwitchFailed = outputs.FirstOrDefault(device => device.IsDefault)?.Id;
             _switchError = "Windows did not switch the output. Use Sound settings to choose it instead.";
             ShowStatus(_switchError);
-            ShowOutputs(_audio.GetOutputs());
+            ShowOutputs(outputs);
             return;
         }
         _switchError = null;
@@ -213,7 +223,7 @@ internal sealed class AudioWidget : UserControl
     {
         _microphoneMuted = microphone.IsMuted;
         _microphone.IsEnabled = microphone.IsAvailable;
-        _microphoneIcon.Glyph = microphone.IsMuted ? "" : "";
+        _microphoneIcon.Glyph = microphone.IsMuted ? "\uF781" : "\uE720";
         _microphoneText.Text = !microphone.IsAvailable ? "No microphone"
             : microphone.IsMuted ? "Microphone muted" : "Microphone on";
         // Muted is the state people need to notice, so it gets the strong colour.
@@ -227,11 +237,17 @@ internal sealed class AudioWidget : UserControl
 
     private void ShowApps(IReadOnlyList<AudioSessionInfo> sessions)
     {
+        // Detaching or moving a row while its slider is held would end the drag and slide the
+        // control out from under the finger. Update values only; reorder after release.
+        var dragging = _appRows.Values.Any(existing => existing.IsDragging);
         var keys = sessions.Select(session => session.Key).ToHashSet();
-        foreach (var gone in _appRows.Keys.Where(key => !keys.Contains(key)).ToArray())
+        if (!dragging)
         {
-            _apps.Children.Remove(_appRows[gone].Root);
-            _appRows.Remove(gone);
+            foreach (var gone in _appRows.Keys.Where(key => !keys.Contains(key)).ToArray())
+            {
+                _apps.Children.Remove(_appRows[gone].Root);
+                _appRows.Remove(gone);
+            }
         }
         for (var index = 0; index < sessions.Count; index++)
         {
@@ -243,9 +259,10 @@ internal sealed class AudioWidget : UserControl
             }
             // Keep the arranged order (playing first) without rebuilding rows being touched.
             var position = _apps.Children.IndexOf(row.Root);
-            if (position != index)
+            if (position < 0) _apps.Children.Insert(dragging ? _apps.Children.Count : Math.Min(index, _apps.Children.Count), row.Root);
+            else if (position != index && !dragging)
             {
-                if (position >= 0) _apps.Children.RemoveAt(position);
+                _apps.Children.RemoveAt(position);
                 _apps.Children.Insert(Math.Min(index, _apps.Children.Count), row.Root);
             }
             row.Show(session);
@@ -277,14 +294,16 @@ internal sealed class AudioWidget : UserControl
         private readonly AudioWidget _owner;
         private readonly string _key;
         private readonly Image _icon = new() { Width = 20, Height = 20 };
-        private readonly FontIcon _fallbackIcon = new() { Glyph = "", FontSize = 18 };
+        private readonly FontIcon _fallbackIcon = new() { Glyph = "\uE8D6", FontSize = 18 };
         private readonly TextBlock _name = new() { FontSize = 15, TextTrimming = TextTrimming.CharacterEllipsis };
         private readonly TextBlock _level = new() { FontSize = 14, Foreground = MutedText };
         private readonly Slider _slider = NewSlider("App volume");
         private readonly Button _mute = new() { MinWidth = 52, MinHeight = 52, Padding = new Thickness(0) };
-        private readonly FontIcon _muteIcon = new() { Glyph = "", FontSize = 16 };
+        private readonly FontIcon _muteIcon = new() { Glyph = "\uE767", FontSize = 16 };
         private bool _dragging;
         private bool _muted;
+
+        internal bool IsDragging => _dragging;
         private bool _updating;
 
         internal Grid Root { get; } = new() { RowSpacing = 2, ColumnSpacing = 8 };
@@ -360,7 +379,7 @@ internal sealed class AudioWidget : UserControl
         private void SetMuted(bool muted)
         {
             _muted = muted;
-            _muteIcon.Glyph = muted ? "" : "";
+            _muteIcon.Glyph = muted ? "\uE74F" : "\uE767";
             var label = muted ? $"Unmute {_name.Text}" : $"Mute {_name.Text}";
             AutomationProperties.SetName(_mute, label);
             ToolTipService.SetToolTip(_mute, label);

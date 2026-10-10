@@ -270,8 +270,11 @@ internal sealed class SystemAudioService : IDisposable
         {
             ForEachSession((control, volume) =>
             {
-                Marshal.ThrowExceptionForHR(control.GetProcessId(out var processId));
-                if (AudioNaming.KeyFor(processId, control.IsSystemSoundsSession() == 0) == key) change(volume);
+                if (control.GetProcessId(out var processId) != 0) return;
+                if (AudioNaming.KeyFor(processId, control.IsSystemSoundsSession() == 0) != key) return;
+                // An expired or failing session must not stop the app's other sessions.
+                try { change(volume); }
+                catch (Exception exception) when (exception is COMException or InvalidCastException) { }
             });
         }
         catch (Exception exception) when (exception is COMException or InvalidCastException or PlatformNotSupportedException) { }
