@@ -25,7 +25,8 @@ internal sealed record EdgeDockSettings(
     double WebSplitRatio = 0.5,
     DisplayPreference? Display = null,
     bool OpenFullScreen = false,
-    IReadOnlyList<LayoutProfile>? Profiles = null);
+    IReadOnlyList<LayoutProfile>? Profiles = null,
+    AutoLayoutSwitch? AutoSwitch = null);
 
 internal sealed class SettingsStore
 {
@@ -91,16 +92,10 @@ internal sealed class SettingsStore
                     profile.Id ?? string.Empty,
                     profile.Name ?? string.Empty,
                     profile.WhenRunning,
-                    new ProfileLayout(
-                        ParsePlacement(profile.Layout!.Placement, MediaPanelPlacement.Right, true),
-                        ParsePlacement(profile.Layout.LastVisiblePlacement, MediaPanelPlacement.Right, false),
-                        profile.Layout.PanelWidth ?? 340,
-                        profile.Layout.IsWebVisible ?? true,
-                        profile.Layout.WidgetSlots?.Where(slot => slot is not null)
-                            .Select(slot => new WidgetSlotSettings(slot.EnabledWidgetIds ?? [], slot.SelectedWidgetId)).ToArray() ?? DefaultSlots(),
-                        profile.Layout.WebPanelCount ?? 1,
-                        profile.Layout.WebPanelCardIds ?? [],
-                        profile.Layout.WebSplitRatio ?? 0.5))).ToArray()));
+                    ToLayout(profile.Layout!))).ToArray(),
+                AutoSwitch: stored?.AutoSwitch is { ProfileId: { } autoId, Before: { } before }
+                    ? new AutoLayoutSwitch(autoId, ToLayout(before))
+                    : null));
         }
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -135,22 +130,15 @@ internal sealed class SettingsStore
                     ? new StoredDisplay { DeviceId = display.DeviceId, HardwareId = display.HardwareId, Width = display.Width, Height = display.Height }
                     : null,
                 OpenFullScreen = settings.OpenFullScreen,
+                AutoSwitch = settings.AutoSwitch is { } autoSwitch
+                    ? new StoredAutoSwitch { ProfileId = autoSwitch.ProfileId, Before = FromLayout(autoSwitch.Before) }
+                    : null,
                 Profiles = settings.Profiles!.Select(profile => new StoredProfile
                 {
                     Id = profile.Id,
                     Name = profile.Name,
                     WhenRunning = profile.WhenRunning,
-                    Layout = new StoredLayout
-                    {
-                        Placement = profile.Layout.Placement.ToString(),
-                        LastVisiblePlacement = profile.Layout.LastVisiblePlacement.ToString(),
-                        PanelWidth = profile.Layout.PanelWidth,
-                        IsWebVisible = profile.Layout.IsWebVisible,
-                        WidgetSlots = profile.Layout.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
-                        WebPanelCount = profile.Layout.WebPanelCount,
-                        WebPanelCardIds = profile.Layout.WebPanelCardIds.ToList(),
-                        WebSplitRatio = profile.Layout.WebSplitRatio
-                    }
+                    Layout = FromLayout(profile.Layout)
                 }).ToList(),
                 WidgetSlots = settings.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
                 ExtensionData = _extensionData
@@ -203,7 +191,10 @@ internal sealed class SettingsStore
             WebPanelCardIds = selections,
             WebSplitRatio = PanelLayout.NormalizeWebSplitRatio(value.WebSplitRatio),
             Display = NormalizeDisplay(value.Display),
-            Profiles = LayoutProfiles.Normalize(value.Profiles, value with { Profiles = [] })
+            Profiles = LayoutProfiles.Normalize(value.Profiles, value with { Profiles = [] }),
+            AutoSwitch = value.AutoSwitch is { } autoSwitch && !string.IsNullOrWhiteSpace(autoSwitch.ProfileId) && autoSwitch.Before is not null
+                ? autoSwitch with { Before = LayoutProfiles.Capture(LayoutProfiles.Apply(value with { Profiles = [], AutoSwitch = null }, autoSwitch.Before)) }
+                : null
         };
     }
 
@@ -281,6 +272,7 @@ internal sealed class SettingsStore
         public StoredDisplay? Display { get; set; }
         public bool? OpenFullScreen { get; set; }
         public List<StoredProfile>? Profiles { get; set; }
+        public StoredAutoSwitch? AutoSwitch { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }
         [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; }
     }
@@ -289,6 +281,35 @@ internal sealed class SettingsStore
     {
         public List<string>? EnabledWidgetIds { get; set; }
         public string? SelectedWidgetId { get; set; }
+    }
+
+    private static ProfileLayout ToLayout(StoredLayout stored) => new(
+        ParsePlacement(stored.Placement, MediaPanelPlacement.Right, true),
+        ParsePlacement(stored.LastVisiblePlacement, MediaPanelPlacement.Right, false),
+        stored.PanelWidth ?? 340,
+        stored.IsWebVisible ?? true,
+        stored.WidgetSlots?.Where(slot => slot is not null)
+            .Select(slot => new WidgetSlotSettings(slot.EnabledWidgetIds ?? [], slot.SelectedWidgetId)).ToArray() ?? DefaultSlots(),
+        stored.WebPanelCount ?? 1,
+        stored.WebPanelCardIds ?? [],
+        stored.WebSplitRatio ?? 0.5);
+
+    private static StoredLayout FromLayout(ProfileLayout layout) => new()
+    {
+        Placement = layout.Placement.ToString(),
+        LastVisiblePlacement = layout.LastVisiblePlacement.ToString(),
+        PanelWidth = layout.PanelWidth,
+        IsWebVisible = layout.IsWebVisible,
+        WidgetSlots = layout.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
+        WebPanelCount = layout.WebPanelCount,
+        WebPanelCardIds = layout.WebPanelCardIds.ToList(),
+        WebSplitRatio = layout.WebSplitRatio
+    };
+
+    private sealed class StoredAutoSwitch
+    {
+        public string? ProfileId { get; set; }
+        public StoredLayout? Before { get; set; }
     }
 
     private sealed class StoredProfile

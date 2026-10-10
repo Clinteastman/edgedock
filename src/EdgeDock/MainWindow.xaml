@@ -109,6 +109,8 @@
          <Button x:Name="SaveProfileButton" Grid.Column="1" Content="Save" VerticalAlignment="Bottom" Click="SaveProfile_Click"
                  AutomationProperties.Name="Save this layout"/>
         </Grid>
+        <TextBlock x:Name="ProfileStatus" TextWrapping="Wrap" Foreground="#FFFFC2C7" Visibility="Collapsed"
+                   AutomationProperties.LiveSetting="Assertive"/>
        </StackPanel>
       </StackPanel>
      </ScrollViewer>

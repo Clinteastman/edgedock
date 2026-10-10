@@ -158,6 +158,8 @@ public sealed partial class MainWindow : Window
         _displayPreference = settings.Display;
         _openFullScreen = settings.OpenFullScreen;
         _profiles = settings.Profiles ?? [];
+        _autoProfileId = settings.AutoSwitch?.ProfileId;
+        _layoutBeforeAuto = settings.AutoSwitch?.Before;
         // Move to the saved screen before WebView2 creates its child HWNDs, so pages
         // render once at the right size and scale.
         RestorePreferredDisplay();
@@ -448,7 +450,8 @@ public sealed partial class MainWindow : Window
             MaterialSelector.SelectedIndex == 1 ? BackdropMaterial.Acrylic : BackdropMaterial.Mica,
             BackdropTransparencySlider.Value, cards, _webPanelCount, _webPanelCardIds,
             _configuredWebSplitRatio, _displayPreference, _openFullScreen,
-            Profiles: profiles));
+            Profiles: profiles,
+            AutoSwitch: _autoProfileId is { } autoId && _layoutBeforeAuto is { } before ? new AutoLayoutSwitch(autoId, before) : null));
         if (!await PersistAsync(settings)) return;
         _material = settings.Material;
         _backdropTransparency = settings.BackdropTransparency;
@@ -525,7 +528,8 @@ public sealed partial class MainWindow : Window
         _configuredWebSplitRatio,
         _displayPreference,
         _openFullScreen,
-        Profiles: _profiles);
+        Profiles: _profiles,
+        AutoSwitch: _autoProfileId is { } autoId && _layoutBeforeAuto is { } before ? new AutoLayoutSwitch(autoId, before) : null);
 
     private void ApplyBackdrop()
     {
@@ -808,7 +812,7 @@ public sealed partial class MainWindow : Window
             ProfileButtons.Children.Add(button);
         }
         ProfileButtons.Visibility = _profiles.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-        SaveProfileButton.IsEnabled = _profiles.Count < LayoutProfiles.Maximum;
+        ProfileStatus.Visibility = Visibility.Collapsed;
     }
 
     private async void SaveProfile_Click(object sender, RoutedEventArgs args)
@@ -821,6 +825,12 @@ public sealed partial class MainWindow : Window
         }
         // Saving under an existing name replaces that layout and keeps its program trigger.
         var existing = _profiles.FirstOrDefault(profile => string.Equals(profile.Name, name, StringComparison.CurrentCultureIgnoreCase));
+        if (existing is null && _profiles.Count >= LayoutProfiles.Maximum)
+        {
+            ProfileStatus.Text = $"You have {LayoutProfiles.Maximum} layouts. Reuse a name to replace one, or remove one in Settings.";
+            ProfileStatus.Visibility = Visibility.Visible;
+            return;
+        }
         var saved = new LayoutProfile(existing?.Id ?? Guid.NewGuid().ToString("N"), name, existing?.WhenRunning, LayoutProfiles.Capture(CurrentSettings()));
         var updated = existing is null ? _profiles.Append(saved).ToArray() : _profiles.Select(profile => profile.Id == existing.Id ? saved : profile).ToArray();
         var candidate = SettingsStore.Normalize(CurrentSettings() with { Profiles = updated });
@@ -857,7 +867,9 @@ public sealed partial class MainWindow : Window
         ApplyMediaLayout();
         await BuildWebPanelsAsync();
         ApplyMediaLayout();
-        UpdateSettingsControls();
+        // An automatic switch must not discard edits in an open Settings panel; Settings
+        // reloads from the current layout when it is next opened.
+        if (manual || SettingsPanel.Visibility != Visibility.Visible) UpdateSettingsControls();
     }
 
     private void StartProfileWatch()
@@ -874,7 +886,9 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private async Task CheckProgramsAsync()
     {
-        if (_closing || _checkingPrograms || !_profiles.Any(profile => profile.WhenRunning is not null)) return;
+        if (_closing || _checkingPrograms) return;
+        // Nothing to watch, and no automatic layout to undo.
+        if (!_profiles.Any(profile => profile.WhenRunning is not null) && _autoProfileId is null) return;
         _checkingPrograms = true;
         try
         {

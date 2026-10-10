@@ -322,6 +322,11 @@ try
     Check(profilesSaved.Profiles?.Count == 3 && profilesSaved.Profiles[1].Layout.WidgetSlots[0].SelectedWidgetId == "stats" &&
           !profilesSaved.Profiles[1].Layout.IsWebVisible && profilesSaved.Profiles[1].WhenRunning == "cs2",
           "Layout profiles survive restart");
+    await store.SaveAsync(withProfiles with { AutoSwitch = new AutoLayoutSwitch("game", workLayout) });
+    var autoSaved = await new SettingsStore().LoadAsync();
+    Check(autoSaved.AutoSwitch?.ProfileId == "game" && autoSaved.AutoSwitch.Before.IsWebVisible == workLayout.IsWebVisible &&
+          autoSaved.AutoSwitch.Before.WebPanelCount == workLayout.WebPanelCount,
+          "The layout to return to after a program closes survives restart");
     Check(LayoutProfiles.NormalizeProcessName("Game.EXE") == "Game" && LayoutProfiles.NormalizeProcessName("cmd /c x") is null &&
           LayoutProfiles.NormalizeProcessName(@"C:\x.exe") is null && LayoutProfiles.NormalizeProcessName(" ") is null,
           "Program triggers accept a name only");

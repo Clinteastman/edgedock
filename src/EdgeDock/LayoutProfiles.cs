@@ -11,6 +11,12 @@ internal sealed record ProfileLayout(
     IReadOnlyList<string> WebPanelCardIds,
     double WebSplitRatio);
 
+/// <summary>
+/// A layout switched on because its program is running, and the layout to return to.
+/// Saved with the settings so a restart mid-game still returns to the right layout.
+/// </summary>
+internal sealed record AutoLayoutSwitch(string ProfileId, ProfileLayout Before);
+
 /// <summary>A named layout; optionally used automatically while a given app is running.</summary>
 internal sealed record LayoutProfile(string Id, string Name, string? WhenRunning, ProfileLayout Layout);
 
