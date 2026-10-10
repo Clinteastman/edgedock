@@ -39,7 +39,9 @@ internal static class MonitorBrightness
         {
             return await Task.Run(() =>
             {
-                if (!GetNumberOfPhysicalMonitorsFromHMONITOR(display, out var count) || count == 0) return null;
+                // Tiled or multi-panel displays have several backlights; changing one would
+                // leave the rest lit, so those are left to software dimming.
+                if (!GetNumberOfPhysicalMonitorsFromHMONITOR(display, out var count) || count != 1) return null;
                 var monitors = new PhysicalMonitor[count];
                 if (!GetPhysicalMonitorsFromHMONITOR(display, count, monitors)) return null;
                 try { return action(monitors[0].Handle); }

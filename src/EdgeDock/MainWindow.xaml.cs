@@ -1163,7 +1163,17 @@ public sealed partial class MainWindow : Window
             // to how it was before EdgeDock changed it. Retried each tick if it is unplugged.
             if (!_screenBlank && state.Brightness is null && _brightnessRestore is not null) await RestoreOriginalBrightnessAsync();
         }
-        finally { _screenBusy = false; }
+        finally
+        {
+            _screenBusy = false;
+            // A tap or key during this work (even during the final write) is handled at once,
+            // not on a later tick.
+            if (_wakeDropped && !_closing)
+            {
+                _wakeDropped = false;
+                DispatcherQueue.TryEnqueue(() => _ = UpdateScreenAsync());
+            }
+        }
     }
 
     private async Task BlankScreenAsync()
@@ -1174,27 +1184,43 @@ public sealed partial class MainWindow : Window
         // Take keyboard focus (from XAML controls and web pages alike) so wake keys land here.
         _focusBeforeBlank = FocusManager.GetFocusedElement(Root.XamlRoot) as Control;
         ScreenWakeButton.Focus(FocusState.Programmatic);
+        // Hide everything under the black overlay, so neither keys nor a screen reader can reach
+        // it; only the wake button remains. It is shown again exactly as it was on wake.
+        _hiddenWhileBlank.Clear();
+        foreach (var child in Root.Children)
+        {
+            if (child == ScreenBlankOverlay || child == ScreenDimLayer || child.Visibility != Visibility.Visible) continue;
+            _hiddenWhileBlank.Add(child);
+            child.Visibility = Visibility.Collapsed;
+        }
         // Check every second while blank so a touch or key wakes it promptly.
         if (_screenTimer is not null) _screenTimer.Interval = TimeSpan.FromSeconds(1);
+        // An earlier blank's monitor (say, unplugged while dark) is still waiting for its level:
+        // keep that until it is put back, and use only the overlay this time.
+        if (_brightnessBeforeBlank is not null) return;
         var monitor = MonitorBrightness.MonitorOf(_windowHandle);
-        _blankedMonitor = DisplayPlacement.PreferenceFor(CurrentDisplay());
+        var identity = DisplayPlacement.PreferenceFor(CurrentDisplay());
         // The black overlay always shows; the backlight is turned down only when its original
         // level is safely saved, so a crash can never leave it dark with nothing to restore.
         var before = await MonitorBrightness.GetAsync(monitor);
         // Moved to another monitor during the read: that reading is not this monitor's. The saved
         // identity must also find exactly this monitor again, or it could never be put back.
-        if (MonitorBrightness.MonitorOf(_windowHandle) != monitor || !IdentifiesMonitor(_blankedMonitor, monitor)) before = null;
-        if (before is not null && await RememberOriginalBrightnessAsync(_blankedMonitor, before.Value) &&
+        if (MonitorBrightness.MonitorOf(_windowHandle) != monitor || !IdentifiesMonitor(identity, monitor)) before = null;
+        if (before is not null && await RememberOriginalBrightnessAsync(identity, before.Value) &&
             // Still blank and full screen after the waits (F11, a touch or a key may have come in).
             _screenBlank && !_wakeRequested && _isFullScreen && MonitorBrightness.MonitorOf(_windowHandle) == monitor)
         {
             _brightnessBeforeBlank = before;
+            _blankedMonitor = identity;
             _blankHandle = monitor;
             // A refused write is retried each tick while blank, so the backlight still goes off.
             _blankWritePending = !await MonitorBrightness.SetAsync(monitor, 0);
         }
-        else _blankedMonitor = null;
     }
+
+    private readonly List<UIElement> _hiddenWhileBlank = [];
+    // A wake gesture that arrived while screen work was busy, handled as soon as it finishes.
+    private bool _wakeDropped;
 
     // Set by any wake gesture straight away, even while a blank is still talking to the monitor,
     // so a blank in progress never turns the backlight off after the user asked to wake.
@@ -1212,6 +1238,8 @@ public sealed partial class MainWindow : Window
     {
         _screenBlank = false;
         _blankWritePending = false;
+        foreach (var child in _hiddenWhileBlank) child.Visibility = Visibility.Visible;
+        _hiddenWhileBlank.Clear();
         ScreenBlankOverlay.Visibility = Visibility.Collapsed;
         if (_focusBeforeBlank is { } previous && previous != ScreenWakeButton) previous.Focus(FocusState.Programmatic);
         _focusBeforeBlank = null;
@@ -1395,12 +1423,14 @@ public sealed partial class MainWindow : Window
         // Any key only wakes the screen; nothing underneath sees it.
         args.Handled = true;
         _wakeRequested = true;
+        if (_screenBusy) _wakeDropped = true;
         await UpdateScreenAsync();
     }
 
     private async void ScreenWakeButton_Click(object sender, RoutedEventArgs args)
     {
         _wakeRequested = true;
+        if (_screenBusy) _wakeDropped = true;
         await UpdateScreenAsync();
     }
 
@@ -1410,6 +1440,7 @@ public sealed partial class MainWindow : Window
         // resets Windows' idle time, so the normal update path wakes the screen.
         args.Handled = true;
         _wakeRequested = true;
+        if (_screenBusy) _wakeDropped = true;
         await UpdateScreenAsync();
     }
 
