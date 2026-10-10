@@ -241,6 +241,13 @@ try
     var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\Tools\app.exe" };
     var folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"D:\Projects" };
     LauncherTargetKind Kind(string target) => LauncherTargets.Classify(target, files.Contains, folders.Contains);
+    var checkedFolder = Path.Combine(Path.GetTempPath(), "edgedock-launcher-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(checkedFolder);
+    var whilePresent = await LauncherTargets.ClassifyAsync(checkedFolder);
+    Directory.Delete(checkedFolder);
+    var afterRemoval = await LauncherTargets.ClassifyAsync(checkedFolder);
+    Check(whilePresent == LauncherTargetKind.Folder && afterRemoval == LauncherTargetKind.Invalid,
+          "Shared target checks look again once the previous check has finished");
     Check(Kind(@"C:\Tools\app.exe") == LauncherTargetKind.File && Kind(@"D:\Projects") == LauncherTargetKind.Folder &&
           Kind("https://example.com/") == LauncherTargetKind.WebPage && Kind(@"C:\Missing\gone.exe") == LauncherTargetKind.Invalid,
           "Launcher items open existing files, folders and web pages");

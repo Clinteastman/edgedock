@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace EdgeDock;
 
 internal enum LauncherTargetKind { Invalid, WebPage, File, Folder }
@@ -30,6 +32,27 @@ internal static class LauncherTargets
     }
 
     public static LauncherTargetKind Classify(string? target) => Classify(target, File.Exists, Directory.Exists);
+
+    // One check per target at a time, shared by the tiles and Settings. A check stuck on an
+    // offline drive cannot be interrupted, so later requests join it instead of starting
+    // another; callers stop waiting with WaitAsync and are released straight away.
+    private static readonly ConcurrentDictionary<string, Task<LauncherTargetKind>> Checks = new(StringComparer.OrdinalIgnoreCase);
+
+    public static Task<LauncherTargetKind> ClassifyAsync(string target)
+    {
+        var key = target.Trim();
+        var check = Checks.GetOrAdd(key, path => Task.Run(() => Classify(path)));
+        if (check.IsCompleted)
+        {
+            // An old answer whose clean-up has not run yet: look again rather than reuse it.
+            Checks.TryRemove(new KeyValuePair<string, Task<LauncherTargetKind>>(key, check));
+            check = Checks.GetOrAdd(key, path => Task.Run(() => Classify(path)));
+        }
+        // Forget a finished check so the next request looks again (drives come and go). Done
+        // after the add, so a check that finished instantly is not left cached.
+        check.ContinueWith(_ => Checks.TryRemove(new KeyValuePair<string, Task<LauncherTargetKind>>(key, check)), TaskScheduler.Default);
+        return check;
+    }
 
     /// <summary>
     /// A readable default name: the web site's host, a folder's full name (dots included, as in

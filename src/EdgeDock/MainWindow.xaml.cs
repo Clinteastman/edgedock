@@ -57,6 +57,10 @@ public sealed partial class MainWindow : Window
     // when it changes is stale (cancelled, or overtaken by a newer save) and is dropped.
     private int _settingsSaveVersion;
     private bool _checkingSave;
+    // Cancels waiting on a save's target checks when the save is abandoned.
+    private CancellationTokenSource? _saveCancellation;
+    // Writing a checked save to disk: it is committed, so Cancel waits for it to finish.
+    private bool _persistingSave;
     private WeatherLocation? _weatherLocation;
     private bool _fahrenheit;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
@@ -397,6 +401,7 @@ public sealed partial class MainWindow : Window
         CloseControlsDrawer(restoreFocus: false);
         if (SettingsPanel.Visibility == Visibility.Visible)
         {
+            if (_persistingSave) return;
             AbandonSettingsSave();
             SettingsPanel.Visibility = Visibility.Collapsed;
             return;
@@ -409,6 +414,8 @@ public sealed partial class MainWindow : Window
 
     private void CancelSettings_Click(object sender, RoutedEventArgs args)
     {
+        // A save already being written is committed and closes Settings itself in a moment.
+        if (_persistingSave) return;
         AbandonSettingsSave();
         SettingsPanel.Visibility = Visibility.Collapsed;
         UrlErrorText.Visibility = Visibility.Collapsed;
@@ -423,6 +430,7 @@ public sealed partial class MainWindow : Window
     private void AbandonSettingsSave()
     {
         _settingsSaveVersion++;
+        _saveCancellation?.Cancel();
         UnlockSettingsEditors();
     }
 
@@ -450,20 +458,29 @@ public sealed partial class MainWindow : Window
         _checkingSave = true;
         LauncherEditor.IsEnabled = false;
         WebCardEditor.IsEnabled = false;
-        (bool Valid, IReadOnlyList<LauncherItem> Items, string? Error) validation;
-        try { validation = await LauncherEditor.TryGetItemsAsync(); }
+        _saveCancellation?.Dispose();
+        _saveCancellation = new CancellationTokenSource();
+        // The drafts stay locked until the save is written, not just checked.
+        try { await SaveCheckedAsync(cards, saveVersion, _saveCancellation.Token); }
+        catch (OperationCanceledException) { } // Abandoned while checking targets.
         finally
         {
+            _persistingSave = false;
             // An abandoned check was unlocked when it was abandoned; it must not unlock a
             // newer save's check.
             if (saveVersion == _settingsSaveVersion) UnlockSettingsEditors();
         }
-        var (launchersValid, launchers, launcherError) = validation;
+    }
+
+    private async Task SaveCheckedAsync(IReadOnlyList<WebCardSettings> cards, int saveVersion, CancellationToken cancellation)
+    {
+        var (launchersValid, launchers, launcherError) = await LauncherEditor.TryGetItemsAsync(cancellation);
         if (saveVersion != _settingsSaveVersion) return;
         if (!launchersValid)
         {
             UrlErrorText.Text = launcherError;
             UrlErrorText.Visibility = Visibility.Visible;
+            UnlockSettingsEditors();
             LauncherEditor.FocusInvalidRow();
             return;
         }
@@ -489,6 +506,8 @@ public sealed partial class MainWindow : Window
             _configuredWebSplitRatio, _displayPreference, _openFullScreen, Launchers: launchers,
             Weather: WeatherPlaceSelector.SelectedItem is ComboBoxItem { Tag: WeatherLocation place } ? place : null,
             Fahrenheit: FahrenheitToggle.IsOn));
+        // From here the save is committed: Cancel and closing Settings wait for it.
+        _persistingSave = true;
         if (!await PersistAsync(settings)) return;
         _material = settings.Material;
         _backdropTransparency = settings.BackdropTransparency;
@@ -1028,7 +1047,7 @@ public sealed partial class MainWindow : Window
 
     private void EnterWidgetView()
     {
-        if (_isWidgetView) return;
+        if (_isWidgetView || _persistingSave) return;
         AbandonSettingsSave();
         SettingsPanel.Visibility = Visibility.Collapsed;
         WidgetHost.Children.Clear();

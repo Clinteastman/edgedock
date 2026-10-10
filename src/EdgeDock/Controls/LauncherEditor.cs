@@ -42,13 +42,14 @@ internal sealed class LauncherEditor : UserControl
     /// Validates every row. Existence checks can wait on slow or disconnected drives, so they
     /// run on the thread pool; the Settings panel stays responsive meanwhile.
     /// </summary>
-    internal async Task<(bool Valid, IReadOnlyList<LauncherItem> Items, string? Error)> TryGetItemsAsync()
+    /// <remarks>Throws <see cref="OperationCanceledException"/> when <paramref name="cancellation"/> fires.</remarks>
+    internal async Task<(bool Valid, IReadOnlyList<LauncherItem> Items, string? Error)> TryGetItemsAsync(CancellationToken cancellation)
     {
         var rows = _editors
             .Select(editor => (Editor: editor, Name: editor.Name.Text.Trim(), Target: editor.Target.Text.Trim().Trim('"')))
             .Where(row => row.Name.Length > 0 || row.Target.Length > 0)
             .ToArray();
-        var kinds = await Task.Run(() => rows.Select(row => LauncherTargets.Classify(row.Target)).ToArray());
+        var kinds = await Task.WhenAll(rows.Select(row => LauncherTargets.ClassifyAsync(row.Target))).WaitAsync(cancellation);
         var result = new List<LauncherItem>();
         for (var index = 0; index < rows.Length; index++)
         {
