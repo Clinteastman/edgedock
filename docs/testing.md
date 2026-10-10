@@ -11,6 +11,11 @@
   automatically.
 - Captured EdgeDock window showed "Now playing · Silentplayer" with the chooser
   arrow. Opening the menu needs real input and was not tested.
+- After review: a user's choice is applied with a generation number, so a
+  slower background re-selection can no longer undo it; a failed refresh keeps
+  the app count so the picker stays usable; long app names are capped to the
+  panel width so they trim. Both harness scenarios repeated with the same
+  results.
 
 ## Web card recovery (9 October 2026)
 

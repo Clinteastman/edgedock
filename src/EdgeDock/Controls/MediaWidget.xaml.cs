@@ -20,7 +20,15 @@ public sealed partial class MediaWidget : UserControl
         InitializeComponent();
         Loaded += MediaWidget_Loaded;
         Unloaded += MediaWidget_Unloaded;
+        SizeChanged += (_, _) => LimitSourceWidth();
     }
+
+    /// <summary>
+    /// A horizontal stack gives text unlimited width, so long app names would never trim. Cap
+    /// the label to the panel, leaving room for the arrow and the controls handle that
+    /// overlaps this corner of the rightmost panel.
+    /// </summary>
+    private void LimitSourceWidth() => SourceText.MaxWidth = Math.Max(80, ActualWidth - 40 - 24 - 64);
 
     internal bool ShowArtwork
     {

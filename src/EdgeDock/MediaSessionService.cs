@@ -28,6 +28,8 @@ internal sealed class MediaSessionService : IDisposable
     private CancellationTokenSource? _artworkCancellation;
     // The app the user chose to control; null follows Windows' current media session.
     private string? _pinnedSourceId;
+    // Bumped by every user choice, so a slower background re-selection cannot undo it.
+    private int _selectionGeneration;
     private readonly Dictionary<string, string> _sourceNames = new(StringComparer.OrdinalIgnoreCase);
     private MediaSnapshot _currentSnapshot = new(
         "Nothing playing",
@@ -68,7 +70,7 @@ internal sealed class MediaSessionService : IDisposable
                 _manager.SessionsChanged += Manager_SessionsChanged;
             }
 
-            AttachSession(SelectSession(manager));
+            SelectAndAttach(manager);
             await RefreshAsync();
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or InvalidOperationException or System.Runtime.InteropServices.COMException)
@@ -124,26 +126,39 @@ internal sealed class MediaSessionService : IDisposable
         {
             if (_disposed) return;
             _pinnedSourceId = sourceId;
+            _selectionGeneration++;
             manager = _manager;
         }
         if (manager is null) return;
-        AttachSession(SelectSession(manager));
+        SelectAndAttach(manager);
         await RefreshAsync();
     }
 
-    private GlobalSystemMediaTransportControlsSession? SelectSession(GlobalSystemMediaTransportControlsSessionManager manager)
+    /// <summary>
+    /// Attaches the pinned app's session, or Windows' current one. The lookups happen outside
+    /// the lock; the result is applied only if no newer choice was made meanwhile.
+    /// </summary>
+    private void SelectAndAttach(GlobalSystemMediaTransportControlsSessionManager manager)
     {
+        int generation;
         string? pinned;
-        lock (_gate) pinned = _pinnedSourceId;
-        if (pinned is not null)
+        lock (_gate)
         {
-            var match = manager.GetSessions().FirstOrDefault(session =>
-                string.Equals(session.SourceAppUserModelId, pinned, StringComparison.OrdinalIgnoreCase));
-            if (match is not null) return match;
-            // The chosen app's session ended; go back to following Windows.
-            lock (_gate) _pinnedSourceId = null;
+            generation = _selectionGeneration;
+            pinned = _pinnedSourceId;
         }
-        return manager.GetCurrentSession();
+        GlobalSystemMediaTransportControlsSession? match = null;
+        if (pinned is not null)
+            match = manager.GetSessions().FirstOrDefault(session =>
+                string.Equals(session.SourceAppUserModelId, pinned, StringComparison.OrdinalIgnoreCase));
+        var target = match ?? manager.GetCurrentSession();
+        lock (_gate)
+        {
+            if (generation != _selectionGeneration) return; // A newer choice is being applied.
+            // The chosen app's session ended; go back to following Windows.
+            if (pinned is not null && match is null) _pinnedSourceId = null;
+            AttachSession(target);
+        }
     }
 
     private static bool IsPlaying(GlobalSystemMediaTransportControlsSession session)
@@ -242,13 +257,13 @@ internal sealed class MediaSessionService : IDisposable
     private void Manager_CurrentSessionChanged(GlobalSystemMediaTransportControlsSessionManager sender, CurrentSessionChangedEventArgs args)
     {
         // A pinned app stays in control while its session exists.
-        AttachSession(SelectSession(sender));
+        SelectAndAttach(sender);
         _ = RefreshAsync();
     }
 
     private void Manager_SessionsChanged(GlobalSystemMediaTransportControlsSessionManager sender, SessionsChangedEventArgs args)
     {
-        AttachSession(SelectSession(sender));
+        SelectAndAttach(sender);
         _ = RefreshAsync();
     }
 
@@ -342,8 +357,10 @@ internal sealed class MediaSessionService : IDisposable
         }
         catch (Exception exception) when (exception is InvalidOperationException or System.Runtime.InteropServices.COMException)
         {
+            // Keep the count so the picker stays available to switch to a healthy app.
             Raise(new("Nothing playing", "The previous media session ended", false, false, false, false, false,
-                statusMessage ?? "Waiting for a media app.", Version: refreshGeneration), generation, session, refreshGeneration);
+                statusMessage ?? "Waiting for a media app.", Version: refreshGeneration, SourceCount: sourceCount),
+                generation, session, refreshGeneration);
         }
     }
 
