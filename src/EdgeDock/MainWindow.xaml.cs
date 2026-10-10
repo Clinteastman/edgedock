@@ -423,6 +423,8 @@ public sealed partial class MainWindow : Window
 
     private async void SaveSettings_Click(object sender, RoutedEventArgs args)
     {
+        // A second tap while a save runs is ignored, and must not replace the tracked save.
+        if (_checkingSave || _persistingSave) return;
         var save = SaveAndNavigateAsync();
         _settingsSave = save;
         await save;
