@@ -1,5 +1,25 @@
 # Testing
 
+## Audio widget (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 30 console checks pass, including app
+  names (never resource references such as `@%SystemRoot%...`) and row order.
+- Harness against the real system, read-only: listed 13 active outputs with the
+  default (Voicemeeter Input) marked, the G6 microphone and its mute state, and
+  five app sessions with icons. A test process looping a silent sound was set
+  to 37% and muted, read back as such, then restored. Master volume and the
+  microphone were confirmed unchanged.
+- Captured EdgeDock window: output picker, master row, microphone button and
+  per-app rows with icons rendered at 380px.
+- After review: a partial output switch is rolled back role by role; an output
+  switch error stays visible until the next user action or a successful switch;
+  sliders and mute buttons are 52px touch targets; app icons load off the UI
+  thread (shared ShellIcons); sampling uses the shared visibility check. Harness
+  and capture repeated with the same results.
+- Deliberately not tested on this PC: switching the default output device and
+  muting the real microphone (both would disrupt the user's audio). The output
+  switch uses the same call as the Sound control panel.
+
 ## Web card recovery (9 October 2026)
 
 - Debug x64 build: zero warnings/errors. 28 console checks pass, including

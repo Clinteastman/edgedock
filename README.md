@@ -28,7 +28,10 @@ contribute. This is not a signed installer or a finished consumer release.
 - Keeps the app menu available while in full screen.
 - Supports one to three native widget panels, with an optional web area.
 - Lets each panel switch between its chosen widgets independently.
-- Includes a local library of media, PC volume/mute and Windows Settings shortcuts.
+- Includes a local library of media, PC audio and Windows Settings shortcuts.
+- **PC audio** switches the Windows output device, sets master volume and mute,
+  mutes the microphone with an unmistakable red state, and gives every app
+  making sound its own volume slider and mute, with its icon.
 - Offers **Widget view**: all installed widgets in one horizontally scrolling row,
   with a button to return to your dashboard layout.
 
