@@ -255,6 +255,14 @@ try
     Check(arranged.Select(session => session.Name).SequenceEqual(["Chrome", "Spotify", "Zoom", "System sounds"]) &&
           arranged[0].IsActive,
           "App audio rows: one per app, playing first, System sounds last");
+    var partlyMuted = AudioNaming.Arrange([
+        Session(20, "Chrome", true) with { IsMuted = true },
+        Session(20, "Chrome", false)]);
+    var allMuted = AudioNaming.Arrange([
+        Session(20, "Chrome", true) with { IsMuted = true },
+        Session(20, "Chrome", false) with { IsMuted = true }]);
+    Check(!partlyMuted[0].IsMuted && allMuted[0].IsMuted,
+          "An app reads as muted only when all its sessions are muted");
     // Idle +50, kernel (including idle) +200, user +100: 250 of 300 ticks busy.
     Check(StatsMath.CpuPercent(100, 200, 100, 150, 400, 200) is { } cpu && Math.Abs(cpu - 250.0 / 3) < 0.001,
           "Processor use counts kernel and user time minus idle");

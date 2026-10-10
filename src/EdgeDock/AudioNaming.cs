@@ -36,13 +36,18 @@ internal static class AudioNaming
     public static string KeyFor(uint processId, bool isSystemSounds) => isSystemSounds ? "system" : $"pid:{processId}";
 
     /// <summary>
-    /// One row per key, represented by its playing session if any. Playing apps first, then
-    /// the rest alphabetically, with System sounds last.
+    /// One row per key, represented by its playing session if any. The row reads as muted only
+    /// when every session of the app is muted, so the mute button acts on what is audible.
+    /// Playing apps first, then the rest alphabetically, with System sounds last.
     /// </summary>
     public static IReadOnlyList<AudioSessionInfo> Arrange(IEnumerable<AudioSessionInfo> sessions) =>
         sessions
             .GroupBy(session => session.Key)
-            .Select(group => group.OrderByDescending(session => session.IsActive).First())
+            .Select(group => group.OrderByDescending(session => session.IsActive).First() with
+            {
+                IsMuted = group.All(session => session.IsMuted),
+                IsActive = group.Any(session => session.IsActive)
+            })
             .OrderBy(session => session.IsSystemSounds)
             .ThenByDescending(session => session.IsActive)
             .ThenBy(session => session.Name, StringComparer.CurrentCultureIgnoreCase)

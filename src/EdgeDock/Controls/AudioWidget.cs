@@ -193,11 +193,18 @@ internal sealed class AudioWidget : UserControl
         _outputs.SelectedItem = _outputs.Items.Cast<ComboBoxItem>()
             .FirstOrDefault(item => devices.Any(device => device.IsDefault && device.Id == (string?)item.Tag));
         // The user may follow the advice and switch in Sound settings; drop the error then.
+        // An empty list means enumeration failed, not that the default changed.
         var defaultId = devices.FirstOrDefault(device => device.IsDefault)?.Id;
-        if (_switchError is not null && defaultId != _defaultWhenSwitchFailed)
+        if (_switchError is not null && defaultId is not null)
         {
-            _switchError = null;
-            ShowStatus(null);
+            // If the default could not be read when the switch failed, the first good reading
+            // becomes the baseline; only a later, different default clears the error.
+            if (_defaultWhenSwitchFailed is null) _defaultWhenSwitchFailed = defaultId;
+            else if (defaultId != _defaultWhenSwitchFailed)
+            {
+                _switchError = null;
+                ShowStatus(null);
+            }
         }
         _outputs.IsEnabled = devices.Count > 1;
         _updating = false;
