@@ -154,7 +154,7 @@
      </StackPanel>
     </ScrollViewer>
     <StackPanel Grid.Row="2" Spacing="8">
-     <TextBlock x:Name="UrlErrorText" Foreground="#FFFFC2C7" TextWrapping="Wrap" Visibility="Collapsed"/>
+     <TextBlock x:Name="UrlErrorText" Foreground="#FFFFC2C7" TextWrapping="Wrap" Visibility="Collapsed" AutomationProperties.LiveSetting="Assertive"/>
      <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right"><Button Content="Cancel" Click="CancelSettings_Click"/><Button Content="Save layout" Click="SaveSettings_Click" Background="#FF6046B8"/></StackPanel>
     </StackPanel>
    </Grid>

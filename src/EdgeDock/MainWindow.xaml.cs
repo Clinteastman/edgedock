@@ -484,7 +484,12 @@ public sealed partial class MainWindow : Window
             UrlErrorText.Text = launcherError;
             UrlErrorText.Visibility = Visibility.Visible;
             UnlockSettingsEditors();
-            LauncherEditor.FocusInvalidRow();
+            // Announced now, and given to the field as its help text so a screen reader also
+            // says why when the field takes focus.
+            (Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer.FromElement(UrlErrorText) ??
+             Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer.CreatePeerForElement(UrlErrorText))
+                ?.RaiseAutomationEvent(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.LiveRegionChanged);
+            LauncherEditor.FocusInvalidRow(launcherError);
             return;
         }
         // Saving with the toggle on also repairs an entry left pointing at a moved or older copy.

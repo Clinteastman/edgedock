@@ -69,10 +69,19 @@ internal sealed class LauncherEditor : UserControl
     }
 
     /// <summary>Moves focus to, and scrolls to, the row the last check rejected.</summary>
-    internal void FocusInvalidRow()
+    internal void FocusInvalidRow(string? reason)
     {
         if (_invalidRow is not { } row || !_editors.Contains(row)) return;
         _invalidRow = null;
+        AutomationProperties.SetHelpText(row.Target, reason ?? string.Empty);
+        // The reason no longer applies once the target is edited.
+        TextChangedEventHandler? clear = null;
+        clear = (_, _) =>
+        {
+            AutomationProperties.SetHelpText(row.Target, string.Empty);
+            row.Target.TextChanged -= clear;
+        };
+        row.Target.TextChanged += clear;
         row.Target.Focus(FocusState.Programmatic);
         row.Target.StartBringIntoView();
     }

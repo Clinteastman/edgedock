@@ -194,8 +194,14 @@ internal sealed class LauncherWidget : UserControl
     {
         _status.Visibility = Visibility.Collapsed;
         // Re-check at the moment of use (a drive may have gone, or the file moved), off the
-        // UI thread because the check can wait on a slow drive.
-        if (await LauncherTargets.ClassifyAsync(item.Target) == LauncherTargetKind.Invalid)
+        // UI thread because the check can wait on a slow drive. Leaving the launcher stops the
+        // wait, so a slow drive answering later never opens anything behind the user's back.
+        var cancellation = _loading?.Token ?? CancellationToken.None;
+        LauncherTargetKind kind;
+        try { kind = await LauncherTargets.ClassifyAsync(item.Target).WaitAsync(cancellation); }
+        catch (OperationCanceledException) { return; }
+        if (cancellation.IsCancellationRequested) return;
+        if (kind == LauncherTargetKind.Invalid)
         {
             ShowStatus($"{item.Name} could not be found. Check it in Settings, under Launcher.");
             return;
