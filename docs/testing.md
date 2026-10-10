@@ -20,6 +20,9 @@
   page behind the setup screen (code only; a UI deletion run was abandoned
   because test-window focus kept being taken by notifications). A failing
   card was confirmed to keep retrying (503 every 5, 10, 20 and 40 seconds).
+- Second review (code only): re-showing an unchanged card that is retrying
+  keeps its retry and status; reloads skip panels without a card, so waking
+  or Reload never turns a setup panel into "Link blocked".
 - Not yet tested: reload after a real sleep and wake, and a real network outage.
 
 ## Web cards (9 September 2026)

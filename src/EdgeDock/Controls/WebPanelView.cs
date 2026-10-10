@@ -115,10 +115,13 @@ internal sealed class WebPanelView : Grid, IDisposable
     internal async Task ShowCardAsync(WebCardSettings card, CoreWebView2Environment environment)
     {
         if (_disposed) return;
-        StopRetry();
+        var uri = new Uri(card.Url);
+        // Rebuilding the layout re-shows unchanged cards; keep an unreachable one retrying.
+        var sameCardRetrying = uri == _uri && _retryTimer?.IsRunning == true;
+        if (!sameCardRetrying) StopRetry();
         CardId = card.Id;
         AutomationProperties.SetName(_webView, card.Name);
-        _uri = new Uri(card.Url);
+        _uri = uri;
         _setup.Visibility = Visibility.Collapsed;
         ShowStatus("Opening " + card.Name, _uri.Host, loading: true, retry: false);
         try
@@ -126,6 +129,7 @@ internal sealed class WebPanelView : Grid, IDisposable
             await EnsureInitializedAsync(environment);
             if (_disposed) return;
             if (_webView.Source != _uri) _webView.Source = _uri;
+            else if (sameCardRetrying) ScheduleRetryStatus();
             else _status.Visibility = Visibility.Collapsed;
         }
         catch (ObjectDisposedException) when (_disposed) { }
@@ -159,6 +163,8 @@ internal sealed class WebPanelView : Grid, IDisposable
 
     internal void Reload()
     {
+        // A panel without a card shows setup over a blank page; there is nothing to reload.
+        if (_uri is null) return;
         StopRetry();
         if (_webView.CoreWebView2 is not null && !_browserFailed) _webView.Reload();
     }
@@ -254,9 +260,11 @@ internal sealed class WebPanelView : Grid, IDisposable
         }
         _retryTimer.Interval = delay;
         _retryTimer.Start();
-        ShowStatus("Waiting for connection",
-            $"{_uri?.Host ?? "The page"} cannot be reached yet. Trying again in {delay.TotalSeconds:0} seconds.", true, true);
+        ScheduleRetryStatus();
     }
+
+    private void ScheduleRetryStatus() => ShowStatus("Waiting for connection",
+        $"{_uri?.Host ?? "The page"} cannot be reached yet. Trying again in {_retryTimer?.Interval.TotalSeconds ?? 5:0} seconds.", true, true);
 
     private void StopRetry()
     {
