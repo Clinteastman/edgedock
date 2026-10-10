@@ -11,6 +11,11 @@
   microphone were confirmed unchanged.
 - Captured EdgeDock window: output picker, master row, microphone button and
   per-app rows with icons rendered at 380px.
+- After review: a partial output switch is rolled back role by role; an output
+  switch error stays visible until the next user action or a successful switch;
+  sliders and mute buttons are 52px touch targets; app icons load off the UI
+  thread (shared ShellIcons); sampling uses the shared visibility check. Harness
+  and capture repeated with the same results.
 - Deliberately not tested on this PC: switching the default output device and
   muting the real microphone (both would disrupt the user's audio). The output
   switch uses the same call as the Sound control panel.

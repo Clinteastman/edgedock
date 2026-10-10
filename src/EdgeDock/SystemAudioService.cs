@@ -141,18 +141,36 @@ internal sealed class SystemAudioService : IDisposable
     {
         if (_disposed || string.IsNullOrWhiteSpace(deviceId)) return false;
         IPolicyConfig? policy = null;
+        IMMDeviceEnumerator? enumerator = null;
         try
         {
+            enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
+            ERole[] roles = [ERole.Console, ERole.Multimedia, ERole.Communications];
+            // The three roles change one at a time, so remember them to undo a partial switch.
+            var previous = roles.ToDictionary(role => role, role => DefaultId(enumerator, EDataFlow.Render, role));
             policy = (IPolicyConfig)new PolicyConfigComObject();
-            foreach (var role in new[] { ERole.Console, ERole.Multimedia, ERole.Communications })
-                if (policy.SetDefaultEndpoint(deviceId, role) != 0) return false;
+            var switched = new List<ERole>();
+            foreach (var role in roles)
+            {
+                if (policy.SetDefaultEndpoint(deviceId, role) != 0)
+                {
+                    foreach (var done in switched)
+                        if (previous[done] is { } before) policy.SetDefaultEndpoint(before, done);
+                    return false;
+                }
+                switched.Add(role);
+            }
             return true;
         }
         catch (Exception exception) when (exception is COMException or InvalidCastException or PlatformNotSupportedException)
         {
             return false;
         }
-        finally { ReleaseComObject(policy); }
+        finally
+        {
+            ReleaseComObject(policy);
+            ReleaseComObject(enumerator);
+        }
     }
 
     // ---------- Microphone ----------

@@ -44,6 +44,8 @@ internal sealed class AudioWidget : UserControl
     private bool _masterMuted;
     private bool _microphoneMuted;
     private int _tick;
+    // Kept until the user acts again or a switch succeeds; refreshes must not wipe it.
+    private string? _switchError;
 
     public AudioWidget()
     {
@@ -110,7 +112,7 @@ internal sealed class AudioWidget : UserControl
 
     private static Slider NewSlider(string name)
     {
-        var slider = new Slider { Minimum = 0, Maximum = 100, StepFrequency = 1, SmallChange = 1, LargeChange = 5, MinHeight = 44, VerticalAlignment = VerticalAlignment.Center };
+        var slider = new Slider { Minimum = 0, Maximum = 100, StepFrequency = 1, SmallChange = 1, LargeChange = 5, MinHeight = 52, VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetName(slider, name);
         return slider;
     }
@@ -145,13 +147,7 @@ internal sealed class AudioWidget : UserControl
         _audio = null;
     }
 
-    private bool IsOnScreen()
-    {
-        if (XamlRoot is not { IsHostVisible: true }) return false;
-        for (DependencyObject? element = this; element is not null; element = VisualTreeHelper.GetParent(element))
-            if (element is UIElement { Visibility: Visibility.Collapsed }) return false;
-        return true;
-    }
+    private bool IsOnScreen() => WidgetVisibility.IsOnScreen(this);
 
     private void Refresh()
     {
@@ -181,7 +177,7 @@ internal sealed class AudioWidget : UserControl
         AutomationProperties.SetName(_mute, label);
         ToolTipService.SetToolTip(_mute, label);
         _updating = false;
-        ShowStatus(snapshot.StatusMessage);
+        ShowStatus(_switchError ?? snapshot.StatusMessage);
     }
 
     private void ShowOutputs(IReadOnlyList<AudioDevice> devices)
@@ -204,11 +200,12 @@ internal sealed class AudioWidget : UserControl
         if (_updating || _audio is null || _outputs.SelectedItem is not ComboBoxItem { Tag: string id }) return;
         if (!_audio.SetDefaultOutput(id))
         {
-            ShowStatus("Windows did not switch the output. Use Sound settings to choose it instead.");
+            _switchError = "Windows did not switch the output. Use Sound settings to choose it instead.";
+            ShowStatus(_switchError);
             ShowOutputs(_audio.GetOutputs());
             return;
         }
-        ShowStatus(null);
+        _switchError = null;
         ShowMaster(_audio.GetSnapshot());
     }
 
@@ -251,16 +248,21 @@ internal sealed class AudioWidget : UserControl
                 if (position >= 0) _apps.Children.RemoveAt(position);
                 _apps.Children.Insert(Math.Min(index, _apps.Children.Count), row.Root);
             }
-            row.Show(session, IconFor(session));
+            row.Show(session);
+            if (session.ExecutablePath is { } path) _ = LoadIconAsync(row, path);
         }
         _noApps.Visibility = sessions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private ImageSource? IconFor(AudioSessionInfo session)
+    /// <summary>Icon extraction can be slow, so it happens off the UI thread (see ShellIcons).</summary>
+    private async Task LoadIconAsync(AppRow row, string path)
     {
-        if (session.ExecutablePath is not { } path) return null;
-        if (!_icons.TryGetValue(path, out var icon)) _icons[path] = icon = ShellIcons.Load(path, 32);
-        return icon;
+        if (!_icons.TryGetValue(path, out var icon))
+        {
+            _icons[path] = null; // Load each path once, even while the first load is running.
+            _icons[path] = icon = await ShellIcons.LoadAsync(path, 32);
+        }
+        if (icon is not null) row.SetIcon(icon);
     }
 
     private void ShowStatus(string? message)
@@ -279,7 +281,7 @@ internal sealed class AudioWidget : UserControl
         private readonly TextBlock _name = new() { FontSize = 15, TextTrimming = TextTrimming.CharacterEllipsis };
         private readonly TextBlock _level = new() { FontSize = 14, Foreground = MutedText };
         private readonly Slider _slider = NewSlider("App volume");
-        private readonly Button _mute = new() { MinWidth = 44, MinHeight = 44, Padding = new Thickness(0) };
+        private readonly Button _mute = new() { MinWidth = 52, MinHeight = 52, Padding = new Thickness(0) };
         private readonly FontIcon _muteIcon = new() { Glyph = "", FontSize = 16 };
         private bool _dragging;
         private bool _muted;
@@ -328,12 +330,21 @@ internal sealed class AudioWidget : UserControl
             };
         }
 
-        internal void Show(AudioSessionInfo session, ImageSource? icon)
+        internal void SetIcon(ImageSource icon)
+        {
+            _icon.Source = icon;
+            _icon.Visibility = Visibility.Visible;
+            _fallbackIcon.Visibility = Visibility.Collapsed;
+        }
+
+        internal void Show(AudioSessionInfo session)
         {
             _name.Text = session.Name;
-            _icon.Source = icon;
-            _icon.Visibility = icon is null ? Visibility.Collapsed : Visibility.Visible;
-            _fallbackIcon.Visibility = icon is null ? Visibility.Visible : Visibility.Collapsed;
+            if (_icon.Source is null)
+            {
+                _icon.Visibility = Visibility.Collapsed;
+                _fallbackIcon.Visibility = Visibility.Visible;
+            }
             _name.Opacity = session.IsActive ? 1 : 0.7;
             AutomationProperties.SetName(_slider, $"{session.Name} volume");
             if (!_dragging)
