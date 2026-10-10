@@ -183,6 +183,19 @@ try
     Check(partial.WidgetSlots.Any(slot => slot.EnabledWidgetIds.Contains("audio")) &&
           partial.WidgetSlots.All(slot => slot.EnabledWidgetIds.All(id => !string.IsNullOrWhiteSpace(id))),
           "Partially malformed widget lists preserve usable entries without crashing");
+    Check(WebRecovery.RetryDelay(0) == TimeSpan.FromSeconds(5) && WebRecovery.RetryDelay(1) == TimeSpan.FromSeconds(10) &&
+          WebRecovery.RetryDelay(3) == TimeSpan.FromSeconds(40) && WebRecovery.RetryDelay(4) == TimeSpan.FromSeconds(60) &&
+          WebRecovery.RetryDelay(50) == TimeSpan.FromSeconds(60) && WebRecovery.RetryDelay(-1) == TimeSpan.FromSeconds(5),
+          "Connection retries back off from 5 seconds to a 60-second ceiling");
+    var asleep = new DateTimeOffset(2026, 10, 9, 1, 0, 0, TimeSpan.Zero);
+    Check(WebRecovery.ShouldReloadAfterResume(asleep, asleep.AddMinutes(30)) &&
+          !WebRecovery.ShouldReloadAfterResume(asleep, asleep.AddSeconds(20)) &&
+          WebRecovery.ShouldReloadAfterResume(null, asleep),
+          "Web cards reload after a long sleep or a missed sleep start, not a brief one");
+    var budget = new RecoveryBudget(3, TimeSpan.FromMinutes(10));
+    Check(budget.TryConsume(asleep) && budget.TryConsume(asleep.AddMinutes(1)) && budget.TryConsume(asleep.AddMinutes(2)) &&
+          !budget.TryConsume(asleep.AddMinutes(3)) && budget.TryConsume(asleep.AddMinutes(10)),
+          "Automatic crash recovery stops after three tries in ten minutes, then allows more later");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally

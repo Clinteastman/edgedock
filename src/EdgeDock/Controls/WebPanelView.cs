@@ -1,3 +1,4 @@
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -74,7 +75,12 @@ internal sealed class WebPanelView : Grid, IDisposable
     private readonly Button _retry = new() { Content = "Try again", HorizontalAlignment = HorizontalAlignment.Center, Visibility = Visibility.Collapsed };
     private Uri? _uri;
     private readonly Func<Task>? _retryInitialization;
+    private readonly RecoveryBudget _pageRecoveries = new(3, TimeSpan.FromMinutes(10));
+    private DispatcherQueueTimer? _retryTimer;
+    private int _retryAttempt;
     private bool _initialized;
+    private bool _browserFailed;
+    private bool _blanking;
     private bool _disposed;
 
     internal WebPanelView(Func<Task>? retryInitialization = null)
@@ -88,7 +94,8 @@ internal sealed class WebPanelView : Grid, IDisposable
         Children.Add(_status);
         _retry.Click += async (_, _) =>
         {
-            if (_webView.CoreWebView2 is not null) Reload();
+            if (_browserFailed) BrowserProcessFailed?.Invoke(this, true);
+            else if (_webView.CoreWebView2 is not null) Reload();
             else if (_retryInitialization is not null) await _retryInitialization();
         };
         _webView.NavigationStarting += NavigationStarting;
@@ -98,12 +105,23 @@ internal sealed class WebPanelView : Grid, IDisposable
     internal string? CardId { get; private set; }
     internal WebView2 WebView => _webView;
 
+    /// <summary>
+    /// The shared browser process ended. Every card using it is dead and must be recreated
+    /// with a new environment, which only the window can do. The argument is true when the
+    /// user pressed Try again, which is never limited.
+    /// </summary>
+    internal event EventHandler<bool>? BrowserProcessFailed;
+
     internal async Task ShowCardAsync(WebCardSettings card, CoreWebView2Environment environment)
     {
         if (_disposed) return;
+        var uri = new Uri(card.Url);
+        // Rebuilding the layout re-shows unchanged cards; keep an unreachable one retrying.
+        var sameCardRetrying = uri == _uri && _retryTimer?.IsRunning == true;
+        if (!sameCardRetrying) StopRetry();
         CardId = card.Id;
         AutomationProperties.SetName(_webView, card.Name);
-        _uri = new Uri(card.Url);
+        _uri = uri;
         _setup.Visibility = Visibility.Collapsed;
         ShowStatus("Opening " + card.Name, _uri.Host, loading: true, retry: false);
         try
@@ -111,6 +129,7 @@ internal sealed class WebPanelView : Grid, IDisposable
             await EnsureInitializedAsync(environment);
             if (_disposed) return;
             if (_webView.Source != _uri) _webView.Source = _uri;
+            else if (sameCardRetrying) ScheduleRetryStatus();
             else _status.Visibility = Visibility.Collapsed;
         }
         catch (ObjectDisposedException) when (_disposed) { }
@@ -122,10 +141,18 @@ internal sealed class WebPanelView : Grid, IDisposable
 
     internal void ShowSetup()
     {
+        StopRetry();
         CardId = null;
         _uri = null;
         _status.Visibility = Visibility.Collapsed;
         _setup.Visibility = Visibility.Visible;
+        // Unload the removed card so it stops running behind the setup screen
+        // (for example a dashboard holding a live connection to its server).
+        if (_webView.CoreWebView2 is not null && !_browserFailed)
+        {
+            _blanking = true;
+            _webView.CoreWebView2.Navigate("about:blank");
+        }
     }
 
     internal void ShowUnavailable() => ShowStatus(
@@ -136,7 +163,10 @@ internal sealed class WebPanelView : Grid, IDisposable
 
     internal void Reload()
     {
-        if (_webView.CoreWebView2 is not null) _webView.Reload();
+        // A panel without a card shows setup over a blank page; there is nothing to reload.
+        if (_uri is null) return;
+        StopRetry();
+        if (_webView.CoreWebView2 is not null && !_browserFailed) _webView.Reload();
     }
 
     internal void SetInteractive(bool interactive)
@@ -166,6 +196,8 @@ internal sealed class WebPanelView : Grid, IDisposable
 
     private void NavigationStarting(WebView2 sender, CoreWebView2NavigationStartingEventArgs args)
     {
+        _retryTimer?.Stop();
+        if (_blanking && args.Uri == "about:blank") return;
         if (!SettingsStore.IsAllowedUrl(args.Uri, out _))
         {
             args.Cancel = true;
@@ -177,16 +209,107 @@ internal sealed class WebPanelView : Grid, IDisposable
 
     private void NavigationCompleted(WebView2 sender, CoreWebView2NavigationCompletedEventArgs args)
     {
+        if (_blanking)
+        {
+            _blanking = false;
+            return;
+        }
+        if (_uri is null) return;
         if (args.IsSuccess)
         {
+            _retryAttempt = 0;
             _status.Visibility = Visibility.Collapsed;
+            return;
+        }
+        if (args.WebErrorStatus == CoreWebView2WebErrorStatus.OperationCanceled) return;
+        if (!NeedsUserAction(args.WebErrorStatus))
+        {
+            // Network not back yet at sign-in or after waking, or the server restarting
+            // (refused connections and proxy errors report Unknown). Keep trying quietly
+            // instead of leaving an always-on dashboard on an error page.
+            ScheduleRetry();
             return;
         }
         ShowStatus("Web card did not load", $"WebView reported {args.WebErrorStatus}. Check the address and connection, then try again.", false, true);
     }
 
-    private void CoreProcessFailed(WebView2 sender, CoreWebView2ProcessFailedEventArgs args) =>
-        DispatcherQueue.TryEnqueue(() => ShowStatus("Web card process stopped", "Reload the page. Your saved address and sign-in have not been removed.", false, true));
+    /// <summary>Failures that retrying cannot fix: certificates, credentials and broken redirects.</summary>
+    private static bool NeedsUserAction(CoreWebView2WebErrorStatus status) => status is
+        CoreWebView2WebErrorStatus.CertificateCommonNameIsIncorrect or
+        CoreWebView2WebErrorStatus.CertificateExpired or
+        CoreWebView2WebErrorStatus.CertificateIsInvalid or
+        CoreWebView2WebErrorStatus.CertificateRevoked or
+        CoreWebView2WebErrorStatus.ClientCertificateContainsErrors or
+        CoreWebView2WebErrorStatus.ValidAuthenticationCredentialsRequired or
+        CoreWebView2WebErrorStatus.ValidProxyAuthenticationRequired or
+        CoreWebView2WebErrorStatus.RedirectFailed;
+
+    private void ScheduleRetry()
+    {
+        if (_disposed) return;
+        var delay = WebRecovery.RetryDelay(_retryAttempt++);
+        if (_retryTimer is null)
+        {
+            _retryTimer = DispatcherQueue.CreateTimer();
+            _retryTimer.IsRepeating = false;
+            _retryTimer.Tick += (_, _) =>
+            {
+                // A card removed while waiting must never be contacted again.
+                if (!_disposed && !_browserFailed && _uri is not null && _webView.CoreWebView2 is not null) _webView.Reload();
+            };
+        }
+        _retryTimer.Interval = delay;
+        _retryTimer.Start();
+        ScheduleRetryStatus();
+    }
+
+    private void ScheduleRetryStatus() => ShowStatus("Waiting for connection",
+        $"{_uri?.Host ?? "The page"} cannot be reached yet. Trying again in {_retryTimer?.Interval.TotalSeconds ?? 5:0} seconds.", true, true);
+
+    private void StopRetry()
+    {
+        _retryTimer?.Stop();
+        _retryAttempt = 0;
+    }
+
+    private void CoreProcessFailed(WebView2 sender, CoreWebView2ProcessFailedEventArgs args)
+    {
+        var kind = args.ProcessFailedKind;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_disposed) return;
+            switch (kind)
+            {
+                case CoreWebView2ProcessFailedKind.BrowserProcessExited:
+                    _browserFailed = true;
+                    StopRetry();
+                    ShowStatus("Restarting web cards", "The browser engine stopped. Your saved address and sign-in have not been removed.", true, true);
+                    BrowserProcessFailed?.Invoke(this, false);
+                    break;
+                case CoreWebView2ProcessFailedKind.RenderProcessExited or
+                     CoreWebView2ProcessFailedKind.RenderProcessUnresponsive or
+                     CoreWebView2ProcessFailedKind.FrameRenderProcessExited:
+                    if (_pageRecoveries.TryConsume(DateTimeOffset.Now))
+                    {
+                        ShowStatus("Reloading web card", "The page stopped responding, so EdgeDock is reloading it.", true, false);
+                        Reload();
+                    }
+                    else
+                    {
+                        ShowStatus("Web card process stopped", "This page keeps stopping. Reload it when ready; your saved address and sign-in have not been removed.", false, true);
+                    }
+                    break;
+                // GPU, utility and other helper processes are restarted by WebView2 itself.
+            }
+        });
+    }
+
+    /// <summary>Shows a status for a card the window could not recreate after a browser failure.</summary>
+    internal void ShowBrowserFailed() => ShowStatus(
+        "Web cards stopped",
+        "The browser engine keeps stopping. Try again when ready; your saved address and sign-in have not been removed.",
+        false,
+        true);
 
     private void ShowStatus(string title, string message, bool loading, bool retry)
     {
@@ -222,12 +345,15 @@ internal sealed class WebPanelView : Grid, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _retryTimer?.Stop();
         _webView.NavigationStarting -= NavigationStarting;
         _webView.NavigationCompleted -= NavigationCompleted;
         if (_webView.CoreWebView2 is not null)
         {
             _webView.CoreProcessFailed -= CoreProcessFailed;
-            _webView.Close();
+            // Closing a card whose browser process already ended can fail; it is being discarded anyway.
+            try { _webView.Close(); }
+            catch (Exception exception) when (exception is COMException or InvalidOperationException) { }
         }
     }
 }
