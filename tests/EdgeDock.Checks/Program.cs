@@ -377,7 +377,8 @@ try
           LayoutProfiles.NormalizeProcessName(@"C:\x.exe") is null && LayoutProfiles.NormalizeProcessName(" ") is null,
           "Program triggers accept a name only");
     Check(LayoutProfiles.NormalizeProcessName("notepad++.exe") == "notepad++" && LayoutProfiles.NormalizeProcessName("Some Game") == "Some Game" &&
-          LayoutProfiles.NormalizeProcessName("game -windowed") is null && LayoutProfiles.NormalizeProcessName("\"game\"") is null,
+          LayoutProfiles.NormalizeProcessName("game -windowed") is null &&
+          LayoutProfiles.NormalizeProcessName(new string('a', 100) + ".exe") == new string('a', 100) && LayoutProfiles.NormalizeProcessName("\"game\"") is null,
           "Program triggers accept any file name, but not options or quotes");
     var shown = LayoutProfiles.Capture(withProfiles);
     Check(LayoutProfiles.Matches(shown, shown) &&

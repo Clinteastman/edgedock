@@ -68,7 +68,8 @@ internal static class LayoutProfiles
         if (string.IsNullOrWhiteSpace(value)) return null;
         var name = value.Trim();
         if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name = name[..^4].TrimEnd();
-        return name.Length is > 0 and <= 64 &&
+        // 255 is the longest file name Windows allows.
+        return name.Length is > 0 and <= 255 &&
                name.IndexOfAny(InvalidNameCharacters) < 0 &&
                !name.Contains(" -", StringComparison.Ordinal) &&
                !name.EndsWith('.')

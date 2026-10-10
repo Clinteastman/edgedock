@@ -902,19 +902,25 @@ public sealed partial class MainWindow : Window
             ProfileNameBox.Focus(FocusState.Programmatic);
             return;
         }
-        // Saving under an existing name replaces that layout and keeps its program trigger.
-        var existing = _profiles.FirstOrDefault(profile => string.Equals(profile.Name, name, StringComparison.CurrentCultureIgnoreCase));
-        if (existing is null && _profiles.Count >= LayoutProfiles.Maximum)
+        // Under the layout gate, so an automatic switch cannot interleave its own snapshot.
+        await _profileGate.WaitAsync();
+        try
         {
-            ProfileStatus.Text = $"You have {LayoutProfiles.Maximum} layouts. Reuse a name to replace one, or remove one in Settings.";
-            ProfileStatus.Visibility = Visibility.Visible;
-            return;
+            // Saving under an existing name replaces that layout and keeps its program trigger.
+            var existing = _profiles.FirstOrDefault(profile => string.Equals(profile.Name, name, StringComparison.CurrentCultureIgnoreCase));
+            if (existing is null && _profiles.Count >= LayoutProfiles.Maximum)
+            {
+                ProfileStatus.Text = $"You have {LayoutProfiles.Maximum} layouts. Reuse a name to replace one, or remove one in Settings.";
+                ProfileStatus.Visibility = Visibility.Visible;
+                return;
+            }
+            var saved = new LayoutProfile(existing?.Id ?? Guid.NewGuid().ToString("N"), name, existing?.WhenRunning, LayoutProfiles.Capture(CurrentSettings()));
+            var updated = existing is null ? _profiles.Append(saved).ToArray() : _profiles.Select(profile => profile.Id == existing.Id ? saved : profile).ToArray();
+            var candidate = SettingsStore.Normalize(CurrentSettings() with { Profiles = updated });
+            if (!await PersistAsync(candidate)) return;
+            _profiles = candidate.Profiles!;
         }
-        var saved = new LayoutProfile(existing?.Id ?? Guid.NewGuid().ToString("N"), name, existing?.WhenRunning, LayoutProfiles.Capture(CurrentSettings()));
-        var updated = existing is null ? _profiles.Append(saved).ToArray() : _profiles.Select(profile => profile.Id == existing.Id ? saved : profile).ToArray();
-        var candidate = SettingsStore.Normalize(CurrentSettings() with { Profiles = updated });
-        if (!await PersistAsync(candidate)) return;
-        _profiles = candidate.Profiles!;
+        finally { _profileGate.Release(); }
         ProfileNameBox.Text = string.Empty;
         BuildProfileButtons();
     }
