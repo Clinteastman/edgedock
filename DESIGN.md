@@ -13,6 +13,14 @@ content row, including in web-only mode. The drawer contains Settings, full
 screen, widget visibility, panel count and per-panel page selection. Configuration appears
 over content only when requested.
 F11 toggles full screen; Escape is left to active content.
+Screen schedule (Settings, Screen; off by default): day and night brightness,
+night start/end (may cross midnight) and blank-after-idle (never, 5, 10, 15,
+30 or 60 minutes of no input anywhere on the PC). It only acts while full
+screen. Brightness is set over DDC/CI (VCP 0x10) when the monitor supports
+it, otherwise by a dark layer over EdgeDock (up to 85%). Scheduled brightness
+is applied only when the period changes, so the monitor's own buttons are not
+overridden. Blanking shows a black layer and sets brightness to 0; input or a
+tap (which does not reach the widget beneath) restores the previous level.
 EdgeDock remembers the monitor it was last on (its device path, then its model
 code, then a unique resolution; never a guess between equal candidates) and
 whether it was full screen. Dragging the window to another screen updates the

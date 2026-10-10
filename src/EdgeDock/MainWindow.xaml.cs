@@ -65,6 +65,14 @@ public sealed partial class MainWindow : Window
     private double _resizeStartWebSplitRatio;
     private double _resizeStartPanelWidth;
     private DisplayPreference? _displayPreference;
+    private ScreenScheduleSettings _screenSettings = ScreenScheduleSettings.Default;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _screenTimer;
+    private bool _screenBlank;
+    private int? _brightnessBeforeBlank;
+    // The scheduled brightness last applied; re-applied only when it changes, so EdgeDock
+    // never fights adjustments made with the monitor's own buttons in between.
+    private int? _appliedScheduleBrightness;
+    private bool _screenBusy;
     // The settings as last written (or loaded) successfully. Display-only saves merge onto
     // this rather than re-reading settings.json, which yields defaults if the file is locked
     // or damaged and would then overwrite the whole layout.
@@ -148,10 +156,12 @@ public sealed partial class MainWindow : Window
         _configuredWebSplitRatio = settings.WebSplitRatio;
         _displayPreference = settings.Display;
         _openFullScreen = settings.OpenFullScreen;
+        _screenSettings = settings.Screen ?? ScreenScheduleSettings.Default;
         // Move to the saved screen before WebView2 creates its child HWNDs, so pages
         // render once at the right size and scale.
         RestorePreferredDisplay();
         StartDisplayTracking();
+        StartScreenSchedule();
         BuildWidgetSlots();
         // Establish the final native/web bounds before WebView2 creates its child HWNDs.
         ApplyMediaLayout();
@@ -430,7 +440,8 @@ public sealed partial class MainWindow : Window
             PanelWidthSlider.Value, ArtworkToggle.IsOn, WebVisibleToggle.IsOn, LibraryEditor.GetSlots(),
             MaterialSelector.SelectedIndex == 1 ? BackdropMaterial.Acrylic : BackdropMaterial.Mica,
             BackdropTransparencySlider.Value, cards, _webPanelCount, _webPanelCardIds,
-            _configuredWebSplitRatio, _displayPreference, _openFullScreen));
+            _configuredWebSplitRatio, _displayPreference, _openFullScreen,
+            Screen: ReadScreenSettings()));
         if (!await PersistAsync(settings)) return;
         _material = settings.Material;
         _backdropTransparency = settings.BackdropTransparency;
@@ -445,6 +456,10 @@ public sealed partial class MainWindow : Window
         _webPanelCount = settings.WebPanelCount;
         _webPanelCardIds = settings.WebPanelCardIds!;
         _configuredWebSplitRatio = settings.WebSplitRatio;
+        _screenSettings = settings.Screen ?? ScreenScheduleSettings.Default;
+        // Re-evaluate straight away with the new schedule.
+        _appliedScheduleBrightness = null;
+        _ = UpdateScreenAsync();
         BuildWidgetSlots();
         ApplyMediaLayout();
         await BuildWebPanelsAsync();
@@ -505,7 +520,8 @@ public sealed partial class MainWindow : Window
         _webPanelCardIds,
         _configuredWebSplitRatio,
         _displayPreference,
-        _openFullScreen);
+        _openFullScreen,
+        Screen: _screenSettings);
 
     private void ApplyBackdrop()
     {
@@ -536,6 +552,12 @@ public sealed partial class MainWindow : Window
         // An isolated test profile must not rewrite the real sign-in entry.
         StartupToggle.IsEnabled = !SettingsStore.IsIsolatedProfile;
         StartupToggle.IsOn = StartupRegistration.IsEnabled();
+        DimAtNightToggle.IsOn = _screenSettings.DimAtNight;
+        DayBrightnessSlider.Value = _screenSettings.DayBrightness;
+        NightBrightnessSlider.Value = _screenSettings.NightBrightness;
+        NightStartPicker.Time = _screenSettings.NightStart;
+        NightEndPicker.Time = _screenSettings.NightEnd;
+        BlankAfterSelector.SelectedIndex = Math.Max(0, Array.IndexOf(ScreenSchedule.BlankChoices, _screenSettings.BlankAfterMinutes));
     }
 
     private void PanelWidthSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs args)
@@ -1015,6 +1037,96 @@ public sealed partial class MainWindow : Window
         _savedSettings = SettingsStore.Normalize(merged);
     }
 
+    private ScreenScheduleSettings ReadScreenSettings() => ScreenSchedule.Normalize(new ScreenScheduleSettings(
+        DimAtNightToggle.IsOn,
+        (int)DayBrightnessSlider.Value,
+        (int)NightBrightnessSlider.Value,
+        NightStartPicker.Time,
+        NightEndPicker.Time,
+        ScreenSchedule.BlankChoices[Math.Max(0, BlankAfterSelector.SelectedIndex)]));
+
+    private void StartScreenSchedule()
+    {
+        _screenTimer = DispatcherQueue.CreateTimer();
+        _screenTimer.Interval = TimeSpan.FromSeconds(5);
+        _screenTimer.Tick += async (_, _) => await UpdateScreenAsync();
+        _screenTimer.Start();
+    }
+
+    /// <summary>
+    /// Applies night dimming and idle blanking. Only while full screen: then EdgeDock owns the
+    /// screen; a windowed EdgeDock may be on the main monitor, which it must never dim.
+    /// Brightness uses the monitor's own control (DDC/CI) where available, otherwise a dark
+    /// layer over EdgeDock.
+    /// </summary>
+    private async Task UpdateScreenAsync()
+    {
+        if (_closing || _screenBusy) return;
+        _screenBusy = true;
+        try
+        {
+            var state = _isFullScreen
+                ? ScreenSchedule.Evaluate(_screenSettings, DateTime.Now, IdleTime())
+                : new ScreenState(null, false);
+            if (state.Blank && !_screenBlank) await BlankScreenAsync();
+            else if (!state.Blank && _screenBlank) await WakeScreenAsync(state.Brightness);
+            else if (!_screenBlank && state.Brightness != _appliedScheduleBrightness)
+            {
+                if (state.Brightness is { } brightness) await ApplyBrightnessAsync(brightness);
+                else ScreenDimLayer.Opacity = 0; // Schedule off or windowed: remove any software dimming.
+                _appliedScheduleBrightness = state.Brightness;
+            }
+        }
+        finally { _screenBusy = false; }
+    }
+
+    private async Task BlankScreenAsync()
+    {
+        _screenBlank = true;
+        ScreenBlankOverlay.Visibility = Visibility.Visible;
+        // Check every second while blank so a touch or key wakes it promptly.
+        if (_screenTimer is not null) _screenTimer.Interval = TimeSpan.FromSeconds(1);
+        _brightnessBeforeBlank = await MonitorBrightness.GetAsync(_windowHandle);
+        if (_brightnessBeforeBlank is not null) await MonitorBrightness.SetAsync(_windowHandle, 0);
+    }
+
+    private async Task WakeScreenAsync(int? scheduled)
+    {
+        _screenBlank = false;
+        ScreenBlankOverlay.Visibility = Visibility.Collapsed;
+        if (_screenTimer is not null) _screenTimer.Interval = TimeSpan.FromSeconds(5);
+        // Return to the schedule's level, or to whatever the monitor was set to before.
+        var target = scheduled ?? _brightnessBeforeBlank;
+        if (target is { } brightness && _brightnessBeforeBlank is not null) await MonitorBrightness.SetAsync(_windowHandle, brightness);
+        _appliedScheduleBrightness = scheduled;
+        _brightnessBeforeBlank = null;
+    }
+
+    private async Task ApplyBrightnessAsync(int brightness)
+    {
+        if (await MonitorBrightness.SetAsync(_windowHandle, brightness))
+        {
+            ScreenDimLayer.Opacity = 0;
+            return;
+        }
+        // No DDC/CI on this monitor or cable: darken EdgeDock itself instead.
+        ScreenDimLayer.Opacity = Math.Clamp((100 - brightness) / 100.0, 0, 0.85);
+    }
+
+    private async void ScreenBlankOverlay_PointerPressed(object sender, PointerRoutedEventArgs args)
+    {
+        // The tap only wakes the screen; it does not reach the widget underneath. It also
+        // resets Windows' idle time, so the normal update path wakes the screen.
+        args.Handled = true;
+        await UpdateScreenAsync();
+    }
+
+    private static TimeSpan IdleTime()
+    {
+        var info = new LastInputInfo { Size = (uint)Marshal.SizeOf<LastInputInfo>() };
+        return GetLastInputInfo(ref info) ? TimeSpan.FromMilliseconds(unchecked((uint)Environment.TickCount - info.Time)) : TimeSpan.Zero;
+    }
+
     private void SetFullScreen(bool fullScreen)
     {
         CloseControlsDrawer();
@@ -1294,6 +1406,9 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
+        _screenTimer?.Stop();
+        // Never leave the monitor dark behind a closed EdgeDock.
+        if (_screenBlank && _brightnessBeforeBlank is { } before) _ = MonitorBrightness.SetAsync(_windowHandle, before);
         _closing = true;
         _displayChangeTimer?.Stop();
         _windowMoveTimer?.Stop();
@@ -1365,6 +1480,16 @@ public sealed partial class MainWindow : Window
 
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LastInputInfo
+    {
+        public uint Size;
+        public uint Time;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetLastInputInfo(ref LastInputInfo info);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct MonitorInfoEx

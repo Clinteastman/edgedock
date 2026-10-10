@@ -24,7 +24,8 @@ internal sealed record EdgeDockSettings(
     IReadOnlyList<string>? WebPanelCardIds = null,
     double WebSplitRatio = 0.5,
     DisplayPreference? Display = null,
-    bool OpenFullScreen = false);
+    bool OpenFullScreen = false,
+    ScreenScheduleSettings? Screen = null);
 
 internal sealed class SettingsStore
 {
@@ -85,7 +86,16 @@ internal sealed class SettingsStore
                 stored?.Display is { } display
                     ? new DisplayPreference(display.DeviceId, display.HardwareId, display.Width ?? 0, display.Height ?? 0)
                     : null,
-                stored?.OpenFullScreen ?? false));
+                stored?.OpenFullScreen ?? false,
+                Screen: stored?.Screen is { } screen
+                    ? new ScreenScheduleSettings(
+                        screen.DimAtNight ?? false,
+                        screen.DayBrightness ?? ScreenScheduleSettings.Default.DayBrightness,
+                        screen.NightBrightness ?? ScreenScheduleSettings.Default.NightBrightness,
+                        TimeSpan.TryParse(screen.NightStart, System.Globalization.CultureInfo.InvariantCulture, out var start) ? start : ScreenScheduleSettings.Default.NightStart,
+                        TimeSpan.TryParse(screen.NightEnd, System.Globalization.CultureInfo.InvariantCulture, out var end) ? end : ScreenScheduleSettings.Default.NightEnd,
+                        screen.BlankAfterMinutes ?? 0)
+                    : null));
         }
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -120,6 +130,15 @@ internal sealed class SettingsStore
                     ? new StoredDisplay { DeviceId = display.DeviceId, HardwareId = display.HardwareId, Width = display.Width, Height = display.Height }
                     : null,
                 OpenFullScreen = settings.OpenFullScreen,
+                Screen = new StoredScreen
+                {
+                    DimAtNight = settings.Screen!.DimAtNight,
+                    DayBrightness = settings.Screen.DayBrightness,
+                    NightBrightness = settings.Screen.NightBrightness,
+                    NightStart = settings.Screen.NightStart.ToString(@"hh\:mm", System.Globalization.CultureInfo.InvariantCulture),
+                    NightEnd = settings.Screen.NightEnd.ToString(@"hh\:mm", System.Globalization.CultureInfo.InvariantCulture),
+                    BlankAfterMinutes = settings.Screen.BlankAfterMinutes
+                },
                 WidgetSlots = settings.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
                 ExtensionData = _extensionData
             };
@@ -170,7 +189,8 @@ internal sealed class SettingsStore
             WebPanelCount = panelCount,
             WebPanelCardIds = selections,
             WebSplitRatio = PanelLayout.NormalizeWebSplitRatio(value.WebSplitRatio),
-            Display = NormalizeDisplay(value.Display)
+            Display = NormalizeDisplay(value.Display),
+            Screen = ScreenSchedule.Normalize(value.Screen)
         };
     }
 
@@ -247,6 +267,7 @@ internal sealed class SettingsStore
         public double? WebSplitRatio { get; set; }
         public StoredDisplay? Display { get; set; }
         public bool? OpenFullScreen { get; set; }
+        public StoredScreen? Screen { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }
         [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; }
     }
@@ -255,6 +276,16 @@ internal sealed class SettingsStore
     {
         public List<string>? EnabledWidgetIds { get; set; }
         public string? SelectedWidgetId { get; set; }
+    }
+
+    private sealed class StoredScreen
+    {
+        public bool? DimAtNight { get; set; }
+        public int? DayBrightness { get; set; }
+        public int? NightBrightness { get; set; }
+        public string? NightStart { get; set; }
+        public string? NightEnd { get; set; }
+        public int? BlankAfterMinutes { get; set; }
     }
 
     private sealed class StoredDisplay

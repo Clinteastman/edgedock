@@ -33,6 +33,11 @@ contribute. This is not a signed installer or a finished consumer release.
   minimises instead of covering your main screen, then returns when it is back.
 - Optionally starts when you sign in (Settings, **Startup**).
 - Runs as one copy: launching it again brings the open window forward.
+- Optionally dims the screen at night and blanks it when the PC is idle
+  (Settings, **Screen**). It uses the monitor's own brightness control
+  (DDC/CI) when available, otherwise darkens itself, and only acts while
+  EdgeDock is full screen, so it never dims your main monitor. Any input or a
+  tap wakes it.
 - Supports one to three native widget panels, with an optional web area.
 - Lets each panel switch between its chosen widgets independently.
 - Includes a local library of media, PC volume/mute, PC activity and Windows

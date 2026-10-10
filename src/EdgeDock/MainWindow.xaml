@@ -56,6 +56,10 @@
     <Rectangle Height="3" Width="16" RadiusX="1.5" RadiusY="1.5" Fill="{StaticResource MutedTextBrush}" VerticalAlignment="Bottom"/>
    </Grid>
   </Button>
+  <!-- Software dimming for monitors without DDC/CI, and the idle blank screen. -->
+  <Rectangle x:Name="ScreenDimLayer" Grid.RowSpan="2" Fill="Black" Opacity="0" IsHitTestVisible="False"/>
+  <Grid x:Name="ScreenBlankOverlay" Grid.RowSpan="2" Background="Black" Visibility="Collapsed"
+        PointerPressed="ScreenBlankOverlay_PointerPressed" AutomationProperties.Name="Screen blanked. Tap to wake."/>
   <Grid x:Name="ControlsOverlay" Grid.Row="1" Visibility="Collapsed" TabFocusNavigation="Cycle">
    <Border x:Name="ControlsScrim" Background="#8A0B0A0E" Tapped="ControlsScrim_Tapped"
            AutomationProperties.Name="Close EdgeDock controls"/>
@@ -117,6 +121,22 @@
       <Slider x:Name="BackdropTransparencySlider" Minimum="0" Maximum="100" StepFrequency="5" Value="50"
               ValueChanged="BackdropTransparencySlider_ValueChanged" AutomationProperties.Name="Background visibility"/>
       <TextBlock x:Name="BackdropHelpText" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
+      <TextBlock Text="Screen" FontSize="18" FontWeight="SemiBold"/>
+      <TextBlock Text="These apply while EdgeDock is full screen, so they never dim your main monitor. Brightness uses the monitor's own control where it allows it; otherwise EdgeDock darkens itself."
+                 TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
+      <ToggleSwitch x:Name="DimAtNightToggle" Header="Dim at night" AutomationProperties.Name="Dim the screen at night"/>
+      <Grid ColumnSpacing="10">
+       <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+       <TimePicker x:Name="NightStartPicker" Header="Night starts" MinuteIncrement="15" HorizontalAlignment="Stretch" AutomationProperties.Name="Night starts at"/>
+       <TimePicker x:Name="NightEndPicker" Grid.Column="1" Header="Night ends" MinuteIncrement="15" HorizontalAlignment="Stretch" AutomationProperties.Name="Night ends at"/>
+      </Grid>
+      <Slider x:Name="DayBrightnessSlider" Header="Day brightness" Minimum="0" Maximum="100" StepFrequency="5" AutomationProperties.Name="Day brightness"/>
+      <Slider x:Name="NightBrightnessSlider" Header="Night brightness" Minimum="0" Maximum="100" StepFrequency="5" AutomationProperties.Name="Night brightness"/>
+      <ComboBox x:Name="BlankAfterSelector" Header="Blank the screen when idle" HorizontalAlignment="Stretch" MinHeight="52"
+                AutomationProperties.Name="Blank the screen after no input for">
+       <ComboBoxItem Content="Never"/><ComboBoxItem Content="After 5 minutes"/><ComboBoxItem Content="After 10 minutes"/>
+       <ComboBoxItem Content="After 15 minutes"/><ComboBoxItem Content="After 30 minutes"/><ComboBoxItem Content="After 1 hour"/>
+      </ComboBox>
       <TextBlock Text="Startup" FontSize="18" FontWeight="SemiBold"/>
       <ToggleSwitch x:Name="StartupToggle" Header="Start EdgeDock when I sign in" AutomationProperties.Name="Start EdgeDock when I sign in"/>
       <TextBlock Text="EdgeDock reopens on the screen it was last on, in full screen if you left it that way. If that screen is switched off, EdgeDock steps aside and returns when it comes back."

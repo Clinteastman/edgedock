@@ -1,5 +1,19 @@
 # Testing
 
+## Screen schedule (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 54 console checks pass, including
+  night windows across midnight, within a day and disabled, day/night/blank
+  decisions, recovery from bad values, and persistence.
+- Read-only DDC/CI check on this PC: the Xeneon Edge reports brightness 95 of
+  100; the main LG TV screen does not support DDC/CI (would use software
+  dimming, and only if EdgeDock were full screen there).
+- Through EdgeDock's own brightness code, using hidden 1x1 helper windows (no
+  visible change): read the Edge at 95, wrote 95, read back 95; the primary
+  screen reported "not supported".
+- Not tested at runtime: night transitions, idle blanking and waking (need
+  real time of day and five or more idle minutes).
+
 ## PC activity widget (10 October 2026)
 
 - Debug x64 build: zero warnings/errors. 35 console checks pass, including
