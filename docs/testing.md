@@ -1,5 +1,21 @@
 # Testing
 
+## Page zoom per card (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 31 console checks pass, including zoom
+  limits, per-card persistence and 100% for older settings.
+- Measured in the built-in browser pane first: CSS `zoom: 0.8` turned a 700px
+  `100vh` element into 560px, so that approach was rejected.
+- EdgeDock runtime, isolated profile, a test page reporting its own viewport to
+  a local server: at 100% the page saw 1047x454 and a 454px `100vh`; at 80% it
+  saw 1308x567 with a 567px `100vh` (fills the panel). After the page navigated
+  itself, the second load reported the same sizes, so zoom survives navigation.
+- After review: zoom updates run one at a time, folding requests that arrive
+  mid-update into one more pass with the latest size and zoom (DevTools calls
+  can otherwise complete out of order). Re-measured: still 1308x567 at 80%.
+- Not yet tested: that taps and clicks land on the right element at 80%
+  (needs real input), and zoom after moving between monitors of different scale.
+
 ## Web card recovery (9 October 2026)
 
 - Debug x64 build: zero warnings/errors. 28 console checks pass, including

@@ -15,6 +15,8 @@ contribute. This is not a signed installer or a finished consumer release.
 - Drag the gaps to resize two web cards or every widget panel together; sizes
   are saved, and the same widget width is shared across the group.
 - Hides web scrollbar bars while retaining page scrolling.
+- Sets page zoom per card (50-150%), so a dashboard designed for a taller
+  screen fits the Edge's 720 pixels. Full-height layouts still fill the panel.
 - Keeps your browser sign-in locally between launches.
 - Keeps web cards alive: retries pages that cannot be reached yet (for example
   at sign-in), reloads them after the PC wakes from a sleep longer than a
@@ -64,6 +66,11 @@ runtime limitations are recorded in [the testing notes](docs/testing.md).
 4. Move the window onto your second display and use **F11** or the full-screen
    control in the drawer. Click or swipe down on the top-right handle to open it,
    including in full screen. No utility bar takes space from the dashboard.
+
+**Home Assistant tip:** set the card's page zoom to 80-90% in Settings so more
+of a dashboard fits the short screen. To hide Home Assistant's own sidebar and
+header, use a dashboard view designed for panels, or the community Kiosk Mode
+add-on; EdgeDock does not change the page itself.
 
 **Escape belongs to your web page.** EdgeDock does not use it to exit full screen.
 Mica's appearance follows Windows' backdrop behaviour; it falls back to a solid

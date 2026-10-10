@@ -7,7 +7,7 @@ internal enum MediaPanelPlacement { Right, Left, Hidden }
 internal enum BackdropMaterial { Mica, Acrylic }
 
 internal sealed record WidgetSlotSettings(IReadOnlyList<string> EnabledWidgetIds, string? SelectedWidgetId);
-internal sealed record WebCardSettings(string Id, string Name, string Url);
+internal sealed record WebCardSettings(string Id, string Name, string Url, double Zoom = 1.0);
 
 internal sealed record EdgeDockSettings(
     string? DashboardUrl,
@@ -58,7 +58,7 @@ internal sealed class SettingsStore
             var cards = stored?.WebCards is null
                 ? MigrateDashboard(stored?.DashboardUrl)
                 : stored.WebCards.Where(card => card is not null)
-                    .Select(card => new WebCardSettings(card.Id ?? string.Empty, card.Name ?? string.Empty, card.Url ?? string.Empty))
+                    .Select(card => new WebCardSettings(card.Id ?? string.Empty, card.Name ?? string.Empty, card.Url ?? string.Empty, card.Zoom ?? 1.0))
                     .ToArray();
             return Normalize(new EdgeDockSettings(
                 IsAllowedUrl(stored?.DashboardUrl, out _) ? stored!.DashboardUrl : null,
@@ -97,7 +97,7 @@ internal sealed class SettingsStore
                 IsWebVisible = settings.IsWebVisible,
                 Material = settings.Material.ToString(),
                 BackdropTransparency = settings.BackdropTransparency,
-                WebCards = settings.WebCards!.Select(card => new StoredWebCard { Id = card.Id, Name = card.Name, Url = card.Url }).ToList(),
+                WebCards = settings.WebCards!.Select(card => new StoredWebCard { Id = card.Id, Name = card.Name, Url = card.Url, Zoom = card.Zoom }).ToList(),
                 WebPanelCount = settings.WebPanelCount,
                 WebPanelCardIds = settings.WebPanelCardIds!.ToList(),
                 WebSplitRatio = settings.WebSplitRatio,
@@ -165,10 +165,17 @@ internal sealed class SettingsStore
             var id = baseId;
             for (var suffix = 2; !ids.Add(id); suffix++) id = $"{baseId}-{suffix}";
             var name = string.IsNullOrWhiteSpace(candidate.Name) ? uri.Host : candidate.Name.Trim();
-            cards.Add(new WebCardSettings(id, name, uri.AbsoluteUri));
+            cards.Add(new WebCardSettings(id, name, uri.AbsoluteUri, NormalizeZoom(candidate.Zoom)));
         }
         return cards;
     }
+
+    public const double MinimumZoom = 0.5;
+    public const double MaximumZoom = 1.5;
+
+    /// <summary>Page zoom per card: 50% to 150% in 5% steps; anything unusable means 100%.</summary>
+    public static double NormalizeZoom(double zoom) =>
+        double.IsFinite(zoom) ? Math.Round(Math.Clamp(zoom, MinimumZoom, MaximumZoom) * 20) / 20 : 1.0;
 
     private static IReadOnlyList<WebCardSettings> MigrateDashboard(string? dashboardUrl) =>
         IsAllowedUrl(dashboardUrl, out var uri) && uri is not null
@@ -223,5 +230,6 @@ internal sealed class SettingsStore
         public string? Id { get; set; }
         public string? Name { get; set; }
         public string? Url { get; set; }
+        public double? Zoom { get; set; }
     }
 }

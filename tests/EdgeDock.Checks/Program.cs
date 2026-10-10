@@ -196,6 +196,21 @@ try
     Check(budget.TryConsume(asleep) && budget.TryConsume(asleep.AddMinutes(1)) && budget.TryConsume(asleep.AddMinutes(2)) &&
           !budget.TryConsume(asleep.AddMinutes(3)) && budget.TryConsume(asleep.AddMinutes(10)),
           "Automatic crash recovery stops after three tries in ten minutes, then allows more later");
+    Check(SettingsStore.NormalizeZoom(0.8) == 0.8 && SettingsStore.NormalizeZoom(0.83) == 0.85 &&
+          SettingsStore.NormalizeZoom(5) == SettingsStore.MaximumZoom && SettingsStore.NormalizeZoom(0.1) == SettingsStore.MinimumZoom &&
+          SettingsStore.NormalizeZoom(double.NaN) == 1.0,
+          "Card zoom is clamped to 50-150% in 5% steps");
+    store = new SettingsStore();
+    await store.SaveAsync(twoCards with
+    {
+        WebCards = [twoCards.WebCards![0] with { Zoom = 0.75 }, twoCards.WebCards[1] with { Zoom = 9 }]
+    });
+    var zoomed = await new SettingsStore().LoadAsync();
+    Check(zoomed.WebCards?[0].Zoom == 0.75 && zoomed.WebCards[1].Zoom == SettingsStore.MaximumZoom,
+          "Each card keeps its own zoom across restart");
+    await File.WriteAllTextAsync(file, """{"WebCards":[{"Id":"old","Name":"Old","Url":"https://example.com/"}]}""");
+    Check((await new SettingsStore().LoadAsync()).WebCards?[0].Zoom == 1.0,
+          "Cards saved before zoom existed open at 100%");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally
