@@ -44,8 +44,11 @@ contribute. This is not a signed installer or a finished consumer release.
   even after a restart if the monitor was unplugged at the time.
 - Supports one to three native widget panels, with an optional web area.
 - Lets each panel switch between its chosen widgets independently.
-- Includes a local library of media, clock and weather, PC volume/mute, PC
+- Includes a local library of media, clock and weather, PC audio, PC
   activity and Windows Settings shortcuts.
+- **PC audio** switches the Windows output device, sets master volume and mute,
+  mutes the microphone with an unmistakable red state, and gives every app
+  making sound its own volume slider and mute, with its icon.
 - **Clock and weather** shows a large clock (following your Windows 12/24-hour
   setting) and the date. Add a town in Settings to see the weather now, today's
   high and low, and the next six hours. Weather comes from Open-Meteo, free and
