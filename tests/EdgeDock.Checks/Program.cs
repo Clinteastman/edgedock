@@ -238,6 +238,42 @@ try
     Check(budget.TryConsume(asleep) && budget.TryConsume(asleep.AddMinutes(1)) && budget.TryConsume(asleep.AddMinutes(2)) &&
           !budget.TryConsume(asleep.AddMinutes(3)) && budget.TryConsume(asleep.AddMinutes(10)),
           "Automatic crash recovery stops after three tries in ten minutes, then allows more later");
+    // Idle +50, kernel (including idle) +200, user +100: 250 of 300 ticks busy.
+    Check(StatsMath.CpuPercent(100, 200, 100, 150, 400, 200) is { } cpu && Math.Abs(cpu - 250.0 / 3) < 0.001,
+          "Processor use counts kernel and user time minus idle");
+    Check(StatsMath.CpuPercent(10, 10, 10, 10, 10, 10) is null && StatsMath.CpuPercent(10, 20, 20, 5, 30, 30) is null,
+          "Processor use is unavailable for an empty or reset interval");
+    Check(StatsMath.Rate(1000, 3000, 2) == 1000 && StatsMath.Rate(5000, 10, 1) == 0 && StatsMath.Rate(0, 10, 0) == 0,
+          "Byte rates handle normal, reset and zero-length intervals");
+    Check(StatsMath.GpuPercent([
+              ("pid_1_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 30),
+              ("pid_2_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 25),
+              ("pid_2_luid_0x0_0xA_phys_0_eng_4_engtype_VideoDecode", 70),
+              ("pid_3_luid_0x0_0xB_phys_0_eng_0_engtype_3D", 10),
+              ("not-a-gpu-instance", 99)]) == 70 &&
+          StatsMath.GpuPercent([("pid_1_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 80), ("pid_2_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 60)]) == 100 &&
+          StatsMath.GpuPercent([]) is null,
+          "Graphics use adds every process's share of an engine, capped at 100%");
+    Check(StatsMath.GpuPercent([
+              ("pid_1_luid_0x0_0xA_phys_0_eng_0_engtype_3D", 60),
+              ("pid_1_luid_0x0_0xA_phys_0_eng_1_engtype_3D", 60)]) == 60,
+          "Two engines of the same type are not added together");
+    Check(StatsMath.FormatBytes(512) == "512 B" && StatsMath.FormatBytes(1536) == "1.5 KB" &&
+          StatsMath.FormatBytes(17179869184) == "16.0 GB" && StatsMath.FormatRate(2_621_440) == "2.5 MB/s",
+          "Sizes and rates are written in readable units");
+    var line = StatsMath.Sparkline([0, 50, 100], 60, 590, 30, 100);
+    Check(line.Count == 3 && line[^1] == (590.0, 0.0) && line[0] == (570.0, 30.0) && line[1].Y == 15 &&
+          StatsMath.Sparkline([], 60, 100, 30, 100).Count == 0,
+          "Graphs put the newest sample on the right and scale to the panel");
+    var before = new Dictionary<string, (long Down, long Up)> { ["wifi"] = (1000, 500), ["gone"] = (9000, 9000) };
+    var after = new Dictionary<string, (long Down, long Up)> { ["wifi"] = (3000, 1500), ["vpn"] = (50_000_000, 40_000_000) };
+    Check(StatsMath.NetworkRates(before, after, 2) == (1000.0, 500.0) &&
+          StatsMath.NetworkRates(after, new Dictionary<string, (long, long)> { ["wifi"] = (10, 10) }, 1) == (0.0, 0.0),
+          "A newly connected or removed network adapter causes no spike or drop");
+    var history = new SampleHistory(3);
+    foreach (var sample in new[] { 1.0, 2, double.NaN, 4 }) history.Add(sample);
+    Check(history.Values.SequenceEqual([2.0, 0, 4]),
+          "Graph history keeps the newest samples and ignores invalid ones");
     Check(SettingsStore.NormalizeZoom(0.8) == 0.8 && SettingsStore.NormalizeZoom(0.83) == 0.85 &&
           SettingsStore.NormalizeZoom(5) == SettingsStore.MaximumZoom && SettingsStore.NormalizeZoom(0.1) == SettingsStore.MinimumZoom &&
           SettingsStore.NormalizeZoom(double.NaN) == 1.0,
@@ -253,6 +289,42 @@ try
     await File.WriteAllTextAsync(file, """{"WebCards":[{"Id":"old","Name":"Old","Url":"https://example.com/"}]}""");
     Check((await new SettingsStore().LoadAsync()).WebCards?[0].Zoom == 1.0,
           "Cards saved before zoom existed open at 100%");
+    const string forecastJson = """
+        {"utc_offset_seconds":3600,
+         "current":{"time":"2026-10-10T20:00","temperature_2m":11.04,"weather_code":3,"is_day":0},
+         "hourly":{"time":["2026-10-10T19:00","2026-10-10T20:00","2026-10-10T21:00","2026-10-10T22:00"],
+                   "temperature_2m":[11.5,11.0,-0.4,10.1],"weather_code":[2,3,61,0],"is_day":[1,0,0,0]},
+         "daily":{"time":["2026-10-10"],"temperature_2m_max":[12.6],"temperature_2m_min":[9.9]}}
+        """;
+    var forecast = WeatherForecast.Parse(forecastJson, new DateTime(2026, 10, 10, 20, 25, 0));
+    Check(forecast is { Code: 3, IsDay: false, High: 12.6, Low: 9.9 } &&
+          forecast.NextHours.Select(hour => hour.Time.Hour).SequenceEqual([21, 22]) && forecast.NextHours.All(hour => !hour.IsDay) &&
+          WeatherForecast.Degrees(forecast.Temperature) == "11°" && WeatherForecast.Degrees(-0.4) == "0°",
+          "Weather reads now, today's range and only the hours still to come");
+    Check(WeatherForecast.Parse("{}", DateTime.Now) is null && WeatherForecast.Parse("not json", DateTime.Now) is null,
+          "An unusable weather response is ignored");
+    Check(WeatherForecast.Describe(0, true) == ("Clear", "☀️") && WeatherForecast.Describe(0, false).Text == "Clear" &&
+          WeatherForecast.Describe(0, false).Symbol == "🌙" && WeatherForecast.Describe(95).Text == "Thunderstorm" &&
+          WeatherForecast.Describe(1234).Text == "Unknown",
+          "Weather codes are described in plain words, by day and night");
+    var places = WeatherForecast.ParseSearch("""
+        {"results":[{"name":"Manchester","admin1":"England","country":"United Kingdom","latitude":53.48095,"longitude":-2.23743},
+                    {"name":"Monaco","admin1":"Monaco","country":"Monaco","latitude":43.73,"longitude":7.42}]}
+        """);
+    Check(places.Count == 2 && places[0].Name == "Manchester, England, United Kingdom" && places[1].Name == "Monaco" &&
+          WeatherForecast.ParseSearch("""{"generationtime_ms":0.2}""").Count == 0,
+          "Place search gives readable names and copes with no results");
+    Check(WeatherForecast.ForecastUrl(new WeatherLocation("x", 53.48095, -2.23743), true)
+              .Contains("latitude=53.481&longitude=-2.2374") &&
+          WeatherForecast.ForecastUrl(new WeatherLocation("x", 1, 2), true).Contains("temperature_unit=fahrenheit") &&
+          WeatherForecast.SearchUrl(" St Ives & co ").EndsWith("name=St%20Ives%20%26%20co&count=5&language=en&format=json"),
+          "Weather requests send only rounded coordinates or the search text");
+    store = new SettingsStore();
+    await store.SaveAsync(upgraded with { Weather = new WeatherLocation(" Manchester ", 53.48, -2.24), Fahrenheit = true });
+    var weatherSaved = await new SettingsStore().LoadAsync();
+    Check(weatherSaved.Weather == new WeatherLocation("Manchester", 53.48, -2.24) && weatherSaved.Fahrenheit &&
+          SettingsStore.Normalize(upgraded with { Weather = new WeatherLocation("Nowhere", 120, 0) }).Weather is null,
+          "The weather place and units survive restart; impossible places are dropped");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally

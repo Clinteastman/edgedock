@@ -10,6 +10,10 @@ ID for an unrelated widget.
 
 ## Contribution rules
 
+Widgets can be written in XAML (Audio, Media) or entirely in C# (PC activity,
+`Controls/PcStatsWidget.cs`). Keep calculations in a class without WinUI types,
+as `StatsMath.cs` does, so the console checks can cover them.
+
 Implement a WinUI `UserControl` and register a `WidgetDescriptor` in
 `WidgetRegistry.CreateBuiltIns()` under `src/EdgeDock/Widgets`. The descriptor
 implements `IWidgetDescriptor`: stable `Id`, `DisplayName`, `Description` and a
@@ -37,6 +41,9 @@ point for contributions, not a promised stable binary plugin SDK.
 - Do not change OS state just because the widget loads or refreshes.
 - Keep credentials out of source, settings exports and diagnostic screenshots.
 - Document any network access and external applications the widget requires.
+  The clock's weather is the example: Open-Meteo, opt-in; the typed search text
+  when finding a place, then only the place's coordinates, cached for 15
+  minutes (`WeatherService.cs`).
 
 ## Future third-party packages
 
