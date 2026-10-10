@@ -148,15 +148,29 @@ internal sealed class MediaSessionService : IDisposable
             pinned = _pinnedSourceId;
         }
         GlobalSystemMediaTransportControlsSession? match = null;
-        if (pinned is not null)
-            match = manager.GetSessions().FirstOrDefault(session =>
-                string.Equals(session.SourceAppUserModelId, pinned, StringComparison.OrdinalIgnoreCase));
-        var target = match ?? manager.GetCurrentSession();
+        GlobalSystemMediaTransportControlsSession? target;
+        try
+        {
+            if (pinned is not null)
+                match = manager.GetSessions().FirstOrDefault(session =>
+                    string.Equals(session.SourceAppUserModelId, pinned, StringComparison.OrdinalIgnoreCase));
+            target = match ?? manager.GetCurrentSession();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or System.Runtime.InteropServices.COMException)
+        {
+            // Windows' media list was briefly unavailable; keep the current selection.
+            return;
+        }
         lock (_gate)
         {
-            if (generation != _selectionGeneration) return; // A newer choice is being applied.
-            // The chosen app's session ended; go back to following Windows.
-            if (pinned is not null && match is null) _pinnedSourceId = null;
+            if (generation != _selectionGeneration) return; // A newer selection is being applied.
+            if (pinned is not null && match is null)
+            {
+                // The chosen app's session ended; go back to following Windows. Counting this as
+                // a new selection stops an older callback that still saw the app from re-pinning it.
+                _pinnedSourceId = null;
+                _selectionGeneration++;
+            }
             AttachSession(target);
         }
     }
