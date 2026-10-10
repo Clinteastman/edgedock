@@ -6,7 +6,7 @@ namespace EdgeDock;
 /// <summary>A place chosen in Settings for the weather. Only its coordinates are ever sent.</summary>
 internal sealed record WeatherLocation(string Name, double Latitude, double Longitude);
 
-internal sealed record WeatherHour(DateTime Time, double Temperature, int Code);
+internal sealed record WeatherHour(DateTime Time, double Temperature, int Code, bool IsDay);
 
 internal sealed record WeatherSnapshot(
     double Temperature,
@@ -25,7 +25,7 @@ internal static class WeatherForecast
     /// <summary>Coordinates are rounded to four decimals (about 10 m); nothing else identifies the user.</summary>
     public static string ForecastUrl(WeatherLocation location, bool fahrenheit) =>
         FormattableString.Invariant($"https://api.open-meteo.com/v1/forecast?latitude={location.Latitude:0.####}&longitude={location.Longitude:0.####}") +
-        "&current=temperature_2m,weather_code,is_day&hourly=temperature_2m,weather_code" +
+        "&current=temperature_2m,weather_code,is_day&hourly=temperature_2m,weather_code,is_day" +
         "&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=2" +
         "&temperature_unit=" + (fahrenheit ? "fahrenheit" : "celsius");
 
@@ -48,11 +48,15 @@ internal static class WeatherForecast
             var times = hourly.GetProperty("time").EnumerateArray().Select(time => DateTime.Parse(time.GetString()!, CultureInfo.InvariantCulture)).ToArray();
             var temperatures = hourly.GetProperty("temperature_2m").EnumerateArray().Select(value => value.GetDouble()).ToArray();
             var codes = hourly.GetProperty("weather_code").EnumerateArray().Select(value => value.GetInt32()).ToArray();
+            // Real daylight for the place, so a winter evening gets a moon, not a sun.
+            var days = hourly.TryGetProperty("is_day", out var dayValues)
+                ? dayValues.EnumerateArray().Select(value => value.GetInt32() == 1).ToArray()
+                : times.Select(time => time.Hour is >= 7 and < 19).ToArray();
             var thisHour = new DateTime(localNow.Year, localNow.Month, localNow.Day, localNow.Hour, 0, 0);
-            var next = Enumerable.Range(0, Math.Min(times.Length, Math.Min(temperatures.Length, codes.Length)))
+            var next = Enumerable.Range(0, new[] { times.Length, temperatures.Length, codes.Length, days.Length }.Min())
                 .Where(index => times[index] > thisHour)
                 .Take(hours)
-                .Select(index => new WeatherHour(times[index], temperatures[index], codes[index]))
+                .Select(index => new WeatherHour(times[index], temperatures[index], codes[index], days[index]))
                 .ToArray();
             return new WeatherSnapshot(
                 current.GetProperty("temperature_2m").GetDouble(),

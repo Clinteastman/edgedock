@@ -104,9 +104,10 @@ MSIX packaging with the appropriate capability is a future distribution step.
 ## Privacy
 
 The clock's weather is the only feature that contacts a service EdgeDock
-chooses: Open-Meteo, with the place's coordinates (rounded to about 10 metres)
-or the search text while you pick a place. Nothing is sent until you add a
-place, and forecasts are reused for 15 minutes.
+chooses: Open-Meteo. Pressing Find in Settings sends the town you typed, to look
+it up. Once a place is chosen, only its coordinates (rounded to about 10
+metres) are sent, while the clock is on screen, and forecasts are reused for 15
+minutes. Nothing is sent before you search.
 
 No EdgeDock account, telemetry or cloud backend. Your chosen web page still
 connects to its own server as it would in a browser. Settings and browser data

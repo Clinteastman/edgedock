@@ -158,7 +158,7 @@ internal sealed class ClockWidget : UserControl
             _hours.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             var cell = new StackPanel { Spacing = 2, HorizontalAlignment = HorizontalAlignment.Center };
             cell.Children.Add(new TextBlock { Text = hour.Time.ToString("HH"), FontSize = 13, Foreground = MutedText, HorizontalAlignment = HorizontalAlignment.Center });
-            cell.Children.Add(new TextBlock { Text = WeatherForecast.Describe(hour.Code, hour.Time.Hour is >= 7 and < 19).Symbol, FontSize = 18, HorizontalAlignment = HorizontalAlignment.Center });
+            cell.Children.Add(new TextBlock { Text = WeatherForecast.Describe(hour.Code, hour.IsDay).Symbol, FontSize = 18, HorizontalAlignment = HorizontalAlignment.Center });
             cell.Children.Add(new TextBlock { Text = WeatherForecast.Degrees(hour.Temperature), FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center });
             Grid.SetColumn(cell, index);
             _hours.Children.Add(cell);

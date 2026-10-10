@@ -293,12 +293,12 @@ try
         {"utc_offset_seconds":3600,
          "current":{"time":"2026-10-10T20:00","temperature_2m":11.04,"weather_code":3,"is_day":0},
          "hourly":{"time":["2026-10-10T19:00","2026-10-10T20:00","2026-10-10T21:00","2026-10-10T22:00"],
-                   "temperature_2m":[11.5,11.0,-0.4,10.1],"weather_code":[2,3,61,0]},
+                   "temperature_2m":[11.5,11.0,-0.4,10.1],"weather_code":[2,3,61,0],"is_day":[1,0,0,0]},
          "daily":{"time":["2026-10-10"],"temperature_2m_max":[12.6],"temperature_2m_min":[9.9]}}
         """;
     var forecast = WeatherForecast.Parse(forecastJson, new DateTime(2026, 10, 10, 20, 25, 0));
     Check(forecast is { Code: 3, IsDay: false, High: 12.6, Low: 9.9 } &&
-          forecast.NextHours.Select(hour => hour.Time.Hour).SequenceEqual([21, 22]) &&
+          forecast.NextHours.Select(hour => hour.Time.Hour).SequenceEqual([21, 22]) && forecast.NextHours.All(hour => !hour.IsDay) &&
           WeatherForecast.Degrees(forecast.Temperature) == "11°" && WeatherForecast.Degrees(-0.4) == "0°",
           "Weather reads now, today's range and only the hours still to come");
     Check(WeatherForecast.Parse("{}", DateTime.Now) is null && WeatherForecast.Parse("not json", DateTime.Now) is null,
