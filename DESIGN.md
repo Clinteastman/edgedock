@@ -33,6 +33,11 @@ adjustment, save after an adjustment finishes, and restore the prior size if a
 pointer gesture is cancelled. Viewport constraints clamp only the rendered
 layout, so a preferred split returns when more space is available.
 
+Native widget panels and Widget view do not activate EdgeDock when tapped or
+clicked while another app is active; the input still reaches the widget, and
+the other app keeps keyboard focus. Web cards, the controls handle and open
+overlays activate normally.
+
 Web cards recover without attention. Connection-type load failures retry after
 5, 10, 20 and 40 seconds, then every 60, with a "Waiting for connection" status
 and Try again. Certificate, credential and redirect errors still stop and ask.

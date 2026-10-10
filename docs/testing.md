@@ -1,5 +1,18 @@
 # Testing
 
+## Keep focus on the main screen (10 October 2026)
+
+- Debug x64 build: zero warnings/errors.
+- Runtime check pending. The first automated attempt was invalid: the
+  comparison app's window covered EdgeDock, so neither build received the
+  clicks. The corrected test (mouse click and injected touch tap on a widget
+  with Notepad active, then a click on the web area) needs the user's
+  permission to drive the screen.
+- After review (build only): while EdgeDock is inactive, pointer-driven XAML
+  focus changes inside the widgets are cancelled, because focusing a slider or
+  button would otherwise give the window focus anyway. Tab focus is unchanged.
+  The pending runtime test must include tapping a slider and a button.
+
 ## Web card recovery (9 October 2026)
 
 - Debug x64 build: zero warnings/errors. 28 console checks pass, including

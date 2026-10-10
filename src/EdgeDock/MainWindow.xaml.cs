@@ -37,6 +37,8 @@ public sealed partial class MainWindow : Window
     private readonly List<WebPanelView> _webPanels = [];
     private IntPtr _windowHandle;
     private IntPtr _messageHook;
+    private ActivationGuard? _activationGuard;
+    private bool _windowActive;
     private MediaPanelPlacement _mediaPlacement = MediaPanelPlacement.Right;
     private MediaPanelPlacement _lastVisiblePlacement = MediaPanelPlacement.Right;
     private double _configuredPanelWidth = 340;
@@ -77,6 +79,9 @@ public sealed partial class MainWindow : Window
         ApplyBackdrop();
         ConfigureWindow();
         InstallMessageHook();
+        _activationGuard = new ActivationGuard(_windowHandle, ShouldSkipActivation);
+        Activated += (_, args) => _windowActive = args.WindowActivationState != WindowActivationState.Deactivated;
+        Root.GettingFocus += Root_GettingFocus;
         PowerManager.SystemSuspendStatusChanged += PowerManager_SystemSuspendStatusChanged;
         Closed += MainWindow_Closed;
         Activated += MainWindow_Activated;
@@ -331,6 +336,51 @@ public sealed partial class MainWindow : Window
         }
 
         return CallNextHookEx(_messageHook, code, removeMessage, messagePointer);
+    }
+
+    /// <summary>
+    /// Tapping a native widget (playback, volume, shortcuts) should not pull keyboard focus
+    /// away from the app being used on another screen. Web cards, the controls handle and
+    /// open overlays still activate EdgeDock, because they may need typing.
+    /// </summary>
+    private bool ShouldSkipActivation(ActivationGuard.NativePoint screenPoint)
+    {
+        // The controls drawer has a full-window scrim; Settings is a side panel, so only taps
+        // that land on it need focus (it has text boxes). Widgets beside it still do not.
+        if (_closing || ControlsOverlay.Visibility == Visibility.Visible) return false;
+        var clientPoint = screenPoint;
+        if (!ScreenToClient(_windowHandle, ref clientPoint)) return false;
+        var scale = Root.XamlRoot?.RasterizationScale ?? 1;
+        var position = new Windows.Foundation.Point(clientPoint.X / scale, clientPoint.Y / scale);
+        if (Contains(ControlHandle, position) || Contains(SettingsPanel, position)) return false;
+        return Contains(WidgetHost, position) || Contains(WidgetGallery, position);
+    }
+
+    /// <summary>
+    /// Skipping activation is not enough on its own: tapping a slider or button would move
+    /// XAML focus to it, and that gives the window Win32 focus anyway. While EdgeDock is
+    /// inactive, refuse pointer-driven focus changes inside the widgets. Keyboard focus
+    /// (Tab) is unaffected, and the tap itself still reaches the control.
+    /// </summary>
+    private void Root_GettingFocus(UIElement sender, GettingFocusEventArgs args)
+    {
+        if (_windowActive || args.InputDevice is not (FocusInputDeviceKind.Mouse or FocusInputDeviceKind.Touch or FocusInputDeviceKind.Pen))
+            return;
+        for (var element = args.NewFocusedElement; element is not null; element = VisualTreeHelper.GetParent(element))
+        {
+            if (element == WidgetHost || element == WidgetGallery)
+            {
+                args.TryCancel();
+                return;
+            }
+        }
+    }
+
+    private static bool Contains(FrameworkElement element, Windows.Foundation.Point position)
+    {
+        if (element.Visibility != Visibility.Visible || element.ActualWidth <= 0 || element.ActualHeight <= 0) return false;
+        var bounds = element.TransformToVisual(null).TransformBounds(new Windows.Foundation.Rect(0, 0, element.ActualWidth, element.ActualHeight));
+        return bounds.Contains(position);
     }
 
     private void Root_KeyDown(object sender, KeyRoutedEventArgs args)
@@ -986,6 +1036,8 @@ public sealed partial class MainWindow : Window
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
         _closing = true;
+        _activationGuard?.Dispose();
+        _activationGuard = null;
         PowerManager.SystemSuspendStatusChanged -= PowerManager_SystemSuspendStatusChanged;
         _resumeReloadTimer?.Stop();
         WidgetGalleryRow.Children.Clear();
@@ -1042,4 +1094,7 @@ public sealed partial class MainWindow : Window
 
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    private static extern bool ScreenToClient(IntPtr window, ref ActivationGuard.NativePoint point);
 }
