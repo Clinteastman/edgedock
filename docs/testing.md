@@ -1,5 +1,22 @@
 # Testing
 
+## Launcher widget (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 33 console checks pass, including
+  allowed targets (file, folder, web page), rejected ones (quoted command with
+  arguments, relative path, `cmd /c`, `file:`, `javascript:`, `\\?\` paths, empty),
+  default names, persistence with repaired IDs, and the 24-item limit.
+- A captured EdgeDock window (isolated profile) showed Notepad, Documents and
+  Calculator with their real shell icons and transparency, a globe for a web
+  page, and a warning icon for a missing file, in two columns at 360px.
+- After review: target checks and icon extraction run off the UI thread, and
+  the check on tap too. Icons come from a dedicated STA thread: on thread-pool
+  (MTA) threads Calculator's icon failed and fell back to the placeholder, on
+  the STA thread all three icons loaded again (captured). Screen-reader names
+  for each launcher row now follow the Name field as it is typed.
+- Not yet tested: tapping a tile to open it, the Browse buttons, and the
+  Settings save path (all need real input).
+
 ## Web card recovery (9 October 2026)
 
 - Debug x64 build: zero warnings/errors. 28 console checks pass, including

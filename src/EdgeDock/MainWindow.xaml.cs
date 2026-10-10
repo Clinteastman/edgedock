@@ -50,7 +50,8 @@ public sealed partial class MainWindow : Window
     private BackdropMaterial _material = BackdropMaterial.Mica;
     private double _backdropTransparency = 50;
     private IReadOnlyList<WidgetSlotSettings> _widgetSlots = [new(["media"], "media")];
-    private readonly WidgetRegistry _registry = WidgetRegistry.CreateBuiltIns();
+    private readonly WidgetRegistry _registry;
+    private IReadOnlyList<LauncherItem> _launchers = [];
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly SemaphoreSlim _webPanelGate = new(1, 1);
     private bool _closing;
@@ -71,6 +72,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         _messageHookCallback = MessageHookCallback;
+        _registry = WidgetRegistry.CreateBuiltIns(() => _launchers);
         InitializeComponent();
         RegisterDividerHandlers(WebDivider);
         RegisterDividerHandlers(GroupDivider);
@@ -127,6 +129,7 @@ public sealed partial class MainWindow : Window
         _webPanelCount = settings.WebPanelCount;
         _webPanelCardIds = settings.WebPanelCardIds!;
         _configuredWebSplitRatio = settings.WebSplitRatio;
+        _launchers = settings.Launchers!;
         BuildWidgetSlots();
         // Establish the final native/web bounds before WebView2 creates its child HWNDs.
         ApplyMediaLayout();
@@ -386,6 +389,12 @@ public sealed partial class MainWindow : Window
             UrlErrorText.Visibility = Visibility.Visible;
             return;
         }
+        if (!LauncherEditor.TryGetItems(out var launchers, out var launcherError))
+        {
+            UrlErrorText.Text = launcherError;
+            UrlErrorText.Visibility = Visibility.Visible;
+            return;
+        }
         var placement = PlacementComboBox.SelectedIndex switch
         {
             1 => MediaPanelPlacement.Left,
@@ -397,7 +406,7 @@ public sealed partial class MainWindow : Window
             PanelWidthSlider.Value, ArtworkToggle.IsOn, WebVisibleToggle.IsOn, LibraryEditor.GetSlots(),
             MaterialSelector.SelectedIndex == 1 ? BackdropMaterial.Acrylic : BackdropMaterial.Mica,
             BackdropTransparencySlider.Value, cards, _webPanelCount, _webPanelCardIds,
-            _configuredWebSplitRatio));
+            _configuredWebSplitRatio, Launchers: launchers));
         if (!await PersistAsync(settings)) return;
         _material = settings.Material;
         _backdropTransparency = settings.BackdropTransparency;
@@ -412,6 +421,7 @@ public sealed partial class MainWindow : Window
         _webPanelCount = settings.WebPanelCount;
         _webPanelCardIds = settings.WebPanelCardIds!;
         _configuredWebSplitRatio = settings.WebSplitRatio;
+        _launchers = settings.Launchers!;
         BuildWidgetSlots();
         ApplyMediaLayout();
         await BuildWebPanelsAsync();
@@ -462,7 +472,8 @@ public sealed partial class MainWindow : Window
         _webCards,
         _webPanelCount,
         _webPanelCardIds,
-        _configuredWebSplitRatio);
+        _configuredWebSplitRatio,
+        Launchers: _launchers);
 
     private void ApplyBackdrop()
     {
@@ -490,6 +501,8 @@ public sealed partial class MainWindow : Window
         WebVisibleToggle.IsOn = _isWebVisible;
         WebCardEditor.LoadCards(_webCards);
         LibraryEditor.LoadSlots(_widgetSlots, _registry);
+        LauncherEditor.WindowHandle = _windowHandle;
+        LauncherEditor.LoadItems(_launchers);
     }
 
     private void PanelWidthSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs args)
@@ -843,7 +856,7 @@ public sealed partial class MainWindow : Window
         if (count == _widgetSlots.Count) return;
         var slots = _widgetSlots.Take(count).ToList();
         while (slots.Count < count)
-            slots.Add(new WidgetSlotSettings(["media", "audio", "pc"], "media"));
+            slots.Add(new WidgetSlotSettings(["media", "audio", "launcher", "pc"], "media"));
         _widgetSlots = slots;
         BuildWidgetSlots();
         ApplyMediaLayout();

@@ -8,6 +8,7 @@ internal enum BackdropMaterial { Mica, Acrylic }
 
 internal sealed record WidgetSlotSettings(IReadOnlyList<string> EnabledWidgetIds, string? SelectedWidgetId);
 internal sealed record WebCardSettings(string Id, string Name, string Url);
+internal sealed record LauncherItem(string Id, string Name, string Target);
 
 internal sealed record EdgeDockSettings(
     string? DashboardUrl,
@@ -22,7 +23,8 @@ internal sealed record EdgeDockSettings(
     IReadOnlyList<WebCardSettings>? WebCards = null,
     int WebPanelCount = 1,
     IReadOnlyList<string>? WebPanelCardIds = null,
-    double WebSplitRatio = 0.5);
+    double WebSplitRatio = 0.5,
+    IReadOnlyList<LauncherItem>? Launchers = null);
 
 internal sealed class SettingsStore
 {
@@ -70,7 +72,10 @@ internal sealed class SettingsStore
                 slots,
                 ParseMaterial(stored?.Material), stored?.BackdropTransparency ?? 50,
                 cards, stored?.WebPanelCount ?? 1, stored?.WebPanelCardIds,
-                stored?.WebSplitRatio ?? 0.5));
+                stored?.WebSplitRatio ?? 0.5,
+                Launchers: stored?.Launchers?.Where(item => item is not null)
+                    .Select(item => new LauncherItem(item.Id ?? string.Empty, item.Name ?? string.Empty, item.Target ?? string.Empty))
+                    .ToArray()));
         }
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -101,6 +106,7 @@ internal sealed class SettingsStore
                 WebPanelCount = settings.WebPanelCount,
                 WebPanelCardIds = settings.WebPanelCardIds!.ToList(),
                 WebSplitRatio = settings.WebSplitRatio,
+                Launchers = settings.Launchers!.Select(item => new StoredLauncher { Id = item.Id, Name = item.Name, Target = item.Target }).ToList(),
                 WidgetSlots = settings.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
                 ExtensionData = _extensionData
             };
@@ -150,8 +156,29 @@ internal sealed class SettingsStore
             WebCards = cards,
             WebPanelCount = panelCount,
             WebPanelCardIds = selections,
-            WebSplitRatio = PanelLayout.NormalizeWebSplitRatio(value.WebSplitRatio)
+            WebSplitRatio = PanelLayout.NormalizeWebSplitRatio(value.WebSplitRatio),
+            Launchers = NormalizeLaunchers(value.Launchers ?? [])
         };
+    }
+
+    public const int MaximumLaunchers = 24;
+
+    private static IReadOnlyList<LauncherItem> NormalizeLaunchers(IReadOnlyList<LauncherItem> source)
+    {
+        var items = new List<LauncherItem>();
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in source.Where(item => item is not null))
+        {
+            if (items.Count == MaximumLaunchers) break;
+            if (!LauncherTargets.IsWellFormed(candidate.Target)) continue;
+            var target = candidate.Target.Trim();
+            var baseId = string.IsNullOrWhiteSpace(candidate.Id) ? $"launcher-{items.Count + 1}" : candidate.Id.Trim();
+            var id = baseId;
+            for (var suffix = 2; !ids.Add(id); suffix++) id = $"{baseId}-{suffix}";
+            var name = string.IsNullOrWhiteSpace(candidate.Name) ? LauncherTargets.DefaultName(target) : candidate.Name.Trim();
+            items.Add(new LauncherItem(id, name, target));
+        }
+        return items;
     }
 
     private static IReadOnlyList<WebCardSettings> NormalizeWebCards(IReadOnlyList<WebCardSettings> source)
@@ -191,7 +218,7 @@ internal sealed class SettingsStore
 
     private static MediaPanelPlacement ParsePlacement(string? value, MediaPanelPlacement fallback, bool allowHidden) => Enum.TryParse<MediaPanelPlacement>(value, true, out var parsed) && Enum.IsDefined(parsed) && (allowHidden || parsed != MediaPanelPlacement.Hidden) ? parsed : fallback;
     private static BackdropMaterial ParseMaterial(string? value) => Enum.TryParse<BackdropMaterial>(value, true, out var parsed) && Enum.IsDefined(parsed) ? parsed : BackdropMaterial.Mica;
-    private static WidgetSlotSettings[] DefaultSlots() => [new(["media", "audio", "pc"], "media")];
+    private static WidgetSlotSettings[] DefaultSlots() => [new(["media", "audio", "launcher", "pc"], "media")];
     private static EdgeDockSettings Defaults() => Normalize(new(null, MediaPanelPlacement.Right, MediaPanelPlacement.Right, 340, true, true, DefaultSlots()));
 
     private sealed class StoredSettings
@@ -209,6 +236,7 @@ internal sealed class SettingsStore
         public List<string>? WebPanelCardIds { get; set; }
         public double? WebSplitRatio { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }
+        public List<StoredLauncher>? Launchers { get; set; }
         [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; }
     }
 
@@ -216,6 +244,13 @@ internal sealed class SettingsStore
     {
         public List<string>? EnabledWidgetIds { get; set; }
         public string? SelectedWidgetId { get; set; }
+    }
+
+    private sealed class StoredLauncher
+    {
+        public string? Id { get; set; }
+        public string? Name { get; set; }
+        public string? Target { get; set; }
     }
 
     private sealed class StoredWebCard

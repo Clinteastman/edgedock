@@ -61,6 +61,13 @@ Dashboard-only layout controls are unavailable while this mode is active.
   the remaining height and is capped at 180px.
 - Audio displays the default multimedia playback device, volume and mute state.
   Loading or refreshing it never changes system volume.
+- Launcher shows up to 24 tiles in as many equal columns as fit (minimum
+  104px wide), each with the item's shell icon (globe for web pages, warning
+  for a missing item) and a two-line name. A tap opens the item through the
+  shell, as a double-click would. Targets must be an existing file or folder
+  by full path, or an http/https address: no arguments, relative paths or other
+  schemes. They are checked when saved and again when tapped; a missing item
+  explains itself instead of failing silently.
 - PC shortcuts opens named Windows Settings pages. These are shortcuts, not
   embedded replacements for the OS settings interfaces.
 
