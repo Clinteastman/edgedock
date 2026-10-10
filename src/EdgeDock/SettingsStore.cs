@@ -24,7 +24,9 @@ internal sealed record EdgeDockSettings(
     IReadOnlyList<string>? WebPanelCardIds = null,
     double WebSplitRatio = 0.5,
     DisplayPreference? Display = null,
-    bool OpenFullScreen = false);
+    bool OpenFullScreen = false,
+    WeatherLocation? Weather = null,
+    bool Fahrenheit = false);
 
 internal sealed class SettingsStore
 {
@@ -85,7 +87,12 @@ internal sealed class SettingsStore
                 stored?.Display is { } display
                     ? new DisplayPreference(display.DeviceId, display.HardwareId, display.Width ?? 0, display.Height ?? 0)
                     : null,
-                stored?.OpenFullScreen ?? false));
+                stored?.OpenFullScreen ?? false,
+                Weather: stored?.Weather is { Name: { } weatherName, Latitude: { } latitude, Longitude: { } longitude }
+                    ? new WeatherLocation(weatherName, latitude, longitude)
+                    : null,
+                // Before a choice is saved, follow the region: Fahrenheit where Windows uses it.
+                Fahrenheit: stored?.Fahrenheit ?? !System.Globalization.RegionInfo.CurrentRegion.IsMetric));
         }
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -120,6 +127,10 @@ internal sealed class SettingsStore
                     ? new StoredDisplay { DeviceId = display.DeviceId, HardwareId = display.HardwareId, Width = display.Width, Height = display.Height }
                     : null,
                 OpenFullScreen = settings.OpenFullScreen,
+                Weather = settings.Weather is { } weather
+                    ? new StoredWeather { Name = weather.Name, Latitude = weather.Latitude, Longitude = weather.Longitude }
+                    : null,
+                Fahrenheit = settings.Fahrenheit,
                 WidgetSlots = settings.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
                 ExtensionData = _extensionData
             };
@@ -170,9 +181,17 @@ internal sealed class SettingsStore
             WebPanelCount = panelCount,
             WebPanelCardIds = selections,
             WebSplitRatio = PanelLayout.NormalizeWebSplitRatio(value.WebSplitRatio),
-            Display = NormalizeDisplay(value.Display)
+            Display = NormalizeDisplay(value.Display),
+            Weather = NormalizeWeather(value.Weather)
         };
     }
+
+    private static WeatherLocation? NormalizeWeather(WeatherLocation? weather) =>
+        weather is not null && !string.IsNullOrWhiteSpace(weather.Name) &&
+        double.IsFinite(weather.Latitude) && weather.Latitude is >= -90 and <= 90 &&
+        double.IsFinite(weather.Longitude) && weather.Longitude is >= -180 and <= 180
+            ? weather with { Name = weather.Name.Trim() }
+            : null;
 
     private static DisplayPreference? NormalizeDisplay(DisplayPreference? display)
     {
@@ -228,8 +247,9 @@ internal sealed class SettingsStore
 
     private static MediaPanelPlacement ParsePlacement(string? value, MediaPanelPlacement fallback, bool allowHidden) => Enum.TryParse<MediaPanelPlacement>(value, true, out var parsed) && Enum.IsDefined(parsed) && (allowHidden || parsed != MediaPanelPlacement.Hidden) ? parsed : fallback;
     private static BackdropMaterial ParseMaterial(string? value) => Enum.TryParse<BackdropMaterial>(value, true, out var parsed) && Enum.IsDefined(parsed) ? parsed : BackdropMaterial.Mica;
-    private static WidgetSlotSettings[] DefaultSlots() => [new(["media", "audio", "stats", "pc"], "media")];
-    private static EdgeDockSettings Defaults() => Normalize(new(null, MediaPanelPlacement.Right, MediaPanelPlacement.Right, 340, true, true, DefaultSlots()));
+    private static WidgetSlotSettings[] DefaultSlots() => [new(["media", "clock", "audio", "stats", "pc"], "media")];
+    private static EdgeDockSettings Defaults() => Normalize(new(null, MediaPanelPlacement.Right, MediaPanelPlacement.Right, 340, true, true, DefaultSlots(),
+        Fahrenheit: !System.Globalization.RegionInfo.CurrentRegion.IsMetric));
 
     private sealed class StoredSettings
     {
@@ -247,6 +267,8 @@ internal sealed class SettingsStore
         public double? WebSplitRatio { get; set; }
         public StoredDisplay? Display { get; set; }
         public bool? OpenFullScreen { get; set; }
+        public StoredWeather? Weather { get; set; }
+        public bool? Fahrenheit { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }
         [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; }
     }
@@ -255,6 +277,13 @@ internal sealed class SettingsStore
     {
         public List<string>? EnabledWidgetIds { get; set; }
         public string? SelectedWidgetId { get; set; }
+    }
+
+    private sealed class StoredWeather
+    {
+        public string? Name { get; set; }
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
     }
 
     private sealed class StoredDisplay
