@@ -421,7 +421,15 @@ public sealed partial class MainWindow : Window
         UrlErrorText.Visibility = Visibility.Collapsed;
     }
 
-    private async void SaveSettings_Click(object sender, RoutedEventArgs args) => await SaveAndNavigateAsync();
+    private async void SaveSettings_Click(object sender, RoutedEventArgs args)
+    {
+        var save = SaveAndNavigateAsync();
+        _settingsSave = save;
+        await save;
+    }
+
+    // The Settings save in progress, if any; closing waits for it so a pressed Save is not lost.
+    private Task _settingsSave = Task.CompletedTask;
 
     /// <summary>
     /// Drops a save still checking launcher targets (Settings closed or cancelled) and unlocks
@@ -1330,7 +1338,7 @@ public sealed partial class MainWindow : Window
     {
         if (_closeReady) return;
         var movePending = _windowMoveTimer?.IsRunning == true;
-        if (!_closeAfterPendingSave && !movePending && _displaySaves.IsCompleted) return;
+        if (!_closeAfterPendingSave && !movePending && _displaySaves.IsCompleted && _settingsSave.IsCompleted) return;
         args.Cancel = true;
         // Already waiting: further close clicks must not end the process mid-save.
         if (_closeAfterPendingSave) return;
@@ -1350,6 +1358,14 @@ public sealed partial class MainWindow : Window
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
         }
         while (!ReferenceEquals(pending, _displaySaves));
+        if (!_settingsSave.IsCompleted)
+        {
+            // Save was pressed: finish it (checking launcher targets can wait on a slow drive)
+            // rather than lose it, and say why the window is still open.
+            UrlErrorText.Text = "Finishing your save, then EdgeDock will close.";
+            UrlErrorText.Visibility = Visibility.Visible;
+            await _settingsSave;
+        }
         _closeReady = true;
         Close();
     }
