@@ -84,6 +84,8 @@ internal sealed class WebPanelView : Grid, IDisposable
     private bool _disposed;
     private double _zoom = 1.0;
     private bool _zoomApplied;
+    private bool _zoomRunning;
+    private bool _zoomPending;
     private DispatcherQueueTimer? _zoomTimer;
 
     internal WebPanelView(Func<Task>? retryInitialization = null)
@@ -186,7 +188,32 @@ internal sealed class WebPanelView : Grid, IDisposable
     /// panel size divided by the zoom, then the result is scaled to fit. CSS zoom is not
     /// used because it shrinks full-height (100vh) layouts and leaves a gap below them.
     /// </summary>
+    /// <summary>
+    /// DevTools calls can complete out of order unless each is awaited, so updates run one at
+    /// a time; a request arriving mid-update is folded into one more pass with the latest
+    /// size and zoom.
+    /// </summary>
     private async Task ApplyZoomAsync()
+    {
+        if (_zoomRunning)
+        {
+            _zoomPending = true;
+            return;
+        }
+        _zoomRunning = true;
+        try
+        {
+            do
+            {
+                _zoomPending = false;
+                await ApplyZoomOnceAsync();
+            }
+            while (_zoomPending && !_disposed);
+        }
+        finally { _zoomRunning = false; }
+    }
+
+    private async Task ApplyZoomOnceAsync()
     {
         var core = _webView.CoreWebView2;
         if (core is null || _disposed || _browserFailed) return;
