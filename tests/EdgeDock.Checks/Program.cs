@@ -196,6 +196,23 @@ try
     Check(budget.TryConsume(asleep) && budget.TryConsume(asleep.AddMinutes(1)) && budget.TryConsume(asleep.AddMinutes(2)) &&
           !budget.TryConsume(asleep.AddMinutes(3)) && budget.TryConsume(asleep.AddMinutes(10)),
           "Automatic crash recovery stops after three tries in ten minutes, then allows more later");
+    Check(AudioNaming.DisplayName("Spotify Premium", "Spotify", "spotify", false) == "Spotify Premium" &&
+          AudioNaming.DisplayName(@"@%SystemRoot%\System32\AudioSrv.Dll,-202", "Desktop Window Manager", "dwm", false) == "Desktop Window Manager" &&
+          AudioNaming.DisplayName(null, null, "discord", false) == "Discord" &&
+          AudioNaming.DisplayName("anything", null, null, true) == "System sounds" &&
+          AudioNaming.DisplayName(null, " ", null, false) == "App",
+          "App audio rows get readable names, never resource references");
+    AudioSessionInfo Session(uint pid, string name, bool active, bool system = false) =>
+        new(AudioNaming.KeyFor(pid, system), pid, name, null, 50, false, system, active);
+    var arranged = AudioNaming.Arrange([
+        Session(0, "System sounds", false, system: true),
+        Session(10, "Zoom", false),
+        Session(20, "Chrome", false),
+        Session(20, "Chrome", true),
+        Session(30, "Spotify", true)]);
+    Check(arranged.Select(session => session.Name).SequenceEqual(["Chrome", "Spotify", "Zoom", "System sounds"]) &&
+          arranged[0].IsActive,
+          "App audio rows: one per app, playing first, System sounds last");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally
