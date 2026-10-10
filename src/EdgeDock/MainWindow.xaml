@@ -56,10 +56,6 @@
     <Rectangle Height="3" Width="16" RadiusX="1.5" RadiusY="1.5" Fill="{StaticResource MutedTextBrush}" VerticalAlignment="Bottom"/>
    </Grid>
   </Button>
-  <!-- Software dimming for monitors without DDC/CI, and the idle blank screen. -->
-  <Rectangle x:Name="ScreenDimLayer" Grid.RowSpan="2" Fill="Black" Opacity="0" IsHitTestVisible="False"/>
-  <Grid x:Name="ScreenBlankOverlay" Grid.RowSpan="2" Background="Black" Visibility="Collapsed"
-        PointerPressed="ScreenBlankOverlay_PointerPressed" AutomationProperties.Name="Screen blanked. Tap to wake."/>
   <Grid x:Name="ControlsOverlay" Grid.Row="1" Visibility="Collapsed" TabFocusNavigation="Cycle">
    <Border x:Name="ControlsScrim" Background="#8A0B0A0E" Tapped="ControlsScrim_Tapped"
            AutomationProperties.Name="Close EdgeDock controls"/>
@@ -161,5 +157,9 @@
     </StackPanel>
    </Grid>
   </Border>
+  <!-- Topmost: software dimming for monitors without DDC/CI, and the idle blank screen. -->
+  <Rectangle x:Name="ScreenDimLayer" Grid.RowSpan="2" Fill="Black" Opacity="0" IsHitTestVisible="False"/>
+  <Grid x:Name="ScreenBlankOverlay" Grid.RowSpan="2" Background="Black" Visibility="Collapsed"
+        PointerPressed="ScreenBlankOverlay_PointerPressed" AutomationProperties.Name="Screen blanked. Tap to wake."/>
  </Grid>
 </Window>

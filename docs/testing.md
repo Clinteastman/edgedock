@@ -11,6 +11,12 @@
 - Through EdgeDock's own brightness code, using hidden 1x1 helper windows (no
   visible change): read the Edge at 95, wrote 95, read back 95; the primary
   screen reported "not supported".
+- After review: closing while blanked holds the close until brightness is
+  restored; the blanked monitor is remembered by device path and only it is
+  restored (if it disconnected, when it returns); waking restores the level
+  in use just before blanking; waking outside full screen clears software
+  dimming; the dim and blank layers are now topmost, above the drawer and
+  Settings. Build, checks and a normal capture repeated (code otherwise).
 - Not tested at runtime: night transitions, idle blanking and waking (need
   real time of day and five or more idle minutes).
 
