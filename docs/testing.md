@@ -1,5 +1,17 @@
 # Testing
 
+## Launcher widget (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 33 console checks pass, including
+  allowed targets (file, folder, web page), rejected ones (quoted command with
+  arguments, relative path, `cmd /c`, `file:`, `javascript:`, `\\?\` paths, empty),
+  default names, persistence with repaired IDs, and the 24-item limit.
+- A captured EdgeDock window (isolated profile) showed Notepad, Documents and
+  Calculator with their real shell icons and transparency, a globe for a web
+  page, and a warning icon for a missing file, in two columns at 360px.
+- Not yet tested: tapping a tile to open it, the Browse buttons, and the
+  Settings save path (all need real input).
+
 ## Web card recovery (9 October 2026)
 
 - Debug x64 build: zero warnings/errors. 28 console checks pass, including

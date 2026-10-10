@@ -126,6 +126,10 @@
       <Grid><TextBlock Text="Width of each widget"/><TextBlock x:Name="PanelWidthText" HorizontalAlignment="Right"/></Grid>
       <Slider x:Name="PanelWidthSlider" Minimum="240" Maximum="440" StepFrequency="10" Value="340" ValueChanged="PanelWidthSlider_ValueChanged" AutomationProperties.Name="Widget width"/>
       <ToggleSwitch x:Name="ArtworkToggle" Header="Show media artwork" IsOn="True" AutomationProperties.Name="Show media artwork"/>
+      <TextBlock Text="Launcher" FontSize="18" FontWeight="SemiBold"/>
+      <TextBlock Text="Tiles in the Launcher widget open these like a double-click in File Explorer: apps, documents, folders or web pages. No commands or arguments."
+                 TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
+      <controls:LauncherEditor x:Name="LauncherEditor"/>
       <TextBlock Text="Widget library" FontSize="18" FontWeight="SemiBold"/>
       <TextBlock Text="Choose the pages in each panel. Swipe between them, or select one from EdgeDock controls." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
       <controls:WidgetLibraryEditor x:Name="LibraryEditor"/>
