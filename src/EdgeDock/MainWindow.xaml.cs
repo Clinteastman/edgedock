@@ -68,7 +68,6 @@ public sealed partial class MainWindow : Window
     private double _resizeStartPanelWidth;
     private DisplayPreference? _displayPreference;
     private IReadOnlyList<LayoutProfile> _profiles = [];
-    private string? _activeProfileId;
     // Automatic switching: the layout to return to, the profile switched on for a running
     // program, and one the user overrode by hand (left alone until its program restarts).
     private ProfileLayout? _layoutBeforeAuto;
@@ -436,6 +435,13 @@ public sealed partial class MainWindow : Window
             UrlErrorText.Visibility = Visibility.Visible;
             return;
         }
+        // The override was for the program that was running; a new or removed trigger ends it.
+        var suppressedId = _suppressedAutoProfileId is { } suppressedProfile &&
+            _profiles.FirstOrDefault(profile => profile.Id == suppressedProfile)?.WhenRunning is { } oldTrigger &&
+            profiles.FirstOrDefault(profile => profile.Id == suppressedProfile)?.WhenRunning is { } newTrigger &&
+            string.Equals(oldTrigger, newTrigger, StringComparison.OrdinalIgnoreCase)
+                ? suppressedProfile
+                : null;
         // Saving with the toggle on also repairs an entry left pointing at a moved or older copy.
         var startupNeedsChange = StartupToggle.IsOn ? !StartupRegistration.PointsHere() : StartupRegistration.IsEnabled();
         if (StartupToggle.IsEnabled && startupNeedsChange && !StartupRegistration.SetEnabled(StartupToggle.IsOn))
@@ -458,7 +464,7 @@ public sealed partial class MainWindow : Window
             _configuredWebSplitRatio, _displayPreference, _openFullScreen,
             Profiles: profiles,
             AutoSwitch: _autoProfileId is { } autoId && _layoutBeforeAuto is { } before ? new AutoLayoutSwitch(autoId, before) : null,
-            SuppressedProfileId: _suppressedAutoProfileId,
+            SuppressedProfileId: suppressedId,
             Weather: WeatherPlaceSelector.SelectedItem is ComboBoxItem { Tag: WeatherLocation place } ? place : null,
             Fahrenheit: FahrenheitToggle.IsOn));
         if (!await PersistAsync(settings)) return;
@@ -476,6 +482,7 @@ public sealed partial class MainWindow : Window
         _webPanelCardIds = settings.WebPanelCardIds!;
         _configuredWebSplitRatio = settings.WebSplitRatio;
         _profiles = settings.Profiles ?? [];
+        _suppressedAutoProfileId = settings.SuppressedProfileId;
         _weatherLocation = settings.Weather;
         _fahrenheit = settings.Fahrenheit;
         BuildWidgetSlots();
@@ -841,9 +848,12 @@ public sealed partial class MainWindow : Window
     private void BuildProfileButtons()
     {
         ProfileButtons.Children.Clear();
+        var current = LayoutProfiles.Capture(CurrentSettings());
         foreach (var profile in _profiles)
         {
-            var active = profile.Id == _activeProfileId;
+            // Highlighted only while the dashboard still matches it, so later quick changes or
+            // a restart never leave a stale "current layout".
+            var active = LayoutProfiles.Matches(current, profile.Layout);
             var button = new Button
             {
                 Content = profile.WhenRunning is { } app ? $"{profile.Name}  ·  with {app}" : profile.Name,
@@ -887,7 +897,6 @@ public sealed partial class MainWindow : Window
         var candidate = SettingsStore.Normalize(CurrentSettings() with { Profiles = updated });
         if (!await PersistAsync(candidate)) return;
         _profiles = candidate.Profiles!;
-        _activeProfileId = saved.Id;
         ProfileNameBox.Text = string.Empty;
         BuildProfileButtons();
     }
@@ -919,7 +928,6 @@ public sealed partial class MainWindow : Window
         _webPanelCount = settings.WebPanelCount;
         _webPanelCardIds = settings.WebPanelCardIds!;
         _configuredWebSplitRatio = settings.WebSplitRatio;
-        _activeProfileId = profileId;
         BuildWidgetSlots();
         ApplyMediaLayout();
         await BuildWebPanelsAsync();

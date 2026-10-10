@@ -53,6 +53,13 @@ internal sealed class ProfileEditor : UserControl
                 editor.Name.Focus(FocusState.Programmatic);
                 return false;
             }
+            if (result.Any(profile => string.Equals(profile.Name, name, StringComparison.CurrentCultureIgnoreCase)))
+            {
+                profiles = [];
+                error = $"Two saved layouts are called {name}. Give each a different name.";
+                editor.Name.Focus(FocusState.Programmatic);
+                return false;
+            }
             var trigger = editor.WhenRunning.Text.Trim();
             var program = LayoutProfiles.NormalizeProcessName(trigger);
             if (trigger.Length > 0 && program is null)

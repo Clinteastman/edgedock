@@ -59,18 +59,39 @@ internal static class LayoutProfiles
     }
 
     /// <summary>
-    /// A process name as Task Manager's Details tab shows it, without ".exe"; anything else
-    /// (paths, arguments) is rejected so a trigger only ever names one program.
+    /// A process name as Task Manager's Details tab shows it, without ".exe". Any character
+    /// legal in a file name is accepted (such as notepad++); folders, drive letters, quotes and
+    /// command-line options are rejected so a trigger only ever names one program.
     /// </summary>
     public static string? NormalizeProcessName(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         var name = value.Trim();
-        if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name = name[..^4];
-        return name.Length is > 0 and <= 64 && name.All(c => char.IsLetterOrDigit(c) || c is '.' or '_' or '-' or ' ')
+        if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name = name[..^4].TrimEnd();
+        return name.Length is > 0 and <= 64 &&
+               name.IndexOfAny(InvalidNameCharacters) < 0 &&
+               !name.Contains(" -", StringComparison.Ordinal) &&
+               !name.EndsWith('.')
             ? name
             : null;
     }
+
+    private static readonly char[] InvalidNameCharacters = Path.GetInvalidFileNameChars();
+
+    /// <summary>Whether the dashboard currently shows exactly this saved layout.</summary>
+    public static bool Matches(ProfileLayout current, ProfileLayout saved) =>
+        current.Placement == saved.Placement &&
+        (current.Placement != MediaPanelPlacement.Hidden || current.LastVisiblePlacement == saved.LastVisiblePlacement) &&
+        Math.Abs(current.PanelWidth - saved.PanelWidth) < 0.5 &&
+        current.IsWebVisible == saved.IsWebVisible &&
+        current.WidgetSlots.Count == saved.WidgetSlots.Count &&
+        current.WidgetSlots.Zip(saved.WidgetSlots).All(pair =>
+            pair.First.SelectedWidgetId == pair.Second.SelectedWidgetId &&
+            pair.First.EnabledWidgetIds.SequenceEqual(pair.Second.EnabledWidgetIds)) &&
+        (!current.IsWebVisible ||
+            (current.WebPanelCount == saved.WebPanelCount &&
+             current.WebPanelCardIds.SequenceEqual(saved.WebPanelCardIds) &&
+             Math.Abs(current.WebSplitRatio - saved.WebSplitRatio) < 0.005));
 
     public static IReadOnlyList<LayoutProfile> Normalize(IReadOnlyList<LayoutProfile>? source, EdgeDockSettings baseline)
     {

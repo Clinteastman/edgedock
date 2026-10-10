@@ -338,6 +338,14 @@ try
     Check(LayoutProfiles.NormalizeProcessName("Game.EXE") == "Game" && LayoutProfiles.NormalizeProcessName("cmd /c x") is null &&
           LayoutProfiles.NormalizeProcessName(@"C:\x.exe") is null && LayoutProfiles.NormalizeProcessName(" ") is null,
           "Program triggers accept a name only");
+    Check(LayoutProfiles.NormalizeProcessName("notepad++.exe") == "notepad++" && LayoutProfiles.NormalizeProcessName("Some Game") == "Some Game" &&
+          LayoutProfiles.NormalizeProcessName("game -windowed") is null && LayoutProfiles.NormalizeProcessName("\"game\"") is null,
+          "Program triggers accept any file name, but not options or quotes");
+    var shown = LayoutProfiles.Capture(withProfiles);
+    Check(LayoutProfiles.Matches(shown, shown) &&
+          !LayoutProfiles.Matches(shown with { PanelWidth = shown.PanelWidth + 40 }, shown) &&
+          !LayoutProfiles.Matches(shown with { WidgetSlots = [new(["stats"], "stats")] }, shown),
+          "A saved layout reads as current only while the dashboard still matches it");
     const string forecastJson = """
         {"utc_offset_seconds":3600,
          "current":{"time":"2026-10-10T20:00","temperature_2m":11.04,"weather_code":3,"is_day":0},

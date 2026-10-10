@@ -17,6 +17,12 @@
   check added); automatic switches no longer reset an open Settings form;
   saving at the 12-layout limit explains how to replace or remove one.
   Auto-switch capture repeated after the changes.
+- Later reviews: switch state is saved before it is trusted (failed saves
+  retry); a hand override survives restart and ends when its own program stops
+  or its trigger is changed; layout names must be unique; program names accept
+  any legal file name (notepad++) but not folders, quotes or options; the
+  drawer highlights a layout only while the dashboard still matches it. Console
+  checks added; auto-switch capture repeated.
 
 ## Clock and weather widget (10 October 2026)
 
