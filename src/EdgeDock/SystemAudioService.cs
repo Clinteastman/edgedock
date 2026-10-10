@@ -270,7 +270,8 @@ internal sealed class SystemAudioService : IDisposable
         {
             ForEachSession((control, volume) =>
             {
-                if (control.GetProcessId(out var processId) != 0) return;
+                // Success includes AUDCLNT_S_NO_SINGLE_PROCESS for sessions spanning processes.
+                if (control.GetProcessId(out var processId) < 0) return;
                 if (AudioNaming.KeyFor(processId, control.IsSystemSoundsSession() == 0) != key) return;
                 // An expired or failing session must not stop the app's other sessions.
                 try { change(volume); }
@@ -301,8 +302,10 @@ internal sealed class SystemAudioService : IDisposable
                 try
                 {
                     Marshal.ThrowExceptionForHR(sessions.GetSession(index, out control));
-                    // One COM object answers for the session, its process and its volume.
-                    visit((IAudioSessionControl2)control, (ISimpleAudioVolume)control);
+                    // One COM object answers for the session, its process and its volume. A session
+                    // that ends mid-enumeration is skipped rather than losing all the others.
+                    try { visit((IAudioSessionControl2)control, (ISimpleAudioVolume)control); }
+                    catch (Exception exception) when (exception is COMException or InvalidCastException) { }
                 }
                 finally { ReleaseComObject(control); }
             }
