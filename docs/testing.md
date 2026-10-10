@@ -1,5 +1,17 @@
 # Testing
 
+## Media source picker (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 29 console checks pass, including
+  readable names for desktop (`chrome.exe`, full paths) and packaged app IDs.
+- Harness against real Windows media sessions, with a second silent test
+  session created by a small app: both listed (playing first), Automatic chose
+  the playing one, pinning Chrome switched the snapshot to Chrome, Automatic
+  switched back. Pinning the test app and letting it exit fell back to Chrome
+  automatically.
+- Captured EdgeDock window showed "Now playing · Silentplayer" with the chooser
+  arrow. Opening the menu needs real input and was not tested.
+
 ## Web card recovery (9 October 2026)
 
 - Debug x64 build: zero warnings/errors. 28 console checks pass, including

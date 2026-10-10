@@ -110,6 +110,7 @@ public sealed partial class MediaWidget : UserControl
 
         _displayedMediaVersion = snapshot.Version;
         _lastSnapshot = snapshot;
+        ShowSource(snapshot);
         TrackTitle.Text = snapshot.Title;
         TrackArtist.Text = snapshot.Artist;
         PreviousButton.IsEnabled = snapshot.CanGoPrevious;
@@ -165,6 +166,39 @@ public sealed partial class MediaWidget : UserControl
                 ShowArtworkFallback();
             }
         }
+    }
+
+    /// <summary>Names the controlled app; offers a choice once two or more apps have media.</summary>
+    private void ShowSource(MediaSnapshot snapshot)
+    {
+        SourceText.Text = string.IsNullOrWhiteSpace(snapshot.SourceName) ? "Now playing" : $"Now playing · {snapshot.SourceName}";
+        var canChoose = snapshot.SourceCount > 1 || _service?.IsPinned == true;
+        SourceChevron.Visibility = canChoose ? Visibility.Visible : Visibility.Collapsed;
+        SourceButton.IsHitTestVisible = canChoose;
+        SourceButton.IsTabStop = canChoose;
+    }
+
+    private void SourceButton_Click(object sender, RoutedEventArgs args)
+    {
+        if (_service is null) return;
+        var menu = new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft };
+        var automatic = new ToggleMenuFlyoutItem { Text = "Automatic (what Windows is playing)", IsChecked = !_service.IsPinned, MinHeight = 48 };
+        automatic.Click += async (_, _) => await _service.ChooseSourceAsync(null);
+        menu.Items.Add(automatic);
+        menu.Items.Add(new MenuFlyoutSeparator());
+        foreach (var source in _service.GetSources())
+        {
+            var item = new ToggleMenuFlyoutItem
+            {
+                Text = source.IsPlaying ? $"{source.Name}  ·  playing" : source.Name,
+                IsChecked = _service.IsPinned && source.IsSelected,
+                MinHeight = 48
+            };
+            var id = source.Id;
+            item.Click += async (_, _) => await _service.ChooseSourceAsync(id);
+            menu.Items.Add(item);
+        }
+        menu.ShowAt(SourceButton);
     }
 
     private void ShowArtworkFallback()

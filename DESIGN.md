@@ -56,6 +56,11 @@ panel width. The row pans as one surface. A horizontal scrollbar provides mouse
 access. The controls drawer remains available to return to the saved dashboard.
 Dashboard-only layout controls are unavailable while this mode is active.
 
+- The media header names the controlled app ("Now playing · Spotify"). With two
+  or more media sessions it becomes a menu: Automatic (Windows' current
+  session) or a specific app, playing apps marked. A chosen app stays in
+  control until its session ends, then Automatic resumes. The choice is not
+  saved between launches.
 - Media uses the shared Windows media session: title, artist, artwork and
   supported playback controls. Controls get reserved space; artwork shrinks to
   the remaining height and is capped at 180px.
