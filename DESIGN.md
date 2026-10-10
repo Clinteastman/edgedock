@@ -84,7 +84,12 @@ Dashboard-only layout controls are unavailable while this mode is active.
   by full path, or an http/https address: no arguments, relative paths or other
   schemes. They are checked when saved and again when tapped; a missing item
   explains itself instead of failing silently.
-
+- Clock and weather: 64px time in the Windows short-time format and the date;
+  with a place set, an emoji condition, current temperature, today's high and
+  low, the next six hours and "place · updated hh:mm". Without a place it
+  explains how to add one. The clock ticks only while visible; weather
+  refreshes every 15 minutes, is shared between clock widgets, and keeps the
+  last reading when offline. Units default from the Windows region.
 - PC activity shows processor, memory, graphics (busiest engine, as Task
   Manager does) with the busiest adapter's video memory, disk busy time with read/write rates, and
   network down/up. Each row has a 60-second sparkline; network draws both

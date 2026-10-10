@@ -117,6 +117,20 @@
       <Slider x:Name="BackdropTransparencySlider" Minimum="0" Maximum="100" StepFrequency="5" Value="50"
               ValueChanged="BackdropTransparencySlider_ValueChanged" AutomationProperties.Name="Background visibility"/>
       <TextBlock x:Name="BackdropHelpText" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
+      <TextBlock Text="Clock and weather" FontSize="18" FontWeight="SemiBold"/>
+      <TextBlock Text="Weather comes from Open-Meteo, free and without an account. Find sends the town you type to Open-Meteo to look it up. After that, only the chosen place's position is sent, and only while the clock is on screen."
+                 TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
+      <Grid ColumnSpacing="10">
+       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+       <TextBox x:Name="WeatherSearchBox" Header="Town or city" MinHeight="52" PlaceholderText="For example, Manchester"
+                AutomationProperties.Name="Town or city for the weather"/>
+       <Button x:Name="FindWeatherPlaceButton" Grid.Column="1" Content="Find" VerticalAlignment="Bottom"
+               Click="FindWeatherPlace_Click" AutomationProperties.Name="Find the place"/>
+      </Grid>
+      <TextBlock x:Name="WeatherSearchStatus" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Visibility="Collapsed"/>
+      <ComboBox x:Name="WeatherPlaceSelector" Header="Weather for" HorizontalAlignment="Stretch" MinHeight="52"
+                AutomationProperties.Name="Place shown in the weather"/>
+      <ToggleSwitch x:Name="FahrenheitToggle" Header="Show temperatures in °F" AutomationProperties.Name="Show temperatures in Fahrenheit"/>
       <TextBlock Text="Startup" FontSize="18" FontWeight="SemiBold"/>
       <ToggleSwitch x:Name="StartupToggle" Header="Start EdgeDock when I sign in" AutomationProperties.Name="Start EdgeDock when I sign in"/>
       <TextBlock Text="EdgeDock reopens on the screen it was last on, in full screen if you left it that way. If that screen is switched off, EdgeDock steps aside and returns when it comes back."
