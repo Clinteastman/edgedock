@@ -16,8 +16,16 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <TextBlock Text="Now playing" FontSize="16" FontWeight="SemiBold"
-                       Foreground="{StaticResource MutedTextBrush}" />
+            <Button x:Name="SourceButton" Padding="0" MinHeight="52" MinWidth="0" Background="Transparent"
+                    BorderThickness="0" HorizontalAlignment="Left" Click="SourceButton_Click"
+                    AutomationProperties.Name="Choose which media app to control">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock x:Name="SourceText" Text="Now playing" FontSize="16" FontWeight="SemiBold"
+                               Foreground="{StaticResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
+                    <FontIcon x:Name="SourceChevron" Glyph="&#xE70D;" FontSize="12" Visibility="Collapsed"
+                              Foreground="{StaticResource MutedTextBrush}" />
+                </StackPanel>
+            </Button>
 
             <Border x:Name="ArtworkContainer" Grid.Row="1" MaxHeight="180" HorizontalAlignment="Stretch"
                     VerticalAlignment="Stretch" Background="#FF292532" CornerRadius="12">

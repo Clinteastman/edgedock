@@ -37,6 +37,32 @@
   closing waits for any in-flight blank or wake to finish completely before
   restoring.
 
+## Media source picker (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 29 console checks pass, including
+  readable names for desktop (`chrome.exe`, full paths) and packaged app IDs.
+- Harness against real Windows media sessions, with a second silent test
+  session created by a small app: both listed (playing first), Automatic chose
+  the playing one, pinning Chrome switched the snapshot to Chrome, Automatic
+  switched back. Pinning the test app and letting it exit fell back to Chrome
+  automatically.
+- Captured EdgeDock window showed "Now playing · Silentplayer" with the chooser
+  arrow. Opening the menu needs real input and was not tested.
+- After review: a user's choice is applied with a generation number, so a
+  slower background re-selection can no longer undo it; a failed refresh keeps
+  the app count so the picker stays usable; long app names are capped to the
+  panel width so they trim. Both harness scenarios repeated with the same
+  results.
+- After review: a pinned app with several sessions (for example two players
+  or tabs) now follows whichever of them starts playing. Harness with one test
+  app holding two silent sessions: pinned showed "Track A", then "Track B"
+  after playback moved. The old code passed this run too, because Windows also
+  moved its own current session; the change covers the case where Windows'
+  current session belongs to another app, which was not reproduced.
+- Second review: the shown session pausing now also triggers a fresh choice,
+  covering B reporting "playing" before A reports "paused". Harness run with B
+  started 0.4 s before A paused: switched to "Track B". Plain order still passes.
+
 ## Clock and weather widget (10 October 2026)
 
 - Debug x64 build: zero warnings/errors. 56 console checks pass, including
