@@ -13,6 +13,15 @@ content row, including in web-only mode. The drawer contains Settings, full
 screen, widget visibility, panel count and per-panel page selection. Configuration appears
 over content only when requested.
 F11 toggles full screen; Escape is left to active content.
+EdgeDock remembers the monitor it was last on (its device path, then its model
+code, then a unique resolution; never a guess between equal candidates) and
+whether it was full screen. Dragging the window to another screen updates the
+memory. If the remembered screen is missing at launch, EdgeDock opens windowed
+and moves there when it appears. If it disappears while full screen, EdgeDock
+minimises rather than covering another screen. Optional sign-in start uses the
+per-user Run key and is disabled for isolated `EDGEDOCK_DATA_DIR` profiles.
+A second launch brings the running window forward; each data folder has its
+own single-instance key.
 Full screen removes the title row and outer 10px inset. Dashboard panels meet
 the physical screen with square outside edges; internal 10px divider gaps stay.
 
@@ -37,6 +46,13 @@ Native widget panels and Widget view do not activate EdgeDock when tapped or
 clicked while another app is active; the input still reaches the widget, and
 the other app keeps keyboard focus. Web cards, the controls handle and open
 overlays activate normally.
+
+Each web card has a page zoom (50-150% in 5% steps, default 100%). It behaves
+like browser zoom: the page lays out on a viewport of the panel size divided by
+the zoom, and the result is scaled to fit, via the WebView2 DevTools protocol
+(`Emulation.setDeviceMetricsOverride`). CSS `zoom` is not used because it
+shrinks `100vh` layouts and leaves an empty band. Zoom is re-applied when the
+panel resizes and survives navigation.
 
 Web cards recover without attention. Connection-type load failures retry after
 5, 10, 20 and 40 seconds, then every 60, with a "Waiting for connection" status

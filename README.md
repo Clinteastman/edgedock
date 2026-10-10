@@ -15,6 +15,8 @@ contribute. This is not a signed installer or a finished consumer release.
 - Drag the gaps to resize two web cards or every widget panel together; sizes
   are saved, and the same widget width is shared across the group.
 - Hides web scrollbar bars while retaining page scrolling.
+- Sets page zoom per card (50-150%), so a dashboard designed for a taller
+  screen fits the Edge's 720 pixels. Full-height layouts still fill the panel.
 - Keeps your browser sign-in locally between launches.
 - Keeps web cards alive: retries pages that cannot be reached yet (for example
   at sign-in), reloads them after the PC wakes from a sleep longer than a
@@ -29,6 +31,11 @@ contribute. This is not a signed installer or a finished consumer release.
   they may need typing.
 - Switches between windowed and full-screen modes using F11 or the controls drawer.
 - Keeps the app menu available while in full screen.
+- Reopens on the screen it was last on, in full screen if you left it that way.
+  If that screen disappears while EdgeDock is full screen on it, EdgeDock
+  minimises instead of covering your main screen, then returns when it is back.
+- Optionally starts when you sign in (Settings, **Startup**).
+- Runs as one copy: launching it again brings the open window forward.
 - Supports one to three native widget panels, with an optional web area.
 - Lets each panel switch between its chosen widgets independently.
 - Includes a local library of media, PC volume/mute and Windows Settings shortcuts.
@@ -68,6 +75,11 @@ runtime limitations are recorded in [the testing notes](docs/testing.md).
    control in the drawer. Click or swipe down on the top-right handle to open it,
    including in full screen. No utility bar takes space from the dashboard.
 
+**Home Assistant tip:** set the card's page zoom to 80-90% in Settings so more
+of a dashboard fits the short screen. To hide Home Assistant's own sidebar and
+header, use a dashboard view designed for panels, or the community Kiosk Mode
+add-on; EdgeDock does not change the page itself.
+
 **Escape belongs to your web page.** EdgeDock does not use it to exit full screen.
 Mica's appearance follows Windows' backdrop behaviour; it falls back to a solid
 material when transparency is unavailable or the window is inactive.
@@ -96,7 +108,7 @@ kiosk browser.
 [Technology decisions](docs/technology.md) · [Contributing](CONTRIBUTING.md) ·
 [Developing widgets](docs/widget-development.md) · [MIT licence](LICENSE)
 
-Useful next steps after trying the prototype: saved page shortcuts, monitor
-placement, a media-session picker and a signed installer. These are ideas, not
+Useful next steps after trying the prototype: saved page shortcuts, a
+media-session picker and a signed installer. These are ideas, not
 features claimed by this build. The widget library currently contains bundled
 widgets; an online catalogue and third-party package installation are future work.
