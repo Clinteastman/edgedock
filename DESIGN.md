@@ -83,6 +83,11 @@ Dashboard-only layout controls are unavailable while this mode is active.
   with several sessions (browsers) get one row that sets all of them. Playing
   apps come first, System sounds last. It refreshes once a second only while
   visible. Loading or refreshing never changes system audio.
+- PC activity shows processor, memory, graphics (busiest engine, as Task
+  Manager does) with the busiest adapter's video memory, disk busy time with read/write rates, and
+  network down/up. Each row has a 60-second sparkline; network draws both
+  directions on one shared scale. It samples once a second on a background
+  thread and only while actually visible (not hidden or minimised). Unavailable counters read "Not available".
 - PC shortcuts opens named Windows Settings pages. These are shortcuts, not
   embedded replacements for the OS settings interfaces.
 

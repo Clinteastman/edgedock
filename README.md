@@ -35,10 +35,15 @@ contribute. This is not a signed installer or a finished consumer release.
 - Runs as one copy: launching it again brings the open window forward.
 - Supports one to three native widget panels, with an optional web area.
 - Lets each panel switch between its chosen widgets independently.
-- Includes a local library of media, PC audio and Windows Settings shortcuts.
+- Includes a local library of media, PC audio, PC activity and Windows
+  Settings shortcuts.
 - **PC audio** switches the Windows output device, sets master volume and mute,
   mutes the microphone with an unmistakable red state, and gives every app
   making sound its own volume slider and mute, with its icon.
+- **PC activity** shows processor, memory, graphics, disk and network use, each
+  with a one-minute graph. It reads Windows' own counters: no admin rights,
+  drivers or extra software. Temperatures are not shown, because reading them
+  needs a kernel driver.
 - Offers **Widget view**: all installed widgets in one horizontally scrolling row,
   with a button to return to your dashboard layout.
 
