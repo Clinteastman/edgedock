@@ -55,7 +55,7 @@ internal sealed class WebCardEditor : UserControl
                 editor.Address.Focus(FocusState.Programmatic);
                 return false;
             }
-            result.Add(new WebCardSettings(editor.Id, name, uri.AbsoluteUri));
+            result.Add(new WebCardSettings(editor.Id, name, uri.AbsoluteUri, editor.SelectedZoom));
         }
 
         cards = result;
@@ -77,11 +77,17 @@ internal sealed class WebCardEditor : UserControl
 
     private sealed class CardRow
     {
+        // Common zoom steps; a saved value between them is added so it is never lost.
+        private static readonly double[] ZoomSteps = [0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 1.0, 1.1, 1.25, 1.5];
+
         internal string Id { get; }
         internal Grid Root { get; } = new() { ColumnSpacing = 10, RowSpacing = 6 };
         internal TextBox Name { get; } = new() { Header = "Name", MinHeight = 52 };
         internal TextBox Address { get; } = new() { Header = "Web address", MinHeight = 52 };
+        internal ComboBox Zoom { get; } = new() { Header = "Page zoom", MinHeight = 52, MinWidth = 120 };
         internal Button Remove { get; } = new() { Content = "Remove", VerticalAlignment = VerticalAlignment.Bottom };
+
+        internal double SelectedZoom => Zoom.SelectedItem is ComboBoxItem { Tag: double zoom } ? zoom : 1.0;
 
         internal CardRow(WebCardSettings card)
         {
@@ -90,7 +96,15 @@ internal sealed class WebCardEditor : UserControl
             Address.Text = card.Url;
             AutomationProperties.SetName(Name, "Web card name");
             AutomationProperties.SetName(Address, $"Web address for {card.Name}");
+            AutomationProperties.SetName(Zoom, $"Page zoom for {card.Name}");
             AutomationProperties.SetName(Remove, $"Remove {card.Name} web card");
+            var current = SettingsStore.NormalizeZoom(card.Zoom);
+            foreach (var step in ZoomSteps.Append(current).Distinct().Order())
+            {
+                var item = new ComboBoxItem { Content = $"{step * 100:0}%", Tag = step };
+                Zoom.Items.Add(item);
+                if (step == current) Zoom.SelectedItem = item;
+            }
 
             Root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
             Root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
@@ -100,6 +114,10 @@ internal sealed class WebCardEditor : UserControl
             Root.Children.Add(Address);
             Grid.SetColumn(Remove, 2);
             Root.Children.Add(Remove);
+            Root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetRow(Zoom, 1);
+            Root.Children.Add(Zoom);
         }
     }
 }

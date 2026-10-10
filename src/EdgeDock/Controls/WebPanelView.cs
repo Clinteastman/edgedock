@@ -82,6 +82,9 @@ internal sealed class WebPanelView : Grid, IDisposable
     private bool _browserFailed;
     private bool _blanking;
     private bool _disposed;
+    private double _zoom = 1.0;
+    private bool _zoomApplied;
+    private DispatcherQueueTimer? _zoomTimer;
 
     internal WebPanelView(Func<Task>? retryInitialization = null)
     {
@@ -100,6 +103,7 @@ internal sealed class WebPanelView : Grid, IDisposable
         };
         _webView.NavigationStarting += NavigationStarting;
         _webView.NavigationCompleted += NavigationCompleted;
+        _webView.SizeChanged += WebView_SizeChanged;
     }
 
     internal string? CardId { get; private set; }
@@ -122,12 +126,14 @@ internal sealed class WebPanelView : Grid, IDisposable
         CardId = card.Id;
         AutomationProperties.SetName(_webView, card.Name);
         _uri = uri;
+        _zoom = SettingsStore.NormalizeZoom(card.Zoom);
         _setup.Visibility = Visibility.Collapsed;
         ShowStatus("Opening " + card.Name, _uri.Host, loading: true, retry: false);
         try
         {
             await EnsureInitializedAsync(environment);
             if (_disposed) return;
+            await ApplyZoomAsync();
             if (_webView.Source != _uri) _webView.Source = _uri;
             else if (sameCardRetrying) ScheduleRetryStatus();
             else _status.Visibility = Visibility.Collapsed;
@@ -173,6 +179,57 @@ internal sealed class WebPanelView : Grid, IDisposable
     {
         _webView.IsHitTestVisible = interactive;
         _webView.IsTabStop = interactive;
+    }
+
+    /// <summary>
+    /// Page zoom that behaves like the browser's own: the page lays out on a viewport of
+    /// panel size divided by the zoom, then the result is scaled to fit. CSS zoom is not
+    /// used because it shrinks full-height (100vh) layouts and leaves a gap below them.
+    /// </summary>
+    private async Task ApplyZoomAsync()
+    {
+        var core = _webView.CoreWebView2;
+        if (core is null || _disposed || _browserFailed) return;
+        try
+        {
+            if (Math.Abs(_zoom - 1.0) < 0.001)
+            {
+                if (!_zoomApplied) return;
+                await core.CallDevToolsProtocolMethodAsync("Emulation.clearDeviceMetricsOverride", "{}");
+                _zoomApplied = false;
+                return;
+            }
+            var width = (int)Math.Round(_webView.ActualWidth / _zoom);
+            var height = (int)Math.Round(_webView.ActualHeight / _zoom);
+            if (width <= 0 || height <= 0) return;
+            var parameters = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                width,
+                height,
+                deviceScaleFactor = 0,
+                mobile = false,
+                scale = _zoom
+            });
+            await core.CallDevToolsProtocolMethodAsync("Emulation.setDeviceMetricsOverride", parameters);
+            _zoomApplied = true;
+        }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException or ArgumentException)
+        {
+            // Zoom is cosmetic; a page that refuses it still works at 100%.
+        }
+    }
+
+    private void WebView_SizeChanged(object sender, SizeChangedEventArgs args)
+    {
+        if (!_zoomApplied && Math.Abs(_zoom - 1.0) < 0.001) return;
+        if (_zoomTimer is null)
+        {
+            _zoomTimer = DispatcherQueue.CreateTimer();
+            _zoomTimer.IsRepeating = false;
+            _zoomTimer.Interval = TimeSpan.FromMilliseconds(150);
+            _zoomTimer.Tick += async (_, _) => await ApplyZoomAsync();
+        }
+        _zoomTimer.Start();
     }
 
     internal async Task<string?> ExecuteScriptAsync(string script) =>
@@ -346,6 +403,8 @@ internal sealed class WebPanelView : Grid, IDisposable
         if (_disposed) return;
         _disposed = true;
         _retryTimer?.Stop();
+        _zoomTimer?.Stop();
+        _webView.SizeChanged -= WebView_SizeChanged;
         _webView.NavigationStarting -= NavigationStarting;
         _webView.NavigationCompleted -= NavigationCompleted;
         if (_webView.CoreWebView2 is not null)
