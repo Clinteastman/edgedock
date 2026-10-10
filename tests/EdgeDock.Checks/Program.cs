@@ -320,6 +320,42 @@ try
           SettingsStore.Normalize(upgraded with { PendingBrightness = restorePoint with { Brightness = 140 } }).PendingBrightness?.Brightness == 100 &&
           SettingsStore.Normalize(upgraded with { PendingBrightness = new BrightnessRestore(new DisplayPreference(null, null, 0, 0), 50) }).PendingBrightness is null,
           "A monitor's original brightness survives restart so it can be put back later");
+    const string forecastJson = """
+        {"utc_offset_seconds":3600,
+         "current":{"time":"2026-10-10T20:00","temperature_2m":11.04,"weather_code":3,"is_day":0},
+         "hourly":{"time":["2026-10-10T19:00","2026-10-10T20:00","2026-10-10T21:00","2026-10-10T22:00"],
+                   "temperature_2m":[11.5,11.0,-0.4,10.1],"weather_code":[2,3,61,0],"is_day":[1,0,0,0]},
+         "daily":{"time":["2026-10-10"],"temperature_2m_max":[12.6],"temperature_2m_min":[9.9]}}
+        """;
+    var forecast = WeatherForecast.Parse(forecastJson, new DateTime(2026, 10, 10, 20, 25, 0));
+    Check(forecast is { Code: 3, IsDay: false, High: 12.6, Low: 9.9 } &&
+          forecast.NextHours.Select(hour => hour.Time.Hour).SequenceEqual([21, 22]) && forecast.NextHours.All(hour => !hour.IsDay) &&
+          WeatherForecast.Degrees(forecast.Temperature) == "11°" && WeatherForecast.Degrees(-0.4) == "0°",
+          "Weather reads now, today's range and only the hours still to come");
+    Check(WeatherForecast.Parse("{}", DateTime.Now) is null && WeatherForecast.Parse("not json", DateTime.Now) is null,
+          "An unusable weather response is ignored");
+    Check(WeatherForecast.Describe(0, true) == ("Clear", "☀️") && WeatherForecast.Describe(0, false).Text == "Clear" &&
+          WeatherForecast.Describe(0, false).Symbol == "🌙" && WeatherForecast.Describe(95).Text == "Thunderstorm" &&
+          WeatherForecast.Describe(1234).Text == "Unknown",
+          "Weather codes are described in plain words, by day and night");
+    var places = WeatherForecast.ParseSearch("""
+        {"results":[{"name":"Manchester","admin1":"England","country":"United Kingdom","latitude":53.48095,"longitude":-2.23743},
+                    {"name":"Monaco","admin1":"Monaco","country":"Monaco","latitude":43.73,"longitude":7.42}]}
+        """);
+    Check(places.Count == 2 && places[0].Name == "Manchester, England, United Kingdom" && places[1].Name == "Monaco" &&
+          WeatherForecast.ParseSearch("""{"generationtime_ms":0.2}""").Count == 0,
+          "Place search gives readable names and copes with no results");
+    Check(WeatherForecast.ForecastUrl(new WeatherLocation("x", 53.48095, -2.23743), true)
+              .Contains("latitude=53.481&longitude=-2.2374") &&
+          WeatherForecast.ForecastUrl(new WeatherLocation("x", 1, 2), true).Contains("temperature_unit=fahrenheit") &&
+          WeatherForecast.SearchUrl(" St Ives & co ").EndsWith("name=St%20Ives%20%26%20co&count=5&language=en&format=json"),
+          "Weather requests send only rounded coordinates or the search text");
+    store = new SettingsStore();
+    await store.SaveAsync(upgraded with { Weather = new WeatherLocation(" Manchester ", 53.48, -2.24), Fahrenheit = true });
+    var weatherSaved = await new SettingsStore().LoadAsync();
+    Check(weatherSaved.Weather == new WeatherLocation("Manchester", 53.48, -2.24) && weatherSaved.Fahrenheit &&
+          SettingsStore.Normalize(upgraded with { Weather = new WeatherLocation("Nowhere", 120, 0) }).Weather is null,
+          "The weather place and units survive restart; impossible places are dropped");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally

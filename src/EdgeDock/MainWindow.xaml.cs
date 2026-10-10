@@ -51,7 +51,9 @@ public sealed partial class MainWindow : Window
     private BackdropMaterial _material = BackdropMaterial.Mica;
     private double _backdropTransparency = 50;
     private IReadOnlyList<WidgetSlotSettings> _widgetSlots = [new(["media"], "media")];
-    private readonly WidgetRegistry _registry = WidgetRegistry.CreateBuiltIns();
+    private readonly WidgetRegistry _registry;
+    private WeatherLocation? _weatherLocation;
+    private bool _fahrenheit;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly SemaphoreSlim _webPanelGate = new(1, 1);
     private bool _closing;
@@ -101,6 +103,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         _messageHookCallback = MessageHookCallback;
+        _registry = WidgetRegistry.CreateBuiltIns(() => new ClockOptions(_weatherLocation, _fahrenheit));
         InitializeComponent();
         RegisterDividerHandlers(WebDivider);
         RegisterDividerHandlers(GroupDivider);
@@ -162,6 +165,8 @@ public sealed partial class MainWindow : Window
         _openFullScreen = settings.OpenFullScreen;
         _screenSettings = settings.Screen ?? ScreenScheduleSettings.Default;
         _brightnessRestore = settings.PendingBrightness;
+        _weatherLocation = settings.Weather;
+        _fahrenheit = settings.Fahrenheit;
         // Move to the saved screen before WebView2 creates its child HWNDs, so pages
         // render once at the right size and scale.
         RestorePreferredDisplay();
@@ -447,7 +452,9 @@ public sealed partial class MainWindow : Window
             BackdropTransparencySlider.Value, cards, _webPanelCount, _webPanelCardIds,
             _configuredWebSplitRatio, _displayPreference, _openFullScreen,
             Screen: ReadScreenSettings(),
-            PendingBrightness: _brightnessRestore));
+            PendingBrightness: _brightnessRestore,
+            Weather: WeatherPlaceSelector.SelectedItem is ComboBoxItem { Tag: WeatherLocation place } ? place : null,
+            Fahrenheit: FahrenheitToggle.IsOn));
         if (!await PersistAsync(settings)) return;
         _material = settings.Material;
         _backdropTransparency = settings.BackdropTransparency;
@@ -466,6 +473,8 @@ public sealed partial class MainWindow : Window
         // Re-evaluate straight away with the new schedule.
         _appliedScheduleBrightness = null;
         _ = UpdateScreenAsync();
+        _weatherLocation = settings.Weather;
+        _fahrenheit = settings.Fahrenheit;
         BuildWidgetSlots();
         ApplyMediaLayout();
         await BuildWebPanelsAsync();
@@ -528,7 +537,9 @@ public sealed partial class MainWindow : Window
         _displayPreference,
         _openFullScreen,
         Screen: _screenSettings,
-        PendingBrightness: _brightnessRestore);
+        PendingBrightness: _brightnessRestore,
+        Weather: _weatherLocation,
+        Fahrenheit: _fahrenheit);
 
     private void ApplyBackdrop()
     {
@@ -565,6 +576,40 @@ public sealed partial class MainWindow : Window
         NightStartPicker.Time = _screenSettings.NightStart;
         NightEndPicker.Time = _screenSettings.NightEnd;
         BlankAfterSelector.SelectedIndex = Math.Max(0, Array.IndexOf(ScreenSchedule.BlankChoices, _screenSettings.BlankAfterMinutes));
+        LoadWeatherPlaces(_weatherLocation, []);
+        FahrenheitToggle.IsOn = _fahrenheit;
+        WeatherSearchStatus.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>"No weather", the current place, then any search results.</summary>
+    private void LoadWeatherPlaces(WeatherLocation? selected, IReadOnlyList<WeatherLocation> found)
+    {
+        WeatherPlaceSelector.Items.Clear();
+        WeatherPlaceSelector.Items.Add(new ComboBoxItem { Content = "No weather" });
+        var places = (selected is null ? found : found.Prepend(selected)).DistinctBy(place => (place.Latitude, place.Longitude));
+        foreach (var place in places)
+            WeatherPlaceSelector.Items.Add(new ComboBoxItem { Content = place.Name, Tag = place });
+        WeatherPlaceSelector.SelectedIndex = selected is null ? (found.Count > 0 ? 1 : 0) : 1;
+    }
+
+    private async void FindWeatherPlace_Click(object sender, RoutedEventArgs args)
+    {
+        var query = WeatherSearchBox.Text.Trim();
+        if (query.Length == 0) return;
+        FindWeatherPlaceButton.IsEnabled = false;
+        WeatherSearchStatus.Text = "Searching…";
+        WeatherSearchStatus.Visibility = Visibility.Visible;
+        try
+        {
+            var found = await WeatherService.SearchAsync(query);
+            var current = WeatherPlaceSelector.SelectedItem is ComboBoxItem { Tag: WeatherLocation place } ? place : null;
+            // Put the first match forward so Save uses it unless another is picked.
+            LoadWeatherPlaces(found.FirstOrDefault() ?? current, found.Count > 0 ? found : (current is null ? [] : [current]));
+            WeatherSearchStatus.Text = found.Count == 0
+                ? $"No places found for \"{query}\". Check the spelling or try a nearby town."
+                : $"{found.Count} found. Choose one below, then Save layout.";
+        }
+        finally { FindWeatherPlaceButton.IsEnabled = true; }
     }
 
     private void PanelWidthSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs args)
@@ -920,7 +965,7 @@ public sealed partial class MainWindow : Window
         if (count == _widgetSlots.Count) return;
         var slots = _widgetSlots.Take(count).ToList();
         while (slots.Count < count)
-            slots.Add(new WidgetSlotSettings(["media", "audio", "stats", "pc"], "media"));
+            slots.Add(new WidgetSlotSettings(["media", "clock", "audio", "stats", "pc"], "media"));
         _widgetSlots = slots;
         BuildWidgetSlots();
         ApplyMediaLayout();
