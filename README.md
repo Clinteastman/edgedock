@@ -24,6 +24,8 @@ contribute. This is not a signed installer or a finished consumer release.
 - Places the media panel on the right, on the left, or hides it.
 - Offers a quick show/hide button, adjustable panel width and optional artwork.
 - Provides previous, play/pause and next controls when the player supports them.
+- Shows which app it is controlling. When two or more apps have media, tap
+  "Now playing" to choose one, or Automatic to follow what Windows is playing.
 - Switches between windowed and full-screen modes using F11 or the controls drawer.
 - Keeps the app menu available while in full screen.
 - Supports one to three native widget panels, with an optional web area.
@@ -94,6 +96,6 @@ kiosk browser.
 [Developing widgets](docs/widget-development.md) · [MIT licence](LICENSE)
 
 Useful next steps after trying the prototype: saved page shortcuts, monitor
-placement, a media-session picker and a signed installer. These are ideas, not
+placement and a signed installer. These are ideas, not
 features claimed by this build. The widget library currently contains bundled
 widgets; an online catalogue and third-party package installation are future work.

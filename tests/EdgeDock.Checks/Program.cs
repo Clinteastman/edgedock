@@ -196,6 +196,11 @@ try
     Check(budget.TryConsume(asleep) && budget.TryConsume(asleep.AddMinutes(1)) && budget.TryConsume(asleep.AddMinutes(2)) &&
           !budget.TryConsume(asleep.AddMinutes(3)) && budget.TryConsume(asleep.AddMinutes(10)),
           "Automatic crash recovery stops after three tries in ten minutes, then allows more later");
+    Check(MediaNaming.FallbackName("chrome.exe") == "Chrome" && MediaNaming.FallbackName(@"C:\Apps\Foo\musicbee.exe") == "MusicBee" &&
+          MediaNaming.FallbackName("SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify") == "Spotify" &&
+          MediaNaming.FallbackName("Microsoft.ZuneMusic_8wekyb3d8bbwe!App") == "ZuneMusic" &&
+          MediaNaming.FallbackName("somePlayer") == "SomePlayer" && MediaNaming.FallbackName("") == "Media app",
+          "Media apps get readable names from desktop and packaged app IDs");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally
