@@ -437,8 +437,7 @@ public sealed partial class MainWindow : Window
     private void UnlockSettingsEditors()
     {
         _checkingSave = false;
-        LauncherEditor.IsEnabled = true;
-        WebCardEditor.IsEnabled = true;
+        SettingsForm.IsEnabled = true;
     }
 
     private async Task SaveAndNavigateAsync()
@@ -456,8 +455,9 @@ public sealed partial class MainWindow : Window
         // Lock the drafts while targets are checked: an edit made during a slow check would
         // otherwise be silently replaced by the values being validated.
         _checkingSave = true;
-        LauncherEditor.IsEnabled = false;
-        WebCardEditor.IsEnabled = false;
+        // The whole form is locked, not just the lists: any edit made while the save runs would
+        // otherwise be left out of it and then lost when Settings closes.
+        SettingsForm.IsEnabled = false;
         _saveCancellation?.Dispose();
         _saveCancellation = new CancellationTokenSource();
         // The drafts stay locked until the save is written, not just checked.

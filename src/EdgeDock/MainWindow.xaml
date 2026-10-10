@@ -108,7 +108,7 @@
   <Border x:Name="SettingsPanel" Grid.Row="1" Width="480" HorizontalAlignment="Right" Margin="0,0,10,10" Padding="20" Background="#FA24202E" CornerRadius="14" Visibility="Collapsed">
    <Grid RowSpacing="12"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <Grid><TextBlock Text="Make it yours" FontSize="24" FontWeight="SemiBold" VerticalAlignment="Center"/><Button HorizontalAlignment="Right" Click="CancelSettings_Click" AutomationProperties.Name="Close settings"><SymbolIcon Symbol="Cancel"/></Button></Grid>
-    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <ScrollViewer x:Name="SettingsForm" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
      <StackPanel Spacing="16">
       <ComboBox x:Name="MaterialSelector" Header="Appearance" HorizontalAlignment="Stretch" MinHeight="52" AutomationProperties.Name="Window appearance" SelectionChanged="MaterialSelector_SelectionChanged">
        <ComboBoxItem Content="Mica — wallpaper tint"/><ComboBoxItem Content="Acrylic — blur behind the window"/>

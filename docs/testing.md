@@ -32,7 +32,7 @@
   still show. Tapping tiles still needs real input.
 - Fourth review: Settings now uses the same shared target checks as the tiles
   (a stuck drive check is joined, and an abandoned save stops waiting at once);
-  the editors stay locked until a checked save is written, and Cancel waits for
+  the whole Settings form stays locked until a checked save is written, and Cancel waits for
   a save already being written instead of half-undoing it. Console check added
   for shared checks looking again after a folder is removed.
 
