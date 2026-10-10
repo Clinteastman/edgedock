@@ -13,6 +13,66 @@
   button would otherwise give the window focus anyway. Tab focus is unchanged.
   The pending runtime test must include tapping a slider and a button.
 
+## Audio widget (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 30 console checks pass, including app
+  names (never resource references such as `@%SystemRoot%...`) and row order.
+- Harness against the real system, read-only: listed 13 active outputs with the
+  default (Voicemeeter Input) marked, the G6 microphone and its mute state, and
+  five app sessions with icons. A test process looping a silent sound was set
+  to 37% and muted, read back as such, then restored. Master volume and the
+  microphone were confirmed unchanged.
+- Captured EdgeDock window: output picker, master row, microphone button and
+  per-app rows with icons rendered at 380px.
+- After review: a partial output switch is rolled back role by role; an output
+  switch error stays visible until the next user action or a successful switch;
+  sliders and mute buttons are 52px touch targets; app icons load off the UI
+  thread (shared ShellIcons); sampling uses the shared visibility check. Harness
+  and capture repeated with the same results.
+- Second review: rows are not moved or removed while a slider is held (values
+  still update; order catches up after release); the switch error sits under
+  the output picker and clears when the default output changes by any route;
+  one failing session no longer stops an app's other sessions changing.
+- Deliberately not tested on this PC: switching the default output device and
+  muting the real microphone (both would disrupt the user's audio). The output
+  switch uses the same call as the Sound control panel.
+- Third review: app rows are now keyed by program file, so an app's sessions
+  share one row across processes (process ID only when the path cannot be
+  read). Harness with two processes of one test program: one row; muting it
+  muted both (the row reads muted only when every session is). Output switching
+  now refuses to start unless all three current defaults were read, so a failed
+  switch can always be undone (not exercised: needs Windows to refuse a role).
+- Output switching keeps IPolicyConfig (owner's decision, 10 October 2026),
+  with a supported fallback: when Windows refuses, an "Open Sound settings"
+  button appears under the message. Build only; the refusal path needs Windows
+  to refuse a switch, so it was not exercised.
+
+## Media source picker (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 29 console checks pass, including
+  readable names for desktop (`chrome.exe`, full paths) and packaged app IDs.
+- Harness against real Windows media sessions, with a second silent test
+  session created by a small app: both listed (playing first), Automatic chose
+  the playing one, pinning Chrome switched the snapshot to Chrome, Automatic
+  switched back. Pinning the test app and letting it exit fell back to Chrome
+  automatically.
+- Captured EdgeDock window showed "Now playing · Silentplayer" with the chooser
+  arrow. Opening the menu needs real input and was not tested.
+- After review: a user's choice is applied with a generation number, so a
+  slower background re-selection can no longer undo it; a failed refresh keeps
+  the app count so the picker stays usable; long app names are capped to the
+  panel width so they trim. Both harness scenarios repeated with the same
+  results.
+- After review: a pinned app with several sessions (for example two players
+  or tabs) now follows whichever of them starts playing. Harness with one test
+  app holding two silent sessions: pinned showed "Track A", then "Track B"
+  after playback moved. The old code passed this run too, because Windows also
+  moved its own current session; the change covers the case where Windows'
+  current session belongs to another app, which was not reproduced.
+- Second review: the shown session pausing now also triggers a fresh choice,
+  covering B reporting "playing" before A reports "paused". Harness run with B
+  started 0.4 s before A paused: switched to "Track B". Plain order still passes.
+
 ## Clock and weather widget (10 October 2026)
 
 - Debug x64 build: zero warnings/errors. 56 console checks pass, including
