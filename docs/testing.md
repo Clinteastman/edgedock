@@ -1,5 +1,18 @@
 # Testing
 
+## Clock and weather widget (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 56 console checks pass, including
+  forecast parsing (only hours still to come, today's range, "0°" not "-0°"),
+  bad responses, WMO code descriptions by day and night, place search names,
+  request contents (rounded coordinates, escaped search text, units), and
+  persistence of the place and units.
+- Checked the live Open-Meteo responses first (Manchester): fields and units
+  matched the parser.
+- Captured EdgeDock window (test place: Manchester) showed 20:10, the date,
+  overcast 11°, high 13° and low 10°, six hourly cells and the update time.
+- Not tested yet: the Settings search and save flow (needs real input).
+
 ## PC activity widget (10 October 2026)
 
 - Debug x64 build: zero warnings/errors. 35 console checks pass, including

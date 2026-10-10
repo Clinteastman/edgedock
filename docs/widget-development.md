@@ -41,6 +41,8 @@ point for contributions, not a promised stable binary plugin SDK.
 - Do not change OS state just because the widget loads or refreshes.
 - Keep credentials out of source, settings exports and diagnostic screenshots.
 - Document any network access and external applications the widget requires.
+  The clock's weather is the example: Open-Meteo, coordinates only, opt-in, and
+  cached for 15 minutes (`WeatherService.cs`).
 
 ## Future third-party packages
 
