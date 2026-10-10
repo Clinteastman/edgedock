@@ -32,8 +32,15 @@ internal static class AudioNaming
         return "App";
     }
 
-    /// <summary>Row key: one per process (browsers open several sessions), plus System sounds.</summary>
-    public static string KeyFor(uint processId, bool isSystemSounds) => isSystemSounds ? "system" : $"pid:{processId}";
+    /// <summary>
+    /// Row key: one per program file, so an app's sessions share a row even across several
+    /// processes (browsers, games with helper processes). The process ID is the fallback when
+    /// the program's path cannot be read; System sounds has its own row.
+    /// </summary>
+    public static string KeyFor(uint processId, bool isSystemSounds, string? executablePath = null) =>
+        isSystemSounds ? "system"
+        : !string.IsNullOrWhiteSpace(executablePath) ? "app:" + executablePath.Trim().ToUpperInvariant()
+        : $"pid:{processId}";
 
     /// <summary>
     /// One row per key, represented by its playing session if any. The row reads as muted only

@@ -263,6 +263,11 @@ try
         Session(20, "Chrome", false) with { IsMuted = true }]);
     Check(!partlyMuted[0].IsMuted && allMuted[0].IsMuted,
           "An app reads as muted only when all its sessions are muted");
+    const string player = @"C:\Apps\Player\player.exe";
+    Check(AudioNaming.KeyFor(40, false, player) == AudioNaming.KeyFor(41, false, player.ToLowerInvariant()) &&
+          AudioNaming.KeyFor(40, false, null) != AudioNaming.KeyFor(41, false, null) &&
+          AudioNaming.KeyFor(40, true, player) == "system",
+          "One audio row per program, even across processes; process ID only as a fallback");
     // Idle +50, kernel (including idle) +200, user +100: 250 of 300 ticks busy.
     Check(StatsMath.CpuPercent(100, 200, 100, 150, 400, 200) is { } cpu && Math.Abs(cpu - 250.0 / 3) < 0.001,
           "Processor use counts kernel and user time minus idle");

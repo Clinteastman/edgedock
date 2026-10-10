@@ -80,7 +80,7 @@ Dashboard-only layout controls are unavailable while this mode is active.
   points to Sound settings), master volume with a mute button, a microphone
   button for the default communications microphone (red when muted), and one
   row per app with a sound session: icon, name, level, slider and mute. Apps
-  with several sessions (browsers) get one row that sets all of them. Playing
+  with several sessions or processes (browsers) get one row that sets all of them. Playing
   apps come first, System sounds last. It refreshes once a second only while
   visible. Loading or refreshing never changes system audio.
 - Clock and weather: 64px time in the Windows short-time format and the date;

@@ -23,6 +23,12 @@
 - Deliberately not tested on this PC: switching the default output device and
   muting the real microphone (both would disrupt the user's audio). The output
   switch uses the same call as the Sound control panel.
+- Third review: app rows are now keyed by program file, so an app's sessions
+  share one row across processes (process ID only when the path cannot be
+  read). Harness with two processes of one test program: one row; muting it
+  muted both (the row reads muted only when every session is). Output switching
+  now refuses to start unless all three current defaults were read, so a failed
+  switch can always be undone (not exercised: needs Windows to refuse a role).
 
 ## Clock and weather widget (10 October 2026)
 

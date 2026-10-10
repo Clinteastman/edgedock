@@ -149,15 +149,20 @@ internal sealed class SystemAudioService : IDisposable
             enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
             ERole[] roles = [ERole.Console, ERole.Multimedia, ERole.Communications];
             // The three roles change one at a time, so remember them to undo a partial switch.
-            var previous = roles.ToDictionary(role => role, role => DefaultId(enumerator, EDataFlow.Render, role));
+            // Without all three there is nothing safe to undo to, so do not start.
+            var previous = new Dictionary<ERole, string>();
+            foreach (var role in roles)
+            {
+                if (DefaultId(enumerator, EDataFlow.Render, role) is not { } current) return false;
+                previous[role] = current;
+            }
             policy = (IPolicyConfig)new PolicyConfigComObject();
             var switched = new List<ERole>();
             foreach (var role in roles)
             {
                 if (policy.SetDefaultEndpoint(deviceId, role) != 0)
                 {
-                    foreach (var done in switched)
-                        if (previous[done] is { } before) policy.SetDefaultEndpoint(before, done);
+                    foreach (var done in switched) policy.SetDefaultEndpoint(previous[done], done);
                     return false;
                 }
                 switched.Add(role);
@@ -232,7 +237,7 @@ internal sealed class SystemAudioService : IDisposable
                 seen.Add(processId);
                 var process = isSystem ? default : DescribeProcess(processId);
                 sessions.Add(new AudioSessionInfo(
-                    AudioNaming.KeyFor(processId, isSystem),
+                    AudioNaming.KeyFor(processId, isSystem, process.Path),
                     processId,
                     AudioNaming.DisplayName(sessionName, process.Description, process.Name, isSystem),
                     process.Path,
@@ -274,7 +279,8 @@ internal sealed class SystemAudioService : IDisposable
             {
                 // Success includes AUDCLNT_S_NO_SINGLE_PROCESS for sessions spanning processes.
                 if (control.GetProcessId(out var processId) < 0) return;
-                if (AudioNaming.KeyFor(processId, control.IsSystemSoundsSession() == 0) != key) return;
+                var isSystem = control.IsSystemSoundsSession() == 0;
+                if (AudioNaming.KeyFor(processId, isSystem, isSystem ? null : DescribeProcess(processId).Path) != key) return;
                 // An expired or failing session must not stop the app's other sessions.
                 try { change(volume); }
                 catch (Exception exception) when (exception is COMException or InvalidCastException) { }
