@@ -38,6 +38,14 @@ clicked while another app is active; the input still reaches the widget, and
 the other app keeps keyboard focus. Web cards, the controls handle and open
 overlays activate normally.
 
+Web cards recover without attention. Connection-type load failures retry after
+5, 10, 20 and 40 seconds, then every 60, with a "Waiting for connection" status
+and Try again. Certificate, credential and redirect errors still stop and ask.
+A crashed page reloads itself up to three times in ten minutes; a crashed
+browser engine recreates every card and the shared environment within the same
+limit. Try again is never limited. After a system sleep of a minute or more,
+visible cards reload five seconds after waking.
+
 Panels have no shell header, page counter or navigation arrows. A native
 FlipView supplies touch paging; its overlay arrows are hidden. The drawer's
 page selectors provide an alternative for mouse and keyboard users.
