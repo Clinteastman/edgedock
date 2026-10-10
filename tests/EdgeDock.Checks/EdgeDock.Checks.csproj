@@ -13,5 +13,6 @@
     <Compile Include="../../src/EdgeDock/WebRecovery.cs" Link="WebRecovery.cs" />
     <Compile Include="../../src/EdgeDock/StatsMath.cs" Link="StatsMath.cs" />
     <Compile Include="../../src/EdgeDock/LayoutProfiles.cs" Link="LayoutProfiles.cs" />
+    <Compile Include="../../src/EdgeDock/WeatherForecast.cs" Link="WeatherForecast.cs" />
   </ItemGroup>
 </Project>

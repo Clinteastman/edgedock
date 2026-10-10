@@ -35,8 +35,14 @@ contribute. This is not a signed installer or a finished consumer release.
 - Runs as one copy: launching it again brings the open window forward.
 - Supports one to three native widget panels, with an optional web area.
 - Lets each panel switch between its chosen widgets independently.
-- Includes a local library of media, PC volume/mute, PC activity and Windows
-  Settings shortcuts.
+- Includes a local library of media, clock and weather, PC volume/mute, PC
+  activity and Windows Settings shortcuts.
+- **Clock and weather** shows a large clock (following your Windows 12/24-hour
+  setting) and the date. Add a town in Settings to see the weather now, today's
+  high and low, and the next six hours. Weather comes from Open-Meteo, free and
+  without an account. Finding a place sends the typed town to Open-Meteo; after
+  that only the chosen place's position is sent, and only while the clock is on
+  screen.
 - **PC activity** shows processor, memory, graphics, disk and network use, each
   with a one-minute graph. It reads Windows' own counters: no admin rights,
   drivers or extra software. Temperatures are not shown, because reading them
@@ -100,6 +106,12 @@ unavailable. Unpackaged media access is a prototype compatibility check; signed
 MSIX packaging with the appropriate capability is a future distribution step.
 
 ## Privacy
+
+The clock's weather is the only feature that contacts a service EdgeDock
+chooses: Open-Meteo. Pressing Find in Settings sends the town you typed, to look
+it up. Once a place is chosen, only its coordinates (rounded to about 10
+metres) are sent, while the clock is on screen, and forecasts are reused for 15
+minutes. Nothing is sent before you search.
 
 No EdgeDock account, telemetry or cloud backend. Your chosen web page still
 connects to its own server as it would in a browser. Settings and browser data

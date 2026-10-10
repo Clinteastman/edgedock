@@ -12,6 +12,28 @@
   layout again after it exited (and saved as such).
 - Not tested yet: the drawer's layout buttons and "Save this layout as", and
   editing layouts in Settings (need real input).
+- After review: the layout to return to is saved with the settings, so a
+  restart while the program runs still returns to the right layout (console
+  check added); automatic switches no longer reset an open Settings form;
+  saving at the 12-layout limit explains how to replace or remove one.
+  Auto-switch capture repeated after the changes.
+
+## Clock and weather widget (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 56 console checks pass, including
+  forecast parsing (only hours still to come, today's range, "0°" not "-0°"),
+  bad responses, WMO code descriptions by day and night, place search names,
+  request contents (rounded coordinates, escaped search text, units), and
+  persistence of the place and units.
+- Checked the live Open-Meteo responses first (Manchester): fields and units
+  matched the parser.
+- Captured EdgeDock window (test place: Manchester) showed 20:10, the date,
+  overcast 11°, high 13° and low 10°, six hourly cells and the update time.
+- After review: the next weather refresh is scheduled from when the forecast
+  was fetched (never sooner than 2 minutes, so offline retries do not spin);
+  Settings and README now say that Find sends the typed town to Open-Meteo.
+  Capture repeated and live.
+- Not tested yet: the Settings search and save flow (needs real input).
 
 ## PC activity widget (10 October 2026)
 
