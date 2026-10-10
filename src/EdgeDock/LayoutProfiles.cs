@@ -90,6 +90,15 @@ internal static class LayoutProfiles
     }
 
     /// <summary>The first profile whose app is running, or null.</summary>
-    public static LayoutProfile? Automatic(IReadOnlyList<LayoutProfile> profiles, IReadOnlySet<string> runningProcesses) =>
-        profiles.FirstOrDefault(profile => profile.WhenRunning is { } app && runningProcesses.Contains(app));
+    public static LayoutProfile? Automatic(IReadOnlyList<LayoutProfile> profiles, IReadOnlySet<string> runningProcesses, string? suppressedId = null) =>
+        profiles.FirstOrDefault(profile => profile.Id != suppressedId && profile.WhenRunning is { } app && runningProcesses.Contains(app));
+
+    /// <summary>
+    /// A layout the user switched away from by hand stays off until its program stops; then the
+    /// next start of that program switches again. Returns the ID to keep suppressed, or null.
+    /// </summary>
+    public static string? StillSuppressed(string? suppressedId, IReadOnlyList<LayoutProfile> profiles, IReadOnlySet<string> runningProcesses) =>
+        suppressedId is not null && profiles.Any(profile => profile.Id == suppressedId && profile.WhenRunning is { } app && runningProcesses.Contains(app))
+            ? suppressedId
+            : null;
 }

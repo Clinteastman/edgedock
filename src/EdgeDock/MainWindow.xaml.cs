@@ -163,6 +163,7 @@ public sealed partial class MainWindow : Window
         _profiles = settings.Profiles ?? [];
         _autoProfileId = settings.AutoSwitch?.ProfileId;
         _layoutBeforeAuto = settings.AutoSwitch?.Before;
+        _suppressedAutoProfileId = settings.SuppressedProfileId;
         _weatherLocation = settings.Weather;
         _fahrenheit = settings.Fahrenheit;
         // Move to the saved screen before WebView2 creates its child HWNDs, so pages
@@ -457,6 +458,7 @@ public sealed partial class MainWindow : Window
             _configuredWebSplitRatio, _displayPreference, _openFullScreen,
             Profiles: profiles,
             AutoSwitch: _autoProfileId is { } autoId && _layoutBeforeAuto is { } before ? new AutoLayoutSwitch(autoId, before) : null,
+            SuppressedProfileId: _suppressedAutoProfileId,
             Weather: WeatherPlaceSelector.SelectedItem is ComboBoxItem { Tag: WeatherLocation place } ? place : null,
             Fahrenheit: FahrenheitToggle.IsOn));
         if (!await PersistAsync(settings)) return;
@@ -539,6 +541,7 @@ public sealed partial class MainWindow : Window
         _openFullScreen,
         Profiles: _profiles,
         AutoSwitch: _autoProfileId is { } autoId && _layoutBeforeAuto is { } before ? new AutoLayoutSwitch(autoId, before) : null,
+        SuppressedProfileId: _suppressedAutoProfileId,
         Weather: _weatherLocation,
         Fahrenheit: _fahrenheit);
 
@@ -851,7 +854,10 @@ public sealed partial class MainWindow : Window
             AutomationProperties.SetName(button, active ? $"{profile.Name}, current layout" : $"Switch to the {profile.Name} layout");
             button.Click += async (_, _) =>
             {
-                await ApplyProfileAsync(profile.Layout, profile.Id, manual: true);
+                // Choosing by hand while a program's layout is on keeps that layout off until the
+                // program next starts.
+                await ApplyProfileAsync(profile.Layout, profile.Id, manual: true,
+                    new AutoState(null, null, _autoProfileId ?? _suppressedAutoProfileId));
                 CloseControlsDrawer();
             };
             ProfileButtons.Children.Add(button);
@@ -886,19 +892,25 @@ public sealed partial class MainWindow : Window
         BuildProfileButtons();
     }
 
-    /// <summary>Switches the dashboard to a saved layout and saves it as the current one.</summary>
-    private async Task ApplyProfileAsync(ProfileLayout layout, string? profileId, bool manual)
+    /// <summary>The automatic-switch bookkeeping that goes with a layout change.</summary>
+    private sealed record AutoState(string? AutoProfileId, ProfileLayout? Before, string? SuppressedId);
+
+    /// <summary>
+    /// Switches the dashboard to a saved layout and saves it as the current one, together with
+    /// <paramref name="auto"/>. The in-memory state changes only once the save succeeds, so a
+    /// failed save is retried by the next check instead of being forgotten.
+    /// </summary>
+    private async Task<bool> ApplyProfileAsync(ProfileLayout layout, string? profileId, bool manual, AutoState auto)
     {
-        if (manual && _autoProfileId is not null)
+        var settings = LayoutProfiles.Apply(CurrentSettings(), layout) with
         {
-            // The user chose by hand while a program's layout was on; respect that until the
-            // program next starts.
-            _suppressedAutoProfileId = _autoProfileId;
-            _autoProfileId = null;
-            _layoutBeforeAuto = null;
-        }
-        var settings = LayoutProfiles.Apply(CurrentSettings(), layout);
-        if (!await PersistAsync(settings, alreadyApplied: false)) return;
+            AutoSwitch = auto is { AutoProfileId: { } autoId, Before: { } before } ? new AutoLayoutSwitch(autoId, before) : null,
+            SuppressedProfileId = auto.SuppressedId
+        };
+        if (!await PersistAsync(settings, alreadyApplied: false)) return false;
+        _autoProfileId = auto.AutoProfileId;
+        _layoutBeforeAuto = auto.Before;
+        _suppressedAutoProfileId = auto.SuppressedId;
         _mediaPlacement = settings.MediaPanelPlacement;
         _lastVisiblePlacement = settings.LastVisibleMediaPanelPlacement;
         _configuredPanelWidth = settings.MediaPanelWidth;
@@ -915,6 +927,7 @@ public sealed partial class MainWindow : Window
         // An automatic switch must not discard edits in an open Settings panel; Settings
         // reloads from the current layout when it is next opened.
         if (manual || SettingsPanel.Visibility != Visibility.Visible) UpdateSettingsControls();
+        return true;
     }
 
     private void StartProfileWatch()
@@ -946,22 +959,23 @@ public sealed partial class MainWindow : Window
                 }
                 return names;
             });
-            var target = LayoutProfiles.Automatic(_profiles, running);
+            // A hand-chosen override ends once its own program stops, whatever else is running.
+            var suppressed = LayoutProfiles.StillSuppressed(_suppressedAutoProfileId, _profiles, running);
+            if (suppressed != _suppressedAutoProfileId)
+            {
+                if (!await PersistAsync(CurrentSettings() with { SuppressedProfileId = suppressed }, alreadyApplied: false)) return;
+                _suppressedAutoProfileId = suppressed;
+            }
+            var target = LayoutProfiles.Automatic(_profiles, running, suppressed);
             if (target is null)
             {
-                _suppressedAutoProfileId = null;
                 if (_autoProfileId is not null && _layoutBeforeAuto is { } previous)
-                {
-                    _autoProfileId = null;
-                    _layoutBeforeAuto = null;
-                    await ApplyProfileAsync(previous, null, manual: false);
-                }
+                    await ApplyProfileAsync(previous, null, manual: false, new AutoState(null, null, suppressed));
                 return;
             }
-            if (target.Id == _autoProfileId || target.Id == _suppressedAutoProfileId) return;
-            _layoutBeforeAuto ??= LayoutProfiles.Capture(CurrentSettings());
-            _autoProfileId = target.Id;
-            await ApplyProfileAsync(target.Layout, target.Id, manual: false);
+            if (target.Id == _autoProfileId) return;
+            await ApplyProfileAsync(target.Layout, target.Id, manual: false,
+                new AutoState(target.Id, _layoutBeforeAuto ?? LayoutProfiles.Capture(CurrentSettings()), suppressed));
         }
         finally { _checkingPrograms = false; }
     }

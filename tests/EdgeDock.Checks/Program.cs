@@ -327,6 +327,14 @@ try
     Check(autoSaved.AutoSwitch?.ProfileId == "game" && autoSaved.AutoSwitch.Before.IsWebVisible == workLayout.IsWebVisible &&
           autoSaved.AutoSwitch.Before.WebPanelCount == workLayout.WebPanelCount,
           "The layout to return to after a program closes survives restart");
+    await store.SaveAsync(withProfiles with { SuppressedProfileId = "game" });
+    Check((await new SettingsStore().LoadAsync()).SuppressedProfileId == "game", "A layout switched off by hand stays off across restart");
+    var gameAndChat = new HashSet<string>(["game", "chat"], StringComparer.OrdinalIgnoreCase);
+    LayoutProfile[] watched = [new("a", "A", "game", workLayout), new("b", "B", "chat", workLayout)];
+    Check(LayoutProfiles.StillSuppressed("a", watched, gameAndChat) == "a" &&
+          LayoutProfiles.StillSuppressed("a", watched, new HashSet<string>(["chat"])) is null &&
+          LayoutProfiles.Automatic(watched, gameAndChat, "a")?.Id == "b",
+          "A hand override ends when its own program stops, even while another layout's program runs");
     Check(LayoutProfiles.NormalizeProcessName("Game.EXE") == "Game" && LayoutProfiles.NormalizeProcessName("cmd /c x") is null &&
           LayoutProfiles.NormalizeProcessName(@"C:\x.exe") is null && LayoutProfiles.NormalizeProcessName(" ") is null,
           "Program triggers accept a name only");
