@@ -1174,6 +1174,8 @@ public sealed partial class MainWindow : Window
         // The black overlay always shows; the backlight is turned down only when its original
         // level is safely saved, so a crash can never leave it dark with nothing to restore.
         var before = await MonitorBrightness.GetAsync(monitor);
+        // Moved to another monitor during the read: that reading is not this monitor's.
+        if (MonitorBrightness.MonitorOf(_windowHandle) != monitor) before = null;
         if (before is not null && await RememberOriginalBrightnessAsync(_blankedMonitor, before.Value))
         {
             _brightnessBeforeBlank = before;
@@ -1282,11 +1284,22 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private async Task<(bool Done, bool OnMonitor)> ApplyBrightnessAsync(int brightness)
     {
+        // Take the monitor's handle and identity together, before the slow read; if the window
+        // moved to another monitor meanwhile, the reading belongs to the old one and is not used.
         var monitor = MonitorBrightness.MonitorOf(_windowHandle);
-        var done = true;
-        if (await MonitorBrightness.GetAsync(monitor) is { } current)
+        var identity = DisplayPlacement.PreferenceFor(CurrentDisplay());
+        // This monitor answered DDC/CI moments ago (before blanking), so a failed read now is a
+        // hiccup to retry, not a monitor without DDC/CI.
+        var done = _brightnessBeforeBlank is null;
+        var current = await MonitorBrightness.GetAsync(monitor);
+        if (current is not null && MonitorBrightness.MonitorOf(_windowHandle) != monitor)
         {
-            if (await RememberOriginalBrightnessAsync(DisplayPlacement.PreferenceFor(CurrentDisplay()), current) &&
+            current = null;
+            done = false;
+        }
+        if (current is not null)
+        {
+            if (await RememberOriginalBrightnessAsync(identity, current.Value) &&
                 await MonitorBrightness.SetAsync(monitor, brightness))
             {
                 ScreenDimLayer.Opacity = 0;
@@ -1515,7 +1528,7 @@ public sealed partial class MainWindow : Window
     {
         if (_closeReady) return;
         var movePending = _windowMoveTimer?.IsRunning == true;
-        var screenPending = _screenBlank || _screenBusy || _brightnessBeforeBlank is not null || _brightnessRestore is not null;
+        var screenPending = _screenBlank || _screenBusy || _brightnessBeforeBlank is not null || _brightnessRestore is not null || _restoreClearUnsaved;
         if (!_closeAfterPendingSave && !movePending && _displaySaves.IsCompleted && !screenPending) return;
         args.Cancel = true;
         // Already waiting: further close clicks must not end the process mid-save.
