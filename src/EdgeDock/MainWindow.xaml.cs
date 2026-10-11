@@ -807,10 +807,12 @@ public sealed partial class MainWindow : Window
 
         var delta = args.Key == VirtualKey.Right ? 10 : -10;
         args.Handled = true;
+        var generation = _layoutGeneration;
         // The change and its save wait their turn with automatic layout switches.
         await _profileGate.WaitAsync();
         try
         {
+            if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
             if (!CanResize(divider)) return; // A layout switch may have removed it meanwhile.
             if (divider == WebDivider)
             {
@@ -1010,6 +1012,13 @@ public sealed partial class MainWindow : Window
         };
         if (!await PersistAsync(settings, alreadyApplied: false)) return false;
         _layoutGeneration++;
+        // A drag started while the switch was saving belongs to the old layout: cancel it, so
+        // its release cannot resize the new one.
+        if (_activeDivider is { } dragging)
+        {
+            RestoreResize(dragging);
+            CompleteResize(dragging);
+        }
         _autoProfileId = auto.AutoProfileId;
         _layoutBeforeAuto = auto.Before;
         _suppressedProfileIds = auto.SuppressedIds;
