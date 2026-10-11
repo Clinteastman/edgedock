@@ -1345,6 +1345,8 @@ public sealed partial class MainWindow : Window
         // Already waiting: further close clicks must not end the process mid-save.
         if (_closeAfterPendingSave) return;
         _closeAfterPendingSave = true;
+        // Noted now: the Settings save may finish (or fail) while display saves are awaited.
+        var settingsWasSaving = !_settingsSave.IsCompleted;
         if (movePending)
         {
             _windowMoveTimer!.Stop();
@@ -1360,13 +1362,16 @@ public sealed partial class MainWindow : Window
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
         }
         while (!ReferenceEquals(pending, _displaySaves));
-        if (!_settingsSave.IsCompleted)
+        if (settingsWasSaving || !_settingsSave.IsCompleted)
         {
             // Save was pressed: finish it (checking launcher targets can wait on a slow drive)
             // rather than lose it, and say why the window is still open.
-            UrlErrorText.Text = "Finishing your save, then EdgeDock will close.";
-            UrlErrorText.Visibility = Visibility.Visible;
-            await _settingsSave;
+            if (!_settingsSave.IsCompleted)
+            {
+                UrlErrorText.Text = "Finishing your save, then EdgeDock will close.";
+                UrlErrorText.Visibility = Visibility.Visible;
+                await _settingsSave;
+            }
             // A successful save closes Settings. If it is still open, the save failed or was
             // refused (its message is showing): stay open so the draft can be fixed, not lost.
             if (SettingsPanel.Visibility == Visibility.Visible)
