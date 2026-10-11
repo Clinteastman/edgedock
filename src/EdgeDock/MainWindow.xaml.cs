@@ -1384,6 +1384,11 @@ public sealed partial class MainWindow : Window
         // hiccup to retry, not a monitor without DDC/CI.
         // Likewise when EdgeDock has already changed this monitor (its restore point is pending).
         var done = _brightnessBeforeBlank is null && !SameMonitor(_brightnessRestore?.Monitor, identity);
+        // A different monitor EdgeDock changed earlier goes back first, whether or not this one
+        // answers DDC/CI; if it cannot yet (unplugged), try again next tick.
+        if (_brightnessRestore is { } pending && !SameMonitor(pending.Monitor, identity) &&
+            (!await RestoreOriginalBrightnessAsync() || _brightnessRestore is not null))
+            done = false;
         var current = await MonitorBrightness.GetAsync(monitor);
         if (current is not null && MonitorBrightness.MonitorOf(_windowHandle) != monitor)
         {
