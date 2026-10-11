@@ -480,10 +480,12 @@ public sealed partial class MainWindow : Window
         var newSchedule = settings.Screen ?? ScreenScheduleSettings.Default;
         if (newSchedule != _screenSettings)
         {
-            // Re-evaluate straight away with the new schedule. Saving unrelated settings must
-            // not rewrite the level, which would undo a change made on the monitor's buttons.
+            // Rewrite the level only when the brightness part of the schedule changed: saving
+            // anything else (the idle timeout included) must not undo a change made on the
+            // monitor's own buttons.
+            if (newSchedule with { BlankAfterMinutes = 0 } != _screenSettings with { BlankAfterMinutes = 0 })
+                _appliedScheduleBrightness = null;
             _screenSettings = newSchedule;
-            _appliedScheduleBrightness = null;
             _ = UpdateScreenAsync();
         }
         _weatherLocation = settings.Weather;
@@ -1208,7 +1210,7 @@ public sealed partial class MainWindow : Window
         if (MonitorBrightness.MonitorOf(_windowHandle) != monitor || !IdentifiesMonitor(identity, monitor)) before = null;
         if (before is not null && await RememberOriginalBrightnessAsync(identity, before.Value) &&
             // Still blank and full screen after the waits (F11, a touch or a key may have come in).
-            _screenBlank && !_wakeRequested && _isFullScreen && MonitorBrightness.MonitorOf(_windowHandle) == monitor)
+            _screenBlank && !_wakeRequested && StillIdle() && _isFullScreen && MonitorBrightness.MonitorOf(_windowHandle) == monitor)
         {
             _brightnessBeforeBlank = before;
             _blankedMonitor = identity;
@@ -1217,6 +1219,12 @@ public sealed partial class MainWindow : Window
             _blankWritePending = !await MonitorBrightness.SetAsync(monitor, 0);
         }
     }
+
+    /// <summary>
+    /// Whether the idle timeout still holds right now. Input anywhere on the PC (another app or
+    /// monitor) resets it without passing through EdgeDock, so it is checked just before writing.
+    /// </summary>
+    private bool StillIdle() => ScreenSchedule.Evaluate(_screenSettings, DateTime.Now, IdleTime()).Blank;
 
     private readonly List<UIElement> _hiddenWhileBlank = [];
     // A wake gesture that arrived while screen work was busy, handled as soon as it finishes.
@@ -1230,7 +1238,7 @@ public sealed partial class MainWindow : Window
 
     private async Task RetryBlankWriteAsync()
     {
-        if (_wakeRequested || !_isFullScreen || MonitorBrightness.MonitorOf(_windowHandle) != _blankHandle) return;
+        if (_wakeRequested || !StillIdle() || !_isFullScreen || MonitorBrightness.MonitorOf(_windowHandle) != _blankHandle) return;
         _blankWritePending = !await MonitorBrightness.SetAsync(_blankHandle, 0) && !_wakeRequested;
     }
 
