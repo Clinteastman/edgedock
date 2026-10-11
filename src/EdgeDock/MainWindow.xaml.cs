@@ -448,6 +448,8 @@ public sealed partial class MainWindow : Window
     {
         _checkingSave = false;
         SettingsForm.IsEnabled = true;
+        Workspace.IsHitTestVisible = true;
+        ControlHandle.IsEnabled = true;
     }
 
     private async Task SaveAndNavigateAsync()
@@ -468,6 +470,10 @@ public sealed partial class MainWindow : Window
         // The whole form is locked, not just the lists: any edit made while the save runs would
         // otherwise be left out of it and then lost when Settings closes.
         SettingsForm.IsEnabled = false;
+        // The dashboard beside Settings is locked too: a panel swipe or drawer change made now
+        // would be overwritten by the layout this save is about to apply.
+        Workspace.IsHitTestVisible = false;
+        ControlHandle.IsEnabled = false;
         _saveCancellation?.Dispose();
         _saveCancellation = new CancellationTokenSource();
         // The drafts stay locked until the save is written, not just checked.
