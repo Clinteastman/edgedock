@@ -768,10 +768,14 @@ public sealed partial class MainWindow : Window
         if (sender is not PanelDivider divider || divider != _activeDivider || args.Pointer.PointerId != _activePointerId) return;
         var delta = args.GetCurrentPoint(Root).Position.X - _resizeStartX;
         args.Handled = true;
+        var generation = _layoutGeneration;
         // The final size, and its save, wait their turn with automatic layout switches.
         await _profileGate.WaitAsync();
         try
         {
+            // A layout switch while waiting has already cancelled this drag and undone its
+            // preview; its old size must not land on the new layout.
+            if (generation != _layoutGeneration) return;
             ApplyResizeDelta(divider, delta);
             CompleteResize(divider);
             await PersistAsync(CurrentSettings(), alreadyApplied: true);
