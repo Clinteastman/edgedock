@@ -1367,6 +1367,13 @@ public sealed partial class MainWindow : Window
             UrlErrorText.Text = "Finishing your save, then EdgeDock will close.";
             UrlErrorText.Visibility = Visibility.Visible;
             await _settingsSave;
+            // A successful save closes Settings. If it is still open, the save failed or was
+            // refused (its message is showing): stay open so the draft can be fixed, not lost.
+            if (SettingsPanel.Visibility == Visibility.Visible)
+            {
+                _closeAfterPendingSave = false;
+                return;
+            }
         }
         _closeReady = true;
         Close();
