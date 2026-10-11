@@ -1490,6 +1490,9 @@ public sealed partial class MainWindow : Window
             AutomationProperties.SetName(FullScreenButton, "Exit full screen");
         }
         ApplyFullscreenLayout();
+        // Apply or undo the schedule now, not on the next tick: leaving full screen puts the
+        // monitor back at once. (Work already running rechecks this itself when it finishes.)
+        _ = UpdateScreenAsync();
     }
 
     /// <summary>Brings the window forward when EdgeDock is launched again while running.</summary>
