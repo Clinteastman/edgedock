@@ -480,10 +480,11 @@ public sealed partial class MainWindow : Window
         var newSchedule = settings.Screen ?? ScreenScheduleSettings.Default;
         if (newSchedule != _screenSettings)
         {
-            // Rewrite the level only when the brightness part of the schedule changed: saving
-            // anything else (the idle timeout included) must not undo a change made on the
-            // monitor's own buttons.
-            if (newSchedule with { BlankAfterMinutes = 0 } != _screenSettings with { BlankAfterMinutes = 0 })
+            // Rewrite the level only when the level wanted right now changed: saving anything
+            // else (the idle timeout, or the other period's level) must not undo a change made on
+            // the monitor's own buttons.
+            var now = DateTime.Now;
+            if (ScreenSchedule.Evaluate(newSchedule, now, TimeSpan.Zero).Brightness != ScreenSchedule.Evaluate(_screenSettings, now, TimeSpan.Zero).Brightness)
                 _appliedScheduleBrightness = null;
             _screenSettings = newSchedule;
             _ = UpdateScreenAsync();
@@ -1170,7 +1171,10 @@ public sealed partial class MainWindow : Window
             _screenBusy = false;
             // A tap or key during this work (even during the final write) is handled at once,
             // not on a later tick.
-            if (_wakeDropped && !_closing)
+            // Likewise if full screen ended or the window moved during the work (say, during its
+            // final write): put things right now rather than on the next tick.
+            var moved = (_isFullScreen, MonitorBrightness.MonitorOf(_windowHandle)) != _scheduleTarget;
+            if ((_wakeDropped || moved) && !_closing)
             {
                 _wakeDropped = false;
                 DispatcherQueue.TryEnqueue(() => _ = UpdateScreenAsync());
