@@ -79,6 +79,9 @@ public sealed partial class MainWindow : Window
     // One layout change at a time, from start to finish: a hand choice, an automatic switch and
     // a Settings save each read the current layout and must not interleave.
     private readonly SemaphoreSlim _profileGate = new(1, 1);
+    // Bumped whenever a saved layout is applied. A tap queued behind a switch was aimed at the
+    // layout that was showing then, so it is dropped if the layout changed while it waited.
+    private int _layoutGeneration;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _profileTimer;
     private bool _checkingPrograms;
     // The settings as last written (or loaded) successfully. Display-only saves merge onto
@@ -542,9 +545,11 @@ public sealed partial class MainWindow : Window
     private async void ToggleMediaPanel_Click(object sender, RoutedEventArgs args)
     {
         // Layout changes run one at a time with automatic switches (see _profileGate).
+        var generation = _layoutGeneration;
         await _profileGate.WaitAsync();
         try
         {
+            if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
             if (!_isWebVisible) return;
             if (_mediaPlacement == MediaPanelPlacement.Hidden) _mediaPlacement = _lastVisiblePlacement;
             else { _lastVisiblePlacement = _mediaPlacement; _mediaPlacement = MediaPanelPlacement.Hidden; }
@@ -668,9 +673,11 @@ public sealed partial class MainWindow : Window
             slot.SetEdgeToEdge(_isFullScreen);
             slot.SelectionChanged += async (_, selectedId) =>
             {
+                var generation = _layoutGeneration;
                 await _profileGate.WaitAsync();
                 try
                 {
+                    if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
                     // The panel may have been replaced in a layout switch while waiting.
                     if (slotIndex >= _widgetSlots.Count || !WidgetHost.Children.Contains(slot)) return;
                     var updated = _widgetSlots.ToArray();
@@ -1002,6 +1009,7 @@ public sealed partial class MainWindow : Window
             SuppressedSince = SinceFor(auto.SuppressedIds)
         };
         if (!await PersistAsync(settings, alreadyApplied: false)) return false;
+        _layoutGeneration++;
         _autoProfileId = auto.AutoProfileId;
         _layoutBeforeAuto = auto.Before;
         _suppressedProfileIds = auto.SuppressedIds;
@@ -1179,9 +1187,11 @@ public sealed partial class MainWindow : Window
     private async void WebPanelSelector_SelectionChanged(object sender, SelectionChangedEventArgs args)
     {
         // Layout changes run one at a time with automatic switches (see _profileGate).
+        var generation = _layoutGeneration;
         await _profileGate.WaitAsync();
         try
         {
+            if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
             if (sender is not ComboBox { SelectedItem: ComboBoxItem item, Tag: int index } || item.Tag is not string id) return;
             // A selector replaced by a layout switch while waiting belongs to the old layout.
             if (!WebPanelSelectors.Children.Contains((ComboBox)sender)) return;
@@ -1207,9 +1217,11 @@ public sealed partial class MainWindow : Window
         // Programmatic changes (rebuilding the selectors) are ignored before waiting.
         if (_updatingWebPanelCount || WebPanelCountSelector.SelectedIndex < 0) return;
         // Layout changes run one at a time with automatic switches (see _profileGate).
+        var generation = _layoutGeneration;
         await _profileGate.WaitAsync();
         try
         {
+            if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
             var count = WebPanelCountSelector.SelectedIndex + 1;
             if (count == _webPanelCount || count > _webCards.Count) return;
             var candidate = SettingsStore.Normalize(CurrentSettings() with { WebPanelCount = count });
@@ -1270,9 +1282,11 @@ public sealed partial class MainWindow : Window
         // Programmatic changes (rebuilding the selectors) are ignored before waiting.
         if (_updatingPanelCount || PanelCountSelector.SelectedIndex < 0) return;
         // Layout changes run one at a time with automatic switches (see _profileGate).
+        var generation = _layoutGeneration;
         await _profileGate.WaitAsync();
         try
         {
+            if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
             var count = PanelCountSelector.SelectedIndex + 1;
             if (count == _widgetSlots.Count) return;
             var slots = _widgetSlots.Take(count).ToList();
