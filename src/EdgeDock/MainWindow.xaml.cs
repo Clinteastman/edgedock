@@ -207,6 +207,9 @@ public sealed partial class MainWindow : Window
         _brightnessRestore = settings.PendingBrightness;
         _weatherLocation = settings.Weather;
         _fahrenheit = settings.Fahrenheit;
+        // Settings opened before loading finished shows empty lists: fill them now, at once,
+        // or a Save would delete the saved ones. Edits made after this point are kept.
+        if (SettingsPanel.Visibility == Visibility.Visible) UpdateSettingsControls(reloadDrafts: true);
         // Move to the saved screen before WebView2 creates its child HWNDs, so pages
         // render once at the right size and scale.
         RestorePreferredDisplay();
@@ -454,7 +457,7 @@ public sealed partial class MainWindow : Window
         }
 
         UrlErrorText.Visibility = Visibility.Collapsed;
-        UpdateSettingsControls();
+        UpdateSettingsControls(reloadDrafts: true);
         SettingsPanel.Visibility = Visibility.Visible;
     }
 
@@ -744,7 +747,8 @@ public sealed partial class MainWindow : Window
                 : new MicaBackdrop();
     }
 
-    private void UpdateSettingsControls()
+    /// <param name="reloadDrafts">Also reload the editable lists, even with Settings open.</param>
+    private void UpdateSettingsControls(bool reloadDrafts = false)
     {
         MaterialSelector.SelectedIndex = _material == BackdropMaterial.Acrylic ? 1 : 0;
         BackdropTransparencySlider.Value = _backdropTransparency;
@@ -759,16 +763,22 @@ public sealed partial class MainWindow : Window
         PanelWidthText.Text = $"{_configuredPanelWidth:0} px";
         ArtworkToggle.IsOn = _showArtwork;
         WebVisibleToggle.IsOn = _isWebVisible;
-        WebCardEditor.LoadCards(_webCards);
         LibraryEditor.LoadSlots(_widgetSlots, _registry);
         LauncherEditor.WindowHandle = _windowHandle;
-        LauncherEditor.LoadItems(_launchers);
+        // Not while Settings is open: a divider drag refreshes these controls on every move
+        // and would wipe unsaved card and launcher edits. Settings loads them as it opens.
+        var reloadLists = reloadDrafts || SettingsPanel.Visibility != Visibility.Visible;
+        if (reloadLists)
+        {
+            WebCardEditor.LoadCards(_webCards);
+            LauncherEditor.LoadItems(_launchers);
+        }
         // An isolated test profile must not rewrite the real sign-in entry.
         StartupToggle.IsEnabled = !SettingsStore.IsIsolatedProfile;
         StartupToggle.IsOn = StartupRegistration.IsEnabled();
         // Never while Settings is open: a divider drag or similar refresh would otherwise wipe
         // unsaved name and program edits. Settings loads them as it opens.
-        if (SettingsPanel.Visibility != Visibility.Visible) ProfileEditor.LoadProfiles(_profiles);
+        if (reloadLists) ProfileEditor.LoadProfiles(_profiles);
         DimAtNightToggle.IsOn = _screenSettings.DimAtNight;
         DayBrightnessSlider.Value = _screenSettings.DayBrightness;
         NightBrightnessSlider.Value = _screenSettings.NightBrightness;
