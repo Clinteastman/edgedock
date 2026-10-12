@@ -52,6 +52,15 @@ public sealed partial class MainWindow : Window
     private double _backdropTransparency = 50;
     private IReadOnlyList<WidgetSlotSettings> _widgetSlots = [new(["media"], "media")];
     private readonly WidgetRegistry _registry;
+    private IReadOnlyList<LauncherItem> _launchers = [];
+    // Bumped by each Save and by closing Settings; a save still checking launcher targets
+    // when it changes is stale (cancelled, or overtaken by a newer save) and is dropped.
+    private int _settingsSaveVersion;
+    private bool _checkingSave;
+    // Cancels waiting on a save's target checks when the save is abandoned.
+    private CancellationTokenSource? _saveCancellation;
+    // Writing a checked save to disk: it is committed, so Cancel waits for it to finish.
+    private bool _persistingSave;
     private WeatherLocation? _weatherLocation;
     private bool _fahrenheit;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
@@ -111,7 +120,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         _messageHookCallback = MessageHookCallback;
-        _registry = WidgetRegistry.CreateBuiltIns(() => new ClockOptions(_weatherLocation, _fahrenheit));
+        _registry = WidgetRegistry.CreateBuiltIns(() => _launchers, () => new ClockOptions(_weatherLocation, _fahrenheit));
         InitializeComponent();
         RegisterDividerHandlers(WebDivider);
         RegisterDividerHandlers(GroupDivider);
@@ -169,6 +178,7 @@ public sealed partial class MainWindow : Window
         _webPanelCount = settings.WebPanelCount;
         _webPanelCardIds = settings.WebPanelCardIds!;
         _configuredWebSplitRatio = settings.WebSplitRatio;
+        _launchers = settings.Launchers!;
         _displayPreference = settings.Display;
         _openFullScreen = settings.OpenFullScreen;
         _screenSettings = settings.Screen ?? ScreenScheduleSettings.Default;
@@ -414,6 +424,8 @@ public sealed partial class MainWindow : Window
         CloseControlsDrawer(restoreFocus: false);
         if (SettingsPanel.Visibility == Visibility.Visible)
         {
+            if (_persistingSave) return;
+            AbandonSettingsSave();
             SettingsPanel.Visibility = Visibility.Collapsed;
             return;
         }
@@ -425,11 +437,56 @@ public sealed partial class MainWindow : Window
 
     private void CancelSettings_Click(object sender, RoutedEventArgs args)
     {
+        // A save already being written is committed and closes Settings itself in a moment.
+        if (_persistingSave) return;
+        AbandonSettingsSave();
         SettingsPanel.Visibility = Visibility.Collapsed;
         UrlErrorText.Visibility = Visibility.Collapsed;
     }
 
-    private async void SaveSettings_Click(object sender, RoutedEventArgs args) => await SaveAndNavigateAsync();
+    private async void SaveSettings_Click(object sender, RoutedEventArgs args)
+    {
+        // A second tap while a save runs is ignored, and must not replace the tracked save.
+        if (_checkingSave || _persistingSave) return;
+        var save = SaveAndNavigateAsync();
+        _settingsSave = save;
+        await save;
+    }
+
+    // The Settings save in progress, if any; closing waits for it so a pressed Save is not lost.
+    private Task _settingsSave = Task.CompletedTask;
+
+    /// <summary>
+    /// Drops a save still checking launcher targets (Settings closed or cancelled) and unlocks
+    /// the editors straight away; a check stuck on an offline drive cannot keep them locked.
+    /// </summary>
+    private void AbandonSettingsSave()
+    {
+        _settingsSaveVersion++;
+        _saveCancellation?.Cancel();
+        UnlockSettingsEditors();
+    }
+
+    // Hit testing does not stop the keyboard, so while a save runs focus may not enter the
+    // dashboard and keys aimed at it are dropped; a page or panel change made now would be
+    // overwritten by the layout the save applies.
+    private void Workspace_GettingFocus(UIElement sender, GettingFocusEventArgs args)
+    {
+        if (_checkingSave) args.TryCancel();
+    }
+
+    private void Workspace_PreviewKeyDown(object sender, KeyRoutedEventArgs args)
+    {
+        if (_checkingSave) args.Handled = true;
+    }
+
+    private void UnlockSettingsEditors()
+    {
+        _checkingSave = false;
+        SettingsForm.IsEnabled = true;
+        Workspace.IsHitTestVisible = true;
+        ControlHandle.IsEnabled = true;
+    }
 
     private async Task SaveAndNavigateAsync()
     {
@@ -437,6 +494,54 @@ public sealed partial class MainWindow : Window
         {
             UrlErrorText.Text = cardError;
             UrlErrorText.Visibility = Visibility.Visible;
+            return;
+        }
+        // One check at a time: a second Save while targets are being checked is ignored, so
+        // only the save that locked the drafts can unlock them.
+        if (_checkingSave) return;
+        var saveVersion = ++_settingsSaveVersion;
+        // Lock the drafts while targets are checked: an edit made during a slow check would
+        // otherwise be silently replaced by the values being validated.
+        _checkingSave = true;
+        // The whole form is locked, not just the lists: any edit made while the save runs would
+        // otherwise be left out of it and then lost when Settings closes.
+        SettingsForm.IsEnabled = false;
+        // The dashboard beside Settings is locked too: a panel swipe or drawer change made now
+        // would be overwritten by the layout this save is about to apply.
+        Workspace.IsHitTestVisible = false;
+        ControlHandle.IsEnabled = false;
+        _saveCancellation?.Dispose();
+        _saveCancellation = new CancellationTokenSource();
+        // The drafts stay locked until the save is written, not just checked.
+        try { await SaveCheckedAsync(cards, saveVersion, _saveCancellation.Token); }
+        catch (OperationCanceledException) { } // Abandoned while checking targets.
+        finally
+        {
+            // An abandoned save was unlocked when it was abandoned; it must not unlock, or end
+            // the writing state of, a newer save.
+            if (saveVersion == _settingsSaveVersion)
+            {
+                _persistingSave = false;
+                UnlockSettingsEditors();
+            }
+        }
+    }
+
+    private async Task SaveCheckedAsync(IReadOnlyList<WebCardSettings> cards, int saveVersion, CancellationToken cancellation)
+    {
+        var (launchersValid, launchers, launcherError) = await LauncherEditor.TryGetItemsAsync(cancellation);
+        if (saveVersion != _settingsSaveVersion) return;
+        if (!launchersValid)
+        {
+            UrlErrorText.Text = launcherError;
+            UrlErrorText.Visibility = Visibility.Visible;
+            UnlockSettingsEditors();
+            // Announced now, and given to the field as its help text so a screen reader also
+            // says why when the field takes focus.
+            (Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer.FromElement(UrlErrorText) ??
+             Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer.CreatePeerForElement(UrlErrorText))
+                ?.RaiseAutomationEvent(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.LiveRegionChanged);
+            LauncherEditor.FocusInvalidRow(launcherError);
             return;
         }
         // Saving with the toggle on also repairs an entry left pointing at a moved or older copy.
@@ -458,11 +563,13 @@ public sealed partial class MainWindow : Window
             PanelWidthSlider.Value, ArtworkToggle.IsOn, WebVisibleToggle.IsOn, LibraryEditor.GetSlots(),
             MaterialSelector.SelectedIndex == 1 ? BackdropMaterial.Acrylic : BackdropMaterial.Mica,
             BackdropTransparencySlider.Value, cards, _webPanelCount, _webPanelCardIds,
-            _configuredWebSplitRatio, _displayPreference, _openFullScreen,
+            _configuredWebSplitRatio, _displayPreference, _openFullScreen, Launchers: launchers,
             Screen: ReadScreenSettings(),
             PendingBrightness: _brightnessRestore,
             Weather: WeatherPlaceSelector.SelectedItem is ComboBoxItem { Tag: WeatherLocation place } ? place : null,
             Fahrenheit: FahrenheitToggle.IsOn));
+        // From here the save is committed: Cancel and closing Settings wait for it.
+        _persistingSave = true;
         if (!await PersistAsync(settings)) return;
         _material = settings.Material;
         _backdropTransparency = settings.BackdropTransparency;
@@ -477,6 +584,7 @@ public sealed partial class MainWindow : Window
         _webPanelCount = settings.WebPanelCount;
         _webPanelCardIds = settings.WebPanelCardIds!;
         _configuredWebSplitRatio = settings.WebSplitRatio;
+        _launchers = settings.Launchers!;
         var newSchedule = settings.Screen ?? ScreenScheduleSettings.Default;
         if (newSchedule != _screenSettings)
         {
@@ -554,6 +662,7 @@ public sealed partial class MainWindow : Window
         _openFullScreen,
         Screen: _screenSettings,
         PendingBrightness: _brightnessRestore,
+        Launchers: _launchers,
         Weather: _weatherLocation,
         Fahrenheit: _fahrenheit);
 
@@ -583,6 +692,8 @@ public sealed partial class MainWindow : Window
         WebVisibleToggle.IsOn = _isWebVisible;
         WebCardEditor.LoadCards(_webCards);
         LibraryEditor.LoadSlots(_widgetSlots, _registry);
+        LauncherEditor.WindowHandle = _windowHandle;
+        LauncherEditor.LoadItems(_launchers);
         // An isolated test profile must not rewrite the real sign-in entry.
         StartupToggle.IsEnabled = !SettingsStore.IsIsolatedProfile;
         StartupToggle.IsOn = StartupRegistration.IsEnabled();
@@ -981,7 +1092,7 @@ public sealed partial class MainWindow : Window
         if (count == _widgetSlots.Count) return;
         var slots = _widgetSlots.Take(count).ToList();
         while (slots.Count < count)
-            slots.Add(new WidgetSlotSettings(["media", "clock", "audio", "stats", "pc"], "media"));
+            slots.Add(new WidgetSlotSettings(["media", "clock", "audio", "stats", "launcher", "pc"], "media"));
         _widgetSlots = slots;
         BuildWidgetSlots();
         ApplyMediaLayout();
@@ -1018,7 +1129,8 @@ public sealed partial class MainWindow : Window
 
     private void EnterWidgetView()
     {
-        if (_isWidgetView) return;
+        if (_isWidgetView || _persistingSave) return;
+        AbandonSettingsSave();
         SettingsPanel.Visibility = Visibility.Collapsed;
         WidgetHost.Children.Clear();
         WidgetHost.ColumnDefinitions.Clear();
@@ -1658,11 +1770,13 @@ public sealed partial class MainWindow : Window
         if (_closeReady) return;
         var movePending = _windowMoveTimer?.IsRunning == true;
         var screenPending = _screenBlank || _screenBusy || _brightnessBeforeBlank is not null || _brightnessRestore is not null || _restoreClearUnsaved;
-        if (!_closeAfterPendingSave && !movePending && _displaySaves.IsCompleted && !screenPending) return;
+        if (!_closeAfterPendingSave && !movePending && _displaySaves.IsCompleted && !screenPending && _settingsSave.IsCompleted) return;
         args.Cancel = true;
         // Already waiting: further close clicks must not end the process mid-save.
         if (_closeAfterPendingSave) return;
         _closeAfterPendingSave = true;
+        // Noted now: the Settings save may finish (or fail) while display saves are awaited.
+        var settingsWasSaving = !_settingsSave.IsCompleted;
         if (movePending)
         {
             _windowMoveTimer!.Stop();
@@ -1678,6 +1792,24 @@ public sealed partial class MainWindow : Window
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
         }
         while (!ReferenceEquals(pending, _displaySaves));
+        if (settingsWasSaving || !_settingsSave.IsCompleted)
+        {
+            // Save was pressed: finish it (checking launcher targets can wait on a slow drive)
+            // rather than lose it, and say why the window is still open.
+            if (!_settingsSave.IsCompleted)
+            {
+                UrlErrorText.Text = "Finishing your save, then EdgeDock will close.";
+                UrlErrorText.Visibility = Visibility.Visible;
+                await _settingsSave;
+            }
+            // A successful save closes Settings. If it is still open, the save failed or was
+            // refused (its message is showing): stay open so the draft can be fixed, not lost.
+            if (SettingsPanel.Visibility == Visibility.Visible)
+            {
+                _closeAfterPendingSave = false;
+                return;
+            }
+        }
         await RestoreScreenBeforeCloseAsync();
         _closeReady = true;
         Close();

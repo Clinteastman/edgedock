@@ -96,6 +96,13 @@ Dashboard-only layout controls are unavailable while this mode is active.
   with several sessions or processes (browsers) get one row that sets all of them. Playing
   apps come first, System sounds last. It refreshes once a second only while
   visible. Loading or refreshing never changes system audio.
+- Launcher shows up to 24 tiles in as many equal columns as fit (minimum
+  104px wide), each with the item's shell icon (globe for web pages, warning
+  for a missing item) and a two-line name. A tap opens the item through the
+  shell, as a double-click would. Targets must be an existing file or folder
+  by full path, or an http/https address: no arguments, relative paths or other
+  schemes. They are checked when saved and again when tapped; a missing item
+  explains itself instead of failing silently.
 - Clock and weather: 64px time in the Windows short-time format and the date;
   with a place set, an emoji condition, current temperature, today's high and
   low, the next six hours and "place · updated hh:mm". Without a place it

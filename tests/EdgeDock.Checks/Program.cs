@@ -238,6 +238,52 @@ try
     Check(budget.TryConsume(asleep) && budget.TryConsume(asleep.AddMinutes(1)) && budget.TryConsume(asleep.AddMinutes(2)) &&
           !budget.TryConsume(asleep.AddMinutes(3)) && budget.TryConsume(asleep.AddMinutes(10)),
           "Automatic crash recovery stops after three tries in ten minutes, then allows more later");
+    var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\Tools\app.exe" };
+    var folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"D:\Projects" };
+    LauncherTargetKind Kind(string target) => LauncherTargets.Classify(target, files.Contains, folders.Contains);
+    var checkedFolder = Path.Combine(Path.GetTempPath(), "edgedock-launcher-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(checkedFolder);
+    var whilePresent = await LauncherTargets.ClassifyAsync(checkedFolder);
+    Directory.Delete(checkedFolder);
+    var afterRemoval = await LauncherTargets.ClassifyAsync(checkedFolder);
+    Check(whilePresent == LauncherTargetKind.Folder && afterRemoval == LauncherTargetKind.Invalid,
+          "Shared target checks look again once the previous check has finished");
+    Check(Kind(@"C:\Tools\app.exe") == LauncherTargetKind.File && Kind(@"D:\Projects") == LauncherTargetKind.Folder &&
+          Kind("https://example.com/") == LauncherTargetKind.WebPage && Kind(@"C:\Missing\gone.exe") == LauncherTargetKind.Invalid,
+          "Launcher items open existing files, folders and web pages");
+    Check(Kind(@"""C:\Tools\app.exe"" --wipe") == LauncherTargetKind.Invalid && Kind(@"app.exe") == LauncherTargetKind.Invalid &&
+          Kind("cmd /c del x") == LauncherTargetKind.Invalid && Kind("file:///C:/Tools/app.exe") == LauncherTargetKind.Invalid &&
+          Kind("javascript:alert(1)") == LauncherTargetKind.Invalid && Kind(@"\\?\C:\Tools\app.exe") == LauncherTargetKind.Invalid &&
+          Kind("") == LauncherTargetKind.Invalid,
+          "Launcher items reject command lines, arguments, relative paths and other schemes");
+    Check(LauncherTargets.DefaultName(@"C:\Tools\app.exe") == "app" && LauncherTargets.DefaultName(@"D:\Projects\") == "Projects" &&
+          LauncherTargets.DefaultName("https://www.example.com/x") == "www.example.com",
+          "Launcher items get a readable default name");
+    Check(LauncherTargets.DefaultName(@"D:\Projects.v2", LauncherTargetKind.Folder) == "Projects.v2" &&
+          LauncherTargets.DefaultName(@"C:\Users\me\.config", LauncherTargetKind.Folder) == ".config" &&
+          LauncherTargets.DefaultName(@"C:\Users\me\.profile") == ".profile" &&
+          LauncherTargets.DefaultName(@"D:\Docs\report.v2.pdf", LauncherTargetKind.File) == "report.v2",
+          "Folder names keep their dots; dot-only names are kept whole");
+    store = new SettingsStore();
+    await store.SaveAsync(upgraded with
+    {
+        Launchers =
+        [
+            new LauncherItem("a", " Tools ", @"C:\Tools\app.exe"),
+            new LauncherItem("a", "", "https://example.com/"),
+            new LauncherItem("bad", "Bad", "cmd /c whoami")
+        ]
+    });
+    var launched = await new SettingsStore().LoadAsync();
+    Check(launched.Launchers is [{ Id: "a", Name: "Tools" }, { Id: "a-2", Name: "example.com" }] &&
+          launched.DashboardUrl == upgraded.DashboardUrl,
+          "Launcher items survive restart; bad entries are dropped and IDs and names repaired");
+    Check(SettingsStore.Normalize(upgraded with
+          {
+              Launchers = Enumerable.Range(0, 40).Select(index => new LauncherItem($"i{index}", "x", "https://example.com/")).ToArray()
+          }).Launchers!.Count == SettingsStore.MaximumLaunchers,
+          "The launcher is limited to 24 items");
+
     Check(AudioNaming.DisplayName("Spotify Premium", "Spotify", "spotify", false) == "Spotify Premium" &&
           AudioNaming.DisplayName(@"@%SystemRoot%\System32\AudioSrv.Dll,-202", "Desktop Window Manager", "dwm", false) == "Desktop Window Manager" &&
           AudioNaming.DisplayName(null, null, "discord", false) == "Discord" &&
