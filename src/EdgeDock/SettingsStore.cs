@@ -8,6 +8,7 @@ internal enum BackdropMaterial { Mica, Acrylic }
 
 internal sealed record WidgetSlotSettings(IReadOnlyList<string> EnabledWidgetIds, string? SelectedWidgetId);
 internal sealed record WebCardSettings(string Id, string Name, string Url, double Zoom = 1.0);
+internal sealed record LauncherItem(string Id, string Name, string Target);
 
 internal sealed record EdgeDockSettings(
     string? DashboardUrl,
@@ -29,6 +30,9 @@ internal sealed record EdgeDockSettings(
     AutoLayoutSwitch? AutoSwitch = null,
     IReadOnlyList<string>? SuppressedProfileIds = null,
     IReadOnlyDictionary<string, DateTime>? SuppressedSince = null,
+    ScreenScheduleSettings? Screen = null,
+    BrightnessRestore? PendingBrightness = null,
+    IReadOnlyList<LauncherItem>? Launchers = null,
     WeatherLocation? Weather = null,
     bool Fahrenheit = false);
 
@@ -102,6 +106,23 @@ internal sealed class SettingsStore
                     : null,
                 SuppressedProfileIds: stored?.SuppressedProfileIds,
                 SuppressedSince: stored?.SuppressedSince,
+                Screen: stored?.Screen is { } screen
+                    ? new ScreenScheduleSettings(
+                        screen.DimAtNight ?? false,
+                        screen.DayBrightness ?? ScreenScheduleSettings.Default.DayBrightness,
+                        screen.NightBrightness ?? ScreenScheduleSettings.Default.NightBrightness,
+                        TimeSpan.TryParse(screen.NightStart, System.Globalization.CultureInfo.InvariantCulture, out var start) ? start : ScreenScheduleSettings.Default.NightStart,
+                        TimeSpan.TryParse(screen.NightEnd, System.Globalization.CultureInfo.InvariantCulture, out var end) ? end : ScreenScheduleSettings.Default.NightEnd,
+                        screen.BlankAfterMinutes ?? 0)
+                    : null,
+                PendingBrightness: stored?.PendingBrightness is { Monitor: { } restoreMonitor, Brightness: { } restoreLevel }
+                    ? new BrightnessRestore(
+                        new DisplayPreference(restoreMonitor.DeviceId, restoreMonitor.HardwareId, restoreMonitor.Width ?? 0, restoreMonitor.Height ?? 0),
+                        restoreLevel)
+                    : null,
+                Launchers: stored?.Launchers?.Where(item => item is not null)
+                    .Select(item => new LauncherItem(item.Id ?? string.Empty, item.Name ?? string.Empty, item.Target ?? string.Empty))
+                    .ToArray(),
                 Weather: stored?.Weather is { Name: { } weatherName, Latitude: { } latitude, Longitude: { } longitude }
                     ? new WeatherLocation(weatherName, latitude, longitude)
                     : null,
@@ -137,6 +158,7 @@ internal sealed class SettingsStore
                 WebPanelCount = settings.WebPanelCount,
                 WebPanelCardIds = settings.WebPanelCardIds!.ToList(),
                 WebSplitRatio = settings.WebSplitRatio,
+                Launchers = settings.Launchers!.Select(item => new StoredLauncher { Id = item.Id, Name = item.Name, Target = item.Target }).ToList(),
                 Display = settings.Display is { } display
                     ? new StoredDisplay { DeviceId = display.DeviceId, HardwareId = display.HardwareId, Width = display.Width, Height = display.Height }
                     : null,
@@ -153,6 +175,28 @@ internal sealed class SettingsStore
                     WhenRunning = profile.WhenRunning,
                     Layout = FromLayout(profile.Layout)
                 }).ToList(),
+                Screen = new StoredScreen
+                {
+                    DimAtNight = settings.Screen!.DimAtNight,
+                    DayBrightness = settings.Screen.DayBrightness,
+                    NightBrightness = settings.Screen.NightBrightness,
+                    NightStart = settings.Screen.NightStart.ToString(@"hh\:mm", System.Globalization.CultureInfo.InvariantCulture),
+                    NightEnd = settings.Screen.NightEnd.ToString(@"hh\:mm", System.Globalization.CultureInfo.InvariantCulture),
+                    BlankAfterMinutes = settings.Screen.BlankAfterMinutes
+                },
+                PendingBrightness = settings.PendingBrightness is { } restore
+                    ? new StoredRestore
+                    {
+                        Monitor = new StoredDisplay
+                        {
+                            DeviceId = restore.Monitor.DeviceId,
+                            HardwareId = restore.Monitor.HardwareId,
+                            Width = restore.Monitor.Width,
+                            Height = restore.Monitor.Height
+                        },
+                        Brightness = restore.Brightness
+                    }
+                    : null,
                 Weather = settings.Weather is { } weather
                     ? new StoredWeather { Name = weather.Name, Latitude = weather.Latitude, Longitude = weather.Longitude }
                     : null,
@@ -207,6 +251,7 @@ internal sealed class SettingsStore
             WebPanelCount = panelCount,
             WebPanelCardIds = selections,
             WebSplitRatio = PanelLayout.NormalizeWebSplitRatio(value.WebSplitRatio),
+            Launchers = NormalizeLaunchers(value.Launchers ?? []),
             Display = NormalizeDisplay(value.Display),
             Profiles = LayoutProfiles.Normalize(value.Profiles, value with { Profiles = [] }),
             AutoSwitch = value.AutoSwitch is { } autoSwitch && !string.IsNullOrWhiteSpace(autoSwitch.ProfileId) && autoSwitch.Before is not null
@@ -218,8 +263,32 @@ internal sealed class SettingsStore
             SuppressedSince = (value.SuppressedSince ?? new Dictionary<string, DateTime>())
                 .Where(entry => value.SuppressedProfileIds?.Contains(entry.Key) == true)
                 .ToDictionary(entry => entry.Key, entry => DateTime.SpecifyKind(entry.Value, DateTimeKind.Utc)),
+            Screen = ScreenSchedule.Normalize(value.Screen),
+            PendingBrightness = value.PendingBrightness is { } restore && NormalizeDisplay(restore.Monitor) is { } restoreMonitor
+                ? new BrightnessRestore(restoreMonitor, Math.Clamp(restore.Brightness, 0, 100))
+                : null,
             Weather = NormalizeWeather(value.Weather)
         };
+    }
+
+    public const int MaximumLaunchers = 24;
+
+    private static IReadOnlyList<LauncherItem> NormalizeLaunchers(IReadOnlyList<LauncherItem> source)
+    {
+        var items = new List<LauncherItem>();
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in source.Where(item => item is not null))
+        {
+            if (items.Count == MaximumLaunchers) break;
+            if (!LauncherTargets.IsWellFormed(candidate.Target)) continue;
+            var target = candidate.Target.Trim();
+            var baseId = string.IsNullOrWhiteSpace(candidate.Id) ? $"launcher-{items.Count + 1}" : candidate.Id.Trim();
+            var id = baseId;
+            for (var suffix = 2; !ids.Add(id); suffix++) id = $"{baseId}-{suffix}";
+            var name = string.IsNullOrWhiteSpace(candidate.Name) ? LauncherTargets.DefaultName(target) : candidate.Name.Trim();
+            items.Add(new LauncherItem(id, name, target));
+        }
+        return items;
     }
 
     private static WeatherLocation? NormalizeWeather(WeatherLocation? weather) =>
@@ -283,7 +352,7 @@ internal sealed class SettingsStore
 
     private static MediaPanelPlacement ParsePlacement(string? value, MediaPanelPlacement fallback, bool allowHidden) => Enum.TryParse<MediaPanelPlacement>(value, true, out var parsed) && Enum.IsDefined(parsed) && (allowHidden || parsed != MediaPanelPlacement.Hidden) ? parsed : fallback;
     private static BackdropMaterial ParseMaterial(string? value) => Enum.TryParse<BackdropMaterial>(value, true, out var parsed) && Enum.IsDefined(parsed) ? parsed : BackdropMaterial.Mica;
-    private static WidgetSlotSettings[] DefaultSlots() => [new(["media", "clock", "audio", "stats", "pc"], "media")];
+    private static WidgetSlotSettings[] DefaultSlots() => [new(["media", "clock", "audio", "stats", "launcher", "pc"], "media")];
     private static EdgeDockSettings Defaults() => Normalize(new(null, MediaPanelPlacement.Right, MediaPanelPlacement.Right, 340, true, true, DefaultSlots(),
         Fahrenheit: !System.Globalization.RegionInfo.CurrentRegion.IsMetric));
 
@@ -307,9 +376,12 @@ internal sealed class SettingsStore
         public StoredAutoSwitch? AutoSwitch { get; set; }
         public List<string>? SuppressedProfileIds { get; set; }
         public Dictionary<string, DateTime>? SuppressedSince { get; set; }
+        public StoredScreen? Screen { get; set; }
+        public StoredRestore? PendingBrightness { get; set; }
         public StoredWeather? Weather { get; set; }
         public bool? Fahrenheit { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }
+        public List<StoredLauncher>? Launchers { get; set; }
         [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; }
     }
 
@@ -366,6 +438,29 @@ internal sealed class SettingsStore
         public int? WebPanelCount { get; set; }
         public List<string>? WebPanelCardIds { get; set; }
         public double? WebSplitRatio { get; set; }
+    }
+
+    private sealed class StoredRestore
+    {
+        public StoredDisplay? Monitor { get; set; }
+        public int? Brightness { get; set; }
+    }
+
+    private sealed class StoredScreen
+    {
+        public bool? DimAtNight { get; set; }
+        public int? DayBrightness { get; set; }
+        public int? NightBrightness { get; set; }
+        public string? NightStart { get; set; }
+        public string? NightEnd { get; set; }
+        public int? BlankAfterMinutes { get; set; }
+    }
+
+    private sealed class StoredLauncher
+    {
+        public string? Id { get; set; }
+        public string? Name { get; set; }
+        public string? Target { get; set; }
     }
 
     private sealed class StoredWeather

@@ -238,6 +238,52 @@ try
     Check(budget.TryConsume(asleep) && budget.TryConsume(asleep.AddMinutes(1)) && budget.TryConsume(asleep.AddMinutes(2)) &&
           !budget.TryConsume(asleep.AddMinutes(3)) && budget.TryConsume(asleep.AddMinutes(10)),
           "Automatic crash recovery stops after three tries in ten minutes, then allows more later");
+    var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\Tools\app.exe" };
+    var folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"D:\Projects" };
+    LauncherTargetKind Kind(string target) => LauncherTargets.Classify(target, files.Contains, folders.Contains);
+    var checkedFolder = Path.Combine(Path.GetTempPath(), "edgedock-launcher-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(checkedFolder);
+    var whilePresent = await LauncherTargets.ClassifyAsync(checkedFolder);
+    Directory.Delete(checkedFolder);
+    var afterRemoval = await LauncherTargets.ClassifyAsync(checkedFolder);
+    Check(whilePresent == LauncherTargetKind.Folder && afterRemoval == LauncherTargetKind.Invalid,
+          "Shared target checks look again once the previous check has finished");
+    Check(Kind(@"C:\Tools\app.exe") == LauncherTargetKind.File && Kind(@"D:\Projects") == LauncherTargetKind.Folder &&
+          Kind("https://example.com/") == LauncherTargetKind.WebPage && Kind(@"C:\Missing\gone.exe") == LauncherTargetKind.Invalid,
+          "Launcher items open existing files, folders and web pages");
+    Check(Kind(@"""C:\Tools\app.exe"" --wipe") == LauncherTargetKind.Invalid && Kind(@"app.exe") == LauncherTargetKind.Invalid &&
+          Kind("cmd /c del x") == LauncherTargetKind.Invalid && Kind("file:///C:/Tools/app.exe") == LauncherTargetKind.Invalid &&
+          Kind("javascript:alert(1)") == LauncherTargetKind.Invalid && Kind(@"\\?\C:\Tools\app.exe") == LauncherTargetKind.Invalid &&
+          Kind("") == LauncherTargetKind.Invalid,
+          "Launcher items reject command lines, arguments, relative paths and other schemes");
+    Check(LauncherTargets.DefaultName(@"C:\Tools\app.exe") == "app" && LauncherTargets.DefaultName(@"D:\Projects\") == "Projects" &&
+          LauncherTargets.DefaultName("https://www.example.com/x") == "www.example.com",
+          "Launcher items get a readable default name");
+    Check(LauncherTargets.DefaultName(@"D:\Projects.v2", LauncherTargetKind.Folder) == "Projects.v2" &&
+          LauncherTargets.DefaultName(@"C:\Users\me\.config", LauncherTargetKind.Folder) == ".config" &&
+          LauncherTargets.DefaultName(@"C:\Users\me\.profile") == ".profile" &&
+          LauncherTargets.DefaultName(@"D:\Docs\report.v2.pdf", LauncherTargetKind.File) == "report.v2",
+          "Folder names keep their dots; dot-only names are kept whole");
+    store = new SettingsStore();
+    await store.SaveAsync(upgraded with
+    {
+        Launchers =
+        [
+            new LauncherItem("a", " Tools ", @"C:\Tools\app.exe"),
+            new LauncherItem("a", "", "https://example.com/"),
+            new LauncherItem("bad", "Bad", "cmd /c whoami")
+        ]
+    });
+    var launched = await new SettingsStore().LoadAsync();
+    Check(launched.Launchers is [{ Id: "a", Name: "Tools" }, { Id: "a-2", Name: "example.com" }] &&
+          launched.DashboardUrl == upgraded.DashboardUrl,
+          "Launcher items survive restart; bad entries are dropped and IDs and names repaired");
+    Check(SettingsStore.Normalize(upgraded with
+          {
+              Launchers = Enumerable.Range(0, 40).Select(index => new LauncherItem($"i{index}", "x", "https://example.com/")).ToArray()
+          }).Launchers!.Count == SettingsStore.MaximumLaunchers,
+          "The launcher is limited to 24 items");
+
     Check(AudioNaming.DisplayName("Spotify Premium", "Spotify", "spotify", false) == "Spotify Premium" &&
           AudioNaming.DisplayName(@"@%SystemRoot%\System32\AudioSrv.Dll,-202", "Desktop Window Manager", "dwm", false) == "Desktop Window Manager" &&
           AudioNaming.DisplayName(null, null, "discord", false) == "Discord" &&
@@ -394,6 +440,37 @@ try
           !LayoutProfiles.Matches(shown with { WidgetSlots = [new(["stats"], "stats")] }, shown) &&
           !LayoutProfiles.Matches(shown with { IsWebVisible = false, WebPanelCount = shown.WebPanelCount + 1 }, shown with { IsWebVisible = false }),
           "A saved layout reads as current only while the dashboard still matches it");
+    var night = new TimeSpan(22, 30, 0);
+    var morning = new TimeSpan(7, 0, 0);
+    Check(ScreenSchedule.IsNight(new TimeSpan(23, 0, 0), night, morning) && ScreenSchedule.IsNight(new TimeSpan(3, 0, 0), night, morning) &&
+          !ScreenSchedule.IsNight(new TimeSpan(7, 0, 0), night, morning) && !ScreenSchedule.IsNight(new TimeSpan(12, 0, 0), night, morning) &&
+          ScreenSchedule.IsNight(new TimeSpan(14, 0, 0), new TimeSpan(13, 0, 0), new TimeSpan(15, 0, 0)) &&
+          !ScreenSchedule.IsNight(new TimeSpan(14, 0, 0), night, night),
+          "Night runs past midnight, works within a day, and is off when start equals end");
+    var dimming = ScreenScheduleSettings.Default with { DimAtNight = true, DayBrightness = 80, NightBrightness = 15, BlankAfterMinutes = 10 };
+    Check(ScreenSchedule.Evaluate(dimming, new DateTime(2026, 10, 10, 23, 0, 0), TimeSpan.FromMinutes(2)) == new ScreenState(15, false) &&
+          ScreenSchedule.Evaluate(dimming, new DateTime(2026, 10, 10, 12, 0, 0), TimeSpan.Zero) == new ScreenState(80, false) &&
+          ScreenSchedule.Evaluate(dimming, new DateTime(2026, 10, 10, 12, 0, 0), TimeSpan.FromMinutes(11)) == new ScreenState(0, true) &&
+          ScreenSchedule.Evaluate(ScreenScheduleSettings.Default, new DateTime(2026, 10, 10, 23, 0, 0), TimeSpan.FromHours(5)) == new ScreenState(null, false),
+          "The schedule picks night or day brightness, blanks after the idle time, and does nothing when off");
+    Check(ScreenSchedule.Normalize(new ScreenScheduleSettings(true, 140, -5, TimeSpan.FromHours(30), new TimeSpan(6, 30, 45), 7)) is
+          { DayBrightness: 100, NightBrightness: 0, BlankAfterMinutes: 0 } screenFixed &&
+          screenFixed.NightStart == ScreenScheduleSettings.Default.NightStart && screenFixed.NightEnd == new TimeSpan(6, 30, 0),
+          "Screen settings recover to usable values");
+    store = new SettingsStore();
+    await store.SaveAsync(upgraded with { Screen = dimming with { NightStart = new TimeSpan(21, 45, 0) } });
+    var screenSaved = await new SettingsStore().LoadAsync();
+    Check(screenSaved.Screen == ScreenSchedule.Normalize(dimming with { NightStart = new TimeSpan(21, 45, 0) }) &&
+          (await new SettingsStore().LoadAsync()).DashboardUrl == upgraded.DashboardUrl,
+          "The screen schedule survives restart");
+    var restorePoint = new BrightnessRestore(edgePreference!, 95);
+    store = new SettingsStore();
+    await store.SaveAsync(upgraded with { PendingBrightness = restorePoint });
+    var restoreSaved = await new SettingsStore().LoadAsync();
+    Check(restoreSaved.PendingBrightness == restorePoint &&
+          SettingsStore.Normalize(upgraded with { PendingBrightness = restorePoint with { Brightness = 140 } }).PendingBrightness?.Brightness == 100 &&
+          SettingsStore.Normalize(upgraded with { PendingBrightness = new BrightnessRestore(new DisplayPreference(null, null, 0, 0), 50) }).PendingBrightness is null,
+          "A monitor's original brightness survives restart so it can be put back later");
     const string forecastJson = """
         {"utc_offset_seconds":3600,
          "current":{"time":"2026-10-10T20:00","temperature_2m":11.04,"weather_code":3,"is_day":0},

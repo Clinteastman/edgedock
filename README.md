@@ -35,13 +35,24 @@ contribute. This is not a signed installer or a finished consumer release.
   minimises instead of covering your main screen, then returns when it is back.
 - Optionally starts when you sign in (Settings, **Startup**).
 - Runs as one copy: launching it again brings the open window forward.
+- Optionally dims the screen at night and blanks it when the PC is idle
+  (Settings, **Screen**). It uses the monitor's own brightness control
+  (DDC/CI) when available, otherwise darkens itself. It acts only while
+  EdgeDock is full screen, on the screen it is full screen on; a windowed
+  EdgeDock changes no monitor. Any input or a tap wakes it. Turning it off,
+  leaving full screen or closing EdgeDock restores the monitor's brightness,
+  even after a restart if the monitor was unplugged at the time.
 - Supports one to three native widget panels, with an optional web area.
 - Lets each panel switch between its chosen widgets independently.
 - Includes a local library of media, clock and weather, PC audio, PC
-  activity and Windows Settings shortcuts.
+  activity, launcher and Windows Settings shortcuts.
 - **PC audio** switches the Windows output device, sets master volume and mute,
   mutes the microphone with an unmistakable red state, and gives every app
   making sound its own volume slider and mute, with its icon.
+- **Launcher** turns the panel into a touch shortcut pad: tiles open your chosen
+  apps, documents, folders or web pages, exactly like double-clicking them in
+  File Explorer. Add them in Settings, under Launcher. Tiles show the real
+  Windows icon. Command lines and arguments are deliberately not supported.
 - **Clock and weather** shows a large clock (following your Windows 12/24-hour
   setting) and the date. Add a town in Settings to see the weather now, today's
   high and low, and the next six hours. Weather comes from Open-Meteo, free and

@@ -30,6 +30,84 @@
   mid-scan is skipped; hidden web settings still count when matching layouts.
   Console checks updated; auto-switch capture repeated with a silent trigger.
 
+## Screen schedule (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 54 console checks pass, including
+  night windows across midnight, within a day and disabled, day/night/blank
+  decisions, recovery from bad values, and persistence.
+- Read-only DDC/CI check on this PC: the Xeneon Edge reports brightness 95 of
+  100; the main LG TV screen does not support DDC/CI (would use software
+  dimming, and only if EdgeDock were full screen there).
+- Through EdgeDock's own brightness code, using hidden 1x1 helper windows (no
+  visible change): read the Edge at 95, wrote 95, read back 95; the primary
+  screen reported "not supported".
+- After review: closing while blanked holds the close until brightness is
+  restored; the blanked monitor is remembered by device path and only it is
+  restored (if it disconnected, when it returns); waking restores the level
+  in use just before blanking; waking outside full screen clears software
+  dimming; the dim and blank layers are now topmost, above the drawer and
+  Settings. Build, checks and a normal capture repeated (code otherwise).
+- Second review: the monitor's level from before EdgeDock first changed it is
+  saved with the layout and restored, only to that monitor (same matcher as
+  the saved screen, never a guess), when the schedule is off, outside full
+  screen, and on close. Runtime: a saved restore for the connected Edge (95,
+  no visible change) was applied and cleared within one tick; one for a
+  monitor that is not connected stayed saved through running and closing,
+  and closing was not blocked. Waking applies a day/night change that
+  happened while blank. 55 console checks pass.
+- Not tested at runtime: night transitions, idle blanking and waking (need
+  real time of day and five or more idle minutes).
+- Later review (build and console checks only; these paths need a DDC/CI
+  monitor that refuses writes, a locked settings file or a monitor unplugged at
+  the right moment, so they were not exercised): the monitor is changed only
+  after its original level is saved on disk; a second monitor is left alone
+  (software dimming instead) until the first one's level is put back; a level
+  that fails to apply is retried, and the pre-blank level is kept until the new
+  one is really written; saving unrelated settings no longer rewrites the level;
+  closing waits for any in-flight blank or wake to finish completely before
+  restoring.
+- Next review (build and console checks only, same reason): the scheduled
+  level is reapplied whenever full screen or the monitor changes, so returning
+  to full screen on another monitor before the next tick still applies it (and
+  puts the first monitor back first); a restore whose removal from settings.json
+  failed to save is retried each tick and on close.
+
+## Launcher widget (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 34 console checks pass, including
+  allowed targets (file, folder, web page), rejected ones (quoted command with
+  arguments, relative path, `cmd /c`, `file:`, `javascript:`, `\\?\` paths, empty),
+  default names, persistence with repaired IDs, and the 24-item limit.
+- A captured EdgeDock window (isolated profile) showed Notepad, Documents and
+  Calculator with their real shell icons and transparency, a globe for a web
+  page, and a warning icon for a missing file, in two columns at 360px.
+- After review: target checks and icon extraction run off the UI thread, and
+  the check on tap too. Icons come from a dedicated STA thread: on thread-pool
+  (MTA) threads Calculator's icon failed and fell back to the placeholder, on
+  the STA thread all three icons loaded again (captured). Screen-reader names
+  for each launcher row now follow the Name field as it is typed.
+- Second review: Save layout checks launcher targets on the thread pool, and
+  folder names keep their dots (`Projects.v2`, `.config`; console check).
+- Third review: a save still checking launcher targets is dropped if Settings
+  closes (Cancel, toggle, Widget view) or a newer save starts (code only).
+- Not yet tested: tapping a tile to open it, the Browse buttons, and the
+  Settings save path (all need real input).
+- Later review: cancelling or closing Settings now unlocks the editors at once,
+  even while a target check is stuck on an offline drive; the stuck check's
+  result is dropped and cannot unlock a newer save. Build only (needs an
+  offline drive and real input to exercise).
+- Third review: an invalid row is focused and scrolled to after the editor is
+  unlocked; tiles share one target check per item (a stuck check is joined,
+  not repeated, and a closed launcher stops waiting at once); the
+  any-process foreground grant was removed, so a launched app relies on the
+  shell's normal hand-over. Capture repeated: icons and the missing-item marker
+  still show. Tapping tiles still needs real input.
+- Fourth review: Settings now uses the same shared target checks as the tiles
+  (a stuck drive check is joined, and an abandoned save stops waiting at once);
+  the whole Settings form stays locked until a checked save is written, and Cancel waits for
+  a save already being written instead of half-undoing it. Console check added
+  for shared checks looking again after a folder is removed.
+
 ## Audio widget (10 October 2026)
 
 - Debug x64 build: zero warnings/errors. 30 console checks pass, including app
