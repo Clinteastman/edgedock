@@ -72,6 +72,19 @@ Only the selected widget view is
 created; switching pages unloads the previous view. Empty and missing widgets
 show an explanation directing the user to Settings.
 
+## Layouts
+
+Up to 12 named layouts capture panel placement and width, web visibility, web
+panel count, cards and split, and every widget slot. EdgeDock controls lists
+them (the active one highlighted) with "Save this layout as"; saving an
+existing name replaces it. Settings renames or removes them and sets an
+optional program (a process name only, no paths or options) that switches the
+layout on while it runs. Running programs are read every 5 seconds off the UI
+thread, only when a layout has a program. When the program exits, the layout
+from before returns. Choosing a layout by hand while a program's layout is on
+leaves it alone until that program starts again. Applying a layout normalises
+it, so a layout naming a deleted web card still opens usably.
+
 ## Widgets
 
 Widget view is a temporary alternative to the dashboard. All installed widgets

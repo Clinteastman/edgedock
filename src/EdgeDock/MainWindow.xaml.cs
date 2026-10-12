@@ -76,6 +76,23 @@ public sealed partial class MainWindow : Window
     private double _resizeStartWebSplitRatio;
     private double _resizeStartPanelWidth;
     private DisplayPreference? _displayPreference;
+    private IReadOnlyList<LayoutProfile> _profiles = [];
+    // Automatic switching: the layout to return to, the profile switched on for a running
+    // program, and one the user overrode by hand (left alone until its program restarts).
+    private ProfileLayout? _layoutBeforeAuto;
+    private string? _autoProfileId;
+    private IReadOnlyList<string> _suppressedProfileIds = [];
+    // When each override was made (UTC), so a program restarted while EdgeDock was closed counts
+    // as a new start.
+    private IReadOnlyDictionary<string, DateTime> _suppressedSince = new Dictionary<string, DateTime>();
+    // One layout change at a time, from start to finish: a hand choice, an automatic switch and
+    // a Settings save each read the current layout and must not interleave.
+    private readonly SemaphoreSlim _profileGate = new(1, 1);
+    // Bumped whenever a saved layout is applied. A tap queued behind a switch was aimed at the
+    // layout that was showing then, so it is dropped if the layout changed while it waited.
+    private int _layoutGeneration;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _profileTimer;
+    private bool _checkingPrograms;
     private ScreenScheduleSettings _screenSettings = ScreenScheduleSettings.Default;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _screenTimer;
     private bool _screenBlank;
@@ -181,6 +198,11 @@ public sealed partial class MainWindow : Window
         _launchers = settings.Launchers!;
         _displayPreference = settings.Display;
         _openFullScreen = settings.OpenFullScreen;
+        _profiles = settings.Profiles ?? [];
+        _autoProfileId = settings.AutoSwitch?.ProfileId;
+        _layoutBeforeAuto = settings.AutoSwitch?.Before;
+        _suppressedProfileIds = settings.SuppressedProfileIds ?? [];
+        _suppressedSince = settings.SuppressedSince ?? new Dictionary<string, DateTime>();
         _screenSettings = settings.Screen ?? ScreenScheduleSettings.Default;
         _brightnessRestore = settings.PendingBrightness;
         _weatherLocation = settings.Weather;
@@ -189,6 +211,7 @@ public sealed partial class MainWindow : Window
         // render once at the right size and scale.
         RestorePreferredDisplay();
         StartDisplayTracking();
+        StartProfileWatch();
         StartScreenSchedule();
         BuildWidgetSlots();
         // Establish the final native/web bounds before WebView2 creates its child HWNDs.
@@ -496,6 +519,12 @@ public sealed partial class MainWindow : Window
             UrlErrorText.Visibility = Visibility.Visible;
             return;
         }
+        if (!ProfileEditor.TryGetProfiles(out var profiles, out var profileError))
+        {
+            UrlErrorText.Text = profileError;
+            UrlErrorText.Visibility = Visibility.Visible;
+            return;
+        }
         // One check at a time: a second Save while targets are being checked is ignored, so
         // only the save that locked the drafts can unlock them.
         if (_checkingSave) return;
@@ -513,7 +542,7 @@ public sealed partial class MainWindow : Window
         _saveCancellation?.Dispose();
         _saveCancellation = new CancellationTokenSource();
         // The drafts stay locked until the save is written, not just checked.
-        try { await SaveCheckedAsync(cards, saveVersion, _saveCancellation.Token); }
+        try { await SaveCheckedAsync(cards, profiles, saveVersion, _saveCancellation.Token); }
         catch (OperationCanceledException) { } // Abandoned while checking targets.
         finally
         {
@@ -527,7 +556,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task SaveCheckedAsync(IReadOnlyList<WebCardSettings> cards, int saveVersion, CancellationToken cancellation)
+    private async Task SaveCheckedAsync(IReadOnlyList<WebCardSettings> cards, IReadOnlyList<LayoutProfile> profiles, int saveVersion, CancellationToken cancellation)
     {
         var (launchersValid, launchers, launcherError) = await LauncherEditor.TryGetItemsAsync(cancellation);
         if (saveVersion != _settingsSaveVersion) return;
@@ -544,6 +573,25 @@ public sealed partial class MainWindow : Window
             LauncherEditor.FocusInvalidRow(launcherError);
             return;
         }
+        // Layout changes run one at a time (see _profileGate). Waiting here can be
+        // abandoned like the target checks, and a save abandoned meanwhile is dropped.
+        await _profileGate.WaitAsync(cancellation);
+        try { await SaveSettingsLockedAsync(cards, profiles, launchers, saveVersion); }
+        finally { _profileGate.Release(); }
+    }
+
+    private async Task SaveSettingsLockedAsync(IReadOnlyList<WebCardSettings> cards, IReadOnlyList<LayoutProfile> profiles,
+        IReadOnlyList<LauncherItem> launchers, int saveVersion)
+    {
+        if (saveVersion != _settingsSaveVersion) return;
+        // Saving Settings while a program's layout is on is a hand choice: keep what was saved,
+        // and keep that program's layout off until it next starts. An override was for the
+        // program that was running; a new or removed trigger ends it.
+        var suppressedIds = SuppressActive()
+            .Where(id => _profiles.FirstOrDefault(profile => profile.Id == id)?.WhenRunning is { } oldTrigger &&
+                profiles.FirstOrDefault(profile => profile.Id == id)?.WhenRunning is { } newTrigger &&
+                string.Equals(oldTrigger, newTrigger, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
         // Saving with the toggle on also repairs an entry left pointing at a moved or older copy.
         var startupNeedsChange = StartupToggle.IsOn ? !StartupRegistration.PointsHere() : StartupRegistration.IsEnabled();
         if (StartupToggle.IsEnabled && startupNeedsChange && !StartupRegistration.SetEnabled(StartupToggle.IsOn))
@@ -566,6 +614,10 @@ public sealed partial class MainWindow : Window
             _configuredWebSplitRatio, _displayPreference, _openFullScreen, Launchers: launchers,
             Screen: ReadScreenSettings(),
             PendingBrightness: _brightnessRestore,
+            Profiles: profiles,
+            AutoSwitch: null,
+            SuppressedProfileIds: suppressedIds,
+            SuppressedSince: SinceFor(suppressedIds),
             Weather: WeatherPlaceSelector.SelectedItem is ComboBoxItem { Tag: WeatherLocation place } ? place : null,
             Fahrenheit: FahrenheitToggle.IsOn));
         // From here the save is committed: Cancel and closing Settings wait for it.
@@ -584,6 +636,11 @@ public sealed partial class MainWindow : Window
         _webPanelCount = settings.WebPanelCount;
         _webPanelCardIds = settings.WebPanelCardIds!;
         _configuredWebSplitRatio = settings.WebSplitRatio;
+        _profiles = settings.Profiles ?? [];
+        _suppressedProfileIds = settings.SuppressedProfileIds ?? [];
+        _suppressedSince = settings.SuppressedSince ?? new Dictionary<string, DateTime>();
+        _autoProfileId = null;
+        _layoutBeforeAuto = null;
         _launchers = settings.Launchers!;
         var newSchedule = settings.Screen ?? ScreenScheduleSettings.Default;
         if (newSchedule != _screenSettings)
@@ -636,12 +693,20 @@ public sealed partial class MainWindow : Window
 
     private async void ToggleMediaPanel_Click(object sender, RoutedEventArgs args)
     {
-        if (!_isWebVisible) return;
-        if (_mediaPlacement == MediaPanelPlacement.Hidden) _mediaPlacement = _lastVisiblePlacement;
-        else { _lastVisiblePlacement = _mediaPlacement; _mediaPlacement = MediaPanelPlacement.Hidden; }
-        ApplyMediaLayout();
-        await PersistAsync(CurrentSettings(), alreadyApplied: true);
-        CloseControlsDrawer();
+        // Layout changes run one at a time with automatic switches (see _profileGate).
+        var generation = _layoutGeneration;
+        await _profileGate.WaitAsync();
+        try
+        {
+            if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
+            if (!_isWebVisible) return;
+            if (_mediaPlacement == MediaPanelPlacement.Hidden) _mediaPlacement = _lastVisiblePlacement;
+            else { _lastVisiblePlacement = _mediaPlacement; _mediaPlacement = MediaPanelPlacement.Hidden; }
+            ApplyMediaLayout();
+            await PersistAsync(CurrentSettings(), alreadyApplied: true);
+            CloseControlsDrawer();
+        }
+        finally { _profileGate.Release(); }
     }
 
     private EdgeDockSettings CurrentSettings() => new(
@@ -660,6 +725,10 @@ public sealed partial class MainWindow : Window
         _configuredWebSplitRatio,
         _displayPreference,
         _openFullScreen,
+        Profiles: _profiles,
+        AutoSwitch: _autoProfileId is { } autoId && _layoutBeforeAuto is { } before ? new AutoLayoutSwitch(autoId, before) : null,
+        SuppressedProfileIds: _suppressedProfileIds,
+        SuppressedSince: _suppressedSince,
         Screen: _screenSettings,
         PendingBrightness: _brightnessRestore,
         Launchers: _launchers,
@@ -697,6 +766,9 @@ public sealed partial class MainWindow : Window
         // An isolated test profile must not rewrite the real sign-in entry.
         StartupToggle.IsEnabled = !SettingsStore.IsIsolatedProfile;
         StartupToggle.IsOn = StartupRegistration.IsEnabled();
+        // Never while Settings is open: a divider drag or similar refresh would otherwise wipe
+        // unsaved name and program edits. Settings loads them as it opens.
+        if (SettingsPanel.Visibility != Visibility.Visible) ProfileEditor.LoadProfiles(_profiles);
         DimAtNightToggle.IsOn = _screenSettings.DimAtNight;
         DayBrightnessSlider.Value = _screenSettings.DayBrightness;
         NightBrightnessSlider.Value = _screenSettings.NightBrightness;
@@ -761,10 +833,19 @@ public sealed partial class MainWindow : Window
             slot.SetEdgeToEdge(_isFullScreen);
             slot.SelectionChanged += async (_, selectedId) =>
             {
-                var updated = _widgetSlots.ToArray();
-                updated[slotIndex] = updated[slotIndex] with { SelectedWidgetId = selectedId };
-                _widgetSlots = updated;
-                await PersistAsync(CurrentSettings(), alreadyApplied: true);
+                var generation = _layoutGeneration;
+                await _profileGate.WaitAsync();
+                try
+                {
+                    if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
+                    // The panel may have been replaced in a layout switch while waiting.
+                    if (slotIndex >= _widgetSlots.Count || !WidgetHost.Children.Contains(slot)) return;
+                    var updated = _widgetSlots.ToArray();
+                    updated[slotIndex] = updated[slotIndex] with { SelectedWidgetId = selectedId };
+                    _widgetSlots = updated;
+                    await PersistAsync(CurrentSettings(), alreadyApplied: true);
+                }
+                finally { _profileGate.Release(); }
             };
             Grid.SetColumn(slot, index);
             WidgetHost.Children.Add(slot);
@@ -845,10 +926,21 @@ public sealed partial class MainWindow : Window
     private async void Divider_PointerReleased(object sender, PointerRoutedEventArgs args)
     {
         if (sender is not PanelDivider divider || divider != _activeDivider || args.Pointer.PointerId != _activePointerId) return;
-        ApplyResizeDelta(divider, args.GetCurrentPoint(Root).Position.X - _resizeStartX);
-        CompleteResize(divider);
+        var delta = args.GetCurrentPoint(Root).Position.X - _resizeStartX;
         args.Handled = true;
-        await PersistAsync(CurrentSettings(), alreadyApplied: true);
+        var generation = _layoutGeneration;
+        // The final size, and its save, wait their turn with automatic layout switches.
+        await _profileGate.WaitAsync();
+        try
+        {
+            // A layout switch while waiting has already cancelled this drag and undone its
+            // preview; its old size must not land on the new layout.
+            if (generation != _layoutGeneration) return;
+            ApplyResizeDelta(divider, delta);
+            CompleteResize(divider);
+            await PersistAsync(CurrentSettings(), alreadyApplied: true);
+        }
+        finally { _profileGate.Release(); }
     }
 
     private void Divider_PointerCanceled(object sender, PointerRoutedEventArgs args)
@@ -878,22 +970,30 @@ public sealed partial class MainWindow : Window
             args.Key is not (VirtualKey.Left or VirtualKey.Right)) return;
 
         var delta = args.Key == VirtualKey.Right ? 10 : -10;
-        if (divider == WebDivider)
-        {
-            var available = Math.Max(1, WebHost.ActualWidth - 10);
-            _configuredWebSplitRatio = PanelLayout.NormalizeWebSplitRatio(_configuredWebSplitRatio + delta / available);
-            ApplyWebSplitLayout();
-        }
-        else
-        {
-            _configuredPanelWidth = PanelLayout.ResizeSharedWidgetWidth(
-                _configuredPanelWidth, delta, _widgetSlots.Count, _mediaPlacement);
-            ApplyMediaLayout();
-            UpdateSettingsControls();
-        }
-
         args.Handled = true;
-        await PersistAsync(CurrentSettings(), alreadyApplied: true);
+        var generation = _layoutGeneration;
+        // The change and its save wait their turn with automatic layout switches.
+        await _profileGate.WaitAsync();
+        try
+        {
+            if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
+            if (!CanResize(divider)) return; // A layout switch may have removed it meanwhile.
+            if (divider == WebDivider)
+            {
+                var available = Math.Max(1, WebHost.ActualWidth - 10);
+                _configuredWebSplitRatio = PanelLayout.NormalizeWebSplitRatio(_configuredWebSplitRatio + delta / available);
+                ApplyWebSplitLayout();
+            }
+            else
+            {
+                _configuredPanelWidth = PanelLayout.ResizeSharedWidgetWidth(
+                    _configuredPanelWidth, delta, _widgetSlots.Count, _mediaPlacement);
+                ApplyMediaLayout();
+                UpdateSettingsControls();
+            }
+            await PersistAsync(CurrentSettings(), alreadyApplied: true);
+        }
+        finally { _profileGate.Release(); }
     }
 
     private void ApplyResizeDelta(PanelDivider divider, double delta)
@@ -965,6 +1065,251 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>One button per saved layout; the active one is highlighted.</summary>
+    private void BuildProfileButtons()
+    {
+        ProfileButtons.Children.Clear();
+        var current = LayoutProfiles.Capture(CurrentSettings());
+        foreach (var profile in _profiles)
+        {
+            // Highlighted only while the dashboard still matches it, so later quick changes or
+            // a restart never leave a stale "current layout".
+            var active = LayoutProfiles.Matches(current, profile.Layout);
+            var button = new Button
+            {
+                Content = profile.WhenRunning is { } app ? $"{profile.Name}  ·  with {app}" : profile.Name,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                MinHeight = 52
+            };
+            if (active) button.Background = (Brush)Application.Current.Resources["AccentBrush"];
+            AutomationProperties.SetName(button, active ? $"{profile.Name}, current layout" : $"Switch to the {profile.Name} layout");
+            button.Click += async (_, _) =>
+            {
+                await _profileGate.WaitAsync();
+                try
+                {
+                    // Choosing by hand while a program's layout is on keeps that layout off until
+                    // the program next starts, along with any already kept off.
+                    await ApplyProfileAsync(profile.Layout, profile.Id, manual: true,
+                        new AutoState(null, null, SuppressActive()));
+                }
+                finally { _profileGate.Release(); }
+                CloseControlsDrawer();
+            };
+            ProfileButtons.Children.Add(button);
+        }
+        ProfileButtons.Visibility = _profiles.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        ProfileStatus.Visibility = Visibility.Collapsed;
+    }
+
+    private async void SaveProfile_Click(object sender, RoutedEventArgs args)
+    {
+        var name = ProfileNameBox.Text.Trim();
+        if (name.Length == 0)
+        {
+            ProfileNameBox.Focus(FocusState.Programmatic);
+            return;
+        }
+        // The layout on screen when Save is tapped, even if an automatic switch is finishing.
+        var shown = LayoutProfiles.Capture(CurrentSettings());
+        // Merged and saved under the layout gate, so an automatic switch cannot interleave.
+        await _profileGate.WaitAsync();
+        try
+        {
+            // Saving under an existing name replaces that layout and keeps its program trigger.
+            var existing = _profiles.FirstOrDefault(profile => string.Equals(profile.Name, name, StringComparison.CurrentCultureIgnoreCase));
+            if (existing is null && _profiles.Count >= LayoutProfiles.Maximum)
+            {
+                ProfileStatus.Text = $"You have {LayoutProfiles.Maximum} layouts. Reuse a name to replace one, or remove one in Settings.";
+                ProfileStatus.Visibility = Visibility.Visible;
+                return;
+            }
+            var saved = new LayoutProfile(existing?.Id ?? Guid.NewGuid().ToString("N"), name, existing?.WhenRunning, shown);
+            var updated = existing is null ? _profiles.Append(saved).ToArray() : _profiles.Select(profile => profile.Id == existing.Id ? saved : profile).ToArray();
+            var candidate = SettingsStore.Normalize(CurrentSettings() with { Profiles = updated });
+            if (!await PersistAsync(candidate)) return;
+            _profiles = candidate.Profiles!;
+        }
+        finally { _profileGate.Release(); }
+        ProfileNameBox.Text = string.Empty;
+        BuildProfileButtons();
+    }
+
+    /// <summary>
+    /// The layouts to keep off after a hand choice: those already kept off, plus every layout
+    /// triggered by the active layout's program, since that program has not stopped.
+    /// </summary>
+    private IReadOnlyList<string> SuppressActive()
+    {
+        var program = _profiles.FirstOrDefault(profile => profile.Id == _autoProfileId)?.WhenRunning;
+        var sameProgram = program is null ? [] : _profiles
+            .Where(profile => string.Equals(profile.WhenRunning, program, StringComparison.OrdinalIgnoreCase))
+            .Select(profile => profile.Id);
+        return _suppressedProfileIds.Concat(sameProgram).Append(_autoProfileId).OfType<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    /// <summary>Override times for these IDs: kept for existing overrides, now for new ones.</summary>
+    private IReadOnlyDictionary<string, DateTime> SinceFor(IReadOnlyList<string> ids)
+    {
+        var now = DateTime.UtcNow;
+        return ids.Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(id => id, id => _suppressedSince.TryGetValue(id, out var since) ? since : now);
+    }
+
+    /// <summary>The automatic-switch bookkeeping that goes with a layout change.</summary>
+    private sealed record AutoState(string? AutoProfileId, ProfileLayout? Before, IReadOnlyList<string> SuppressedIds);
+
+    /// <summary>
+    /// Switches the dashboard to a saved layout and saves it as the current one, together with
+    /// <paramref name="auto"/>. The in-memory state changes only once the save succeeds, so a
+    /// failed save is retried by the next check instead of being forgotten.
+    /// </summary>
+    private async Task<bool> ApplyProfileAsync(ProfileLayout layout, string? profileId, bool manual, AutoState auto)
+    {
+        var settings = LayoutProfiles.Apply(CurrentSettings(), layout) with
+        {
+            AutoSwitch = auto is { AutoProfileId: { } autoId, Before: { } before } ? new AutoLayoutSwitch(autoId, before) : null,
+            SuppressedProfileIds = auto.SuppressedIds,
+            SuppressedSince = SinceFor(auto.SuppressedIds)
+        };
+        if (!await PersistAsync(settings, alreadyApplied: false)) return false;
+        _layoutGeneration++;
+        // A drag started while the switch was saving belongs to the old layout: cancel it, so
+        // its release cannot resize the new one.
+        if (_activeDivider is { } dragging)
+        {
+            RestoreResize(dragging);
+            CompleteResize(dragging);
+        }
+        _autoProfileId = auto.AutoProfileId;
+        _layoutBeforeAuto = auto.Before;
+        _suppressedProfileIds = auto.SuppressedIds;
+        _suppressedSince = settings.SuppressedSince!;
+        _mediaPlacement = settings.MediaPanelPlacement;
+        _lastVisiblePlacement = settings.LastVisibleMediaPanelPlacement;
+        _configuredPanelWidth = settings.MediaPanelWidth;
+        _isWebVisible = settings.IsWebVisible;
+        _widgetSlots = settings.WidgetSlots;
+        _webPanelCount = settings.WebPanelCount;
+        _webPanelCardIds = settings.WebPanelCardIds!;
+        _configuredWebSplitRatio = settings.WebSplitRatio;
+        BuildWidgetSlots();
+        ApplyMediaLayout();
+        await BuildWebPanelsAsync();
+        ApplyMediaLayout();
+        if (ControlsOverlay.Visibility == Visibility.Visible && !_isWidgetView)
+        {
+            // The drawer's selectors belong to the panels just replaced; rebuild them.
+            BuildWebPanelSelectors();
+            BuildPanelSelectors();
+            BuildProfileButtons();
+        }
+        // An automatic switch must not discard edits in an open Settings panel; Settings
+        // reloads from the current layout when it is next opened.
+        if (manual || SettingsPanel.Visibility != Visibility.Visible) UpdateSettingsControls();
+        return true;
+    }
+
+    private void StartProfileWatch()
+    {
+        _profileTimer = DispatcherQueue.CreateTimer();
+        _profileTimer.Interval = TimeSpan.FromSeconds(5);
+        _profileTimer.Tick += async (_, _) => await CheckProgramsAsync();
+        _profileTimer.Start();
+    }
+
+    /// <summary>
+    /// Switches to a layout while its program runs and back afterwards. Only process names are
+    /// read, on the thread pool, and only when some layout has a program set.
+    /// </summary>
+    private async Task CheckProgramsAsync()
+    {
+        if (_closing || _checkingPrograms) return;
+        // Nothing to watch, and no automatic layout to undo.
+        if (!_profiles.Any(profile => profile.WhenRunning is not null) && _autoProfileId is null) return;
+        _checkingPrograms = true;
+        try
+        {
+            // Start times are read only for programs with an override, to see a restart.
+            var watched = new HashSet<string>(_profiles
+                .Where(profile => _suppressedProfileIds.Contains(profile.Id) && profile.WhenRunning is not null)
+                .Select(profile => profile.WhenRunning!), StringComparer.OrdinalIgnoreCase);
+            var scan = await Task.Run(() => ScanProcesses(watched));
+            // Windows could not list processes this time: try again on the next tick.
+            if (scan is not { } found) return;
+            // Decide and switch under the gate, so the layout to return to is read only after any
+            // hand choice or Settings save in progress has finished.
+            await _profileGate.WaitAsync();
+            try { await SwitchForRunningProgramsAsync(found.Names, found.EarliestStart); }
+            finally { _profileGate.Release(); }
+        }
+        finally { _checkingPrograms = false; }
+    }
+
+    /// <summary>Running process names, and for watched names when the oldest copy started (UTC).</summary>
+    private static (HashSet<string> Names, Dictionary<string, DateTime> EarliestStart)? ScanProcesses(IReadOnlySet<string> watched)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var earliest = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        System.Diagnostics.Process[] processes;
+        try { processes = System.Diagnostics.Process.GetProcesses(); }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException) { return null; }
+        var unknown = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var process in processes)
+        {
+            // A process can exit while the list is read; skip it.
+            using (process)
+            {
+                string name;
+                try { name = process.ProcessName; }
+                catch (InvalidOperationException) { continue; }
+                names.Add(name);
+                if (!watched.Contains(name)) continue;
+                try
+                {
+                    var started = process.StartTime.ToUniversalTime();
+                    if (!earliest.TryGetValue(name, out var known) || started < known) earliest[name] = started;
+                }
+                // Not readable (for example an elevated program): its age is unknown.
+                catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException)
+                {
+                    unknown.Add(name);
+                }
+            }
+        }
+        // One copy of unknown age could be the original: do not treat that program as restarted.
+        foreach (var name in unknown) earliest.Remove(name);
+        return (names, earliest);
+    }
+
+    private async Task SwitchForRunningProgramsAsync(IReadOnlySet<string> running, IReadOnlyDictionary<string, DateTime> earliestStart)
+    {
+        // Mid-drag the layout is an unsaved preview: wait for the next check rather than capture
+        // it or switch under the user's finger.
+        if (_closing || _activeDivider is not null) return;
+        // Hand-chosen overrides end once their own program stops, whatever else is running.
+        var suppressed = LayoutProfiles.StillSuppressed(_suppressedProfileIds, _profiles, running, _suppressedSince, earliestStart);
+        if (!suppressed.SequenceEqual(_suppressedProfileIds))
+        {
+            var since = SinceFor(suppressed);
+            if (!await PersistAsync(CurrentSettings() with { SuppressedProfileIds = suppressed, SuppressedSince = since }, alreadyApplied: false)) return;
+            _suppressedProfileIds = suppressed;
+            _suppressedSince = since;
+        }
+        var target = LayoutProfiles.Automatic(_profiles, running, suppressed);
+        if (target is null)
+        {
+            if (_autoProfileId is not null && _layoutBeforeAuto is { } previous)
+                await ApplyProfileAsync(previous, null, manual: false, new AutoState(null, null, suppressed));
+            return;
+        }
+        if (target.Id == _autoProfileId) return;
+        await ApplyProfileAsync(target.Layout, target.Id, manual: false,
+            new AutoState(target.Id, _layoutBeforeAuto ?? LayoutProfiles.Capture(CurrentSettings()), suppressed));
+    }
+
     private void OpenControlsDrawer()
     {
         if (ControlsOverlay.Visibility == Visibility.Visible) return;
@@ -973,6 +1318,7 @@ public sealed partial class MainWindow : Window
         {
             BuildWebPanelSelectors();
             BuildPanelSelectors();
+            BuildProfileButtons();
         }
         DashboardControls.Visibility = _isWidgetView ? Visibility.Collapsed : Visibility.Visible;
         WidgetViewText.Text = _isWidgetView ? "Back to dashboard" : "Widget view";
@@ -1013,39 +1359,58 @@ public sealed partial class MainWindow : Window
 
     private async void WebPanelSelector_SelectionChanged(object sender, SelectionChangedEventArgs args)
     {
-        if (sender is not ComboBox { SelectedItem: ComboBoxItem item, Tag: int index } || item.Tag is not string id) return;
-        var selections = _webPanelCardIds.ToList();
-        while (selections.Count < 2) selections.Add(_webCards.ElementAtOrDefault(selections.Count)?.Id ?? id);
-        if (string.Equals(selections[index], id, StringComparison.OrdinalIgnoreCase)) return;
-        selections[index] = id;
-        var candidate = SettingsStore.Normalize(CurrentSettings() with { WebPanelCardIds = selections });
-        if (!await PersistAsync(candidate))
+        // Layout changes run one at a time with automatic switches (see _profileGate).
+        var generation = _layoutGeneration;
+        await _profileGate.WaitAsync();
+        try
         {
-            BuildWebPanelSelectors();
-            CloseControlsDrawer(restoreFocus: false);
-            return;
+            if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
+            if (sender is not ComboBox { SelectedItem: ComboBoxItem item, Tag: int index } || item.Tag is not string id) return;
+            // A selector replaced by a layout switch while waiting belongs to the old layout.
+            if (!WebPanelSelectors.Children.Contains((ComboBox)sender)) return;
+            var selections = _webPanelCardIds.ToList();
+            while (selections.Count < 2) selections.Add(_webCards.ElementAtOrDefault(selections.Count)?.Id ?? id);
+            if (string.Equals(selections[index], id, StringComparison.OrdinalIgnoreCase)) return;
+            selections[index] = id;
+            var candidate = SettingsStore.Normalize(CurrentSettings() with { WebPanelCardIds = selections });
+            if (!await PersistAsync(candidate))
+            {
+                BuildWebPanelSelectors();
+                CloseControlsDrawer(restoreFocus: false);
+                return;
+            }
+            _webPanelCardIds = candidate.WebPanelCardIds!;
+            await BuildWebPanelsAsync();
         }
-        _webPanelCardIds = candidate.WebPanelCardIds!;
-        await BuildWebPanelsAsync();
+        finally { _profileGate.Release(); }
     }
 
     private async void WebPanelCountSelector_SelectionChanged(object sender, SelectionChangedEventArgs args)
     {
+        // Programmatic changes (rebuilding the selectors) are ignored before waiting.
         if (_updatingWebPanelCount || WebPanelCountSelector.SelectedIndex < 0) return;
-        var count = WebPanelCountSelector.SelectedIndex + 1;
-        if (count == _webPanelCount || count > _webCards.Count) return;
-        var candidate = SettingsStore.Normalize(CurrentSettings() with { WebPanelCount = count });
-        if (!await PersistAsync(candidate))
+        // Layout changes run one at a time with automatic switches (see _profileGate).
+        var generation = _layoutGeneration;
+        await _profileGate.WaitAsync();
+        try
         {
+            if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
+            var count = WebPanelCountSelector.SelectedIndex + 1;
+            if (count == _webPanelCount || count > _webCards.Count) return;
+            var candidate = SettingsStore.Normalize(CurrentSettings() with { WebPanelCount = count });
+            if (!await PersistAsync(candidate))
+            {
+                BuildWebPanelSelectors();
+                CloseControlsDrawer(restoreFocus: false);
+                return;
+            }
+            _webPanelCount = candidate.WebPanelCount;
+            _webPanelCardIds = candidate.WebPanelCardIds!;
+            await BuildWebPanelsAsync();
             BuildWebPanelSelectors();
-            CloseControlsDrawer(restoreFocus: false);
-            return;
+            ApplyMediaLayout();
         }
-        _webPanelCount = candidate.WebPanelCount;
-        _webPanelCardIds = candidate.WebPanelCardIds!;
-        await BuildWebPanelsAsync();
-        BuildWebPanelSelectors();
-        ApplyMediaLayout();
+        finally { _profileGate.Release(); }
     }
 
     private void BuildPanelSelectors()
@@ -1087,19 +1452,28 @@ public sealed partial class MainWindow : Window
 
     private async void PanelCountSelector_SelectionChanged(object sender, SelectionChangedEventArgs args)
     {
+        // Programmatic changes (rebuilding the selectors) are ignored before waiting.
         if (_updatingPanelCount || PanelCountSelector.SelectedIndex < 0) return;
-        var count = PanelCountSelector.SelectedIndex + 1;
-        if (count == _widgetSlots.Count) return;
-        var slots = _widgetSlots.Take(count).ToList();
-        while (slots.Count < count)
-            slots.Add(new WidgetSlotSettings(["media", "clock", "audio", "stats", "launcher", "pc"], "media"));
-        _widgetSlots = slots;
-        BuildWidgetSlots();
-        ApplyMediaLayout();
-        BuildPanelSelectors();
-        UpdateSettingsControls();
-        if (!await PersistAsync(CurrentSettings(), alreadyApplied: true))
-            CloseControlsDrawer(restoreFocus: false);
+        // Layout changes run one at a time with automatic switches (see _profileGate).
+        var generation = _layoutGeneration;
+        await _profileGate.WaitAsync();
+        try
+        {
+            if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
+            var count = PanelCountSelector.SelectedIndex + 1;
+            if (count == _widgetSlots.Count) return;
+            var slots = _widgetSlots.Take(count).ToList();
+            while (slots.Count < count)
+                slots.Add(new WidgetSlotSettings(["media", "clock", "audio", "stats", "launcher", "pc"], "media"));
+            _widgetSlots = slots;
+            BuildWidgetSlots();
+            ApplyMediaLayout();
+            BuildPanelSelectors();
+            UpdateSettingsControls();
+            if (!await PersistAsync(CurrentSettings(), alreadyApplied: true))
+                CloseControlsDrawer(restoreFocus: false);
+        }
+        finally { _profileGate.Release(); }
     }
 
     private void CloseControls_Click(object sender, RoutedEventArgs args) => CloseControlsDrawer();

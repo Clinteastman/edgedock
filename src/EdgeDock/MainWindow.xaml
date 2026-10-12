@@ -99,6 +99,18 @@
          <ComboBoxItem Content="1"/><ComboBoxItem Content="2"/><ComboBoxItem Content="3"/>
         </ComboBox>
         <StackPanel x:Name="PanelSelectors" Spacing="12"/>
+        <Rectangle Height="1" Fill="#40C8C2D4" Margin="0,2"/>
+        <TextBlock Text="Layouts" FontSize="18" FontWeight="SemiBold"/>
+        <StackPanel x:Name="ProfileButtons" Spacing="8"/>
+        <Grid ColumnSpacing="10">
+         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+         <TextBox x:Name="ProfileNameBox" Header="Save this layout as" PlaceholderText="For example, Gaming" MinHeight="52"
+                  AutomationProperties.Name="Name for this layout"/>
+         <Button x:Name="SaveProfileButton" Grid.Column="1" Content="Save" VerticalAlignment="Bottom" Click="SaveProfile_Click"
+                 AutomationProperties.Name="Save this layout"/>
+        </Grid>
+        <TextBlock x:Name="ProfileStatus" TextWrapping="Wrap" Foreground="#FFFFC2C7" Visibility="Collapsed"
+                   AutomationProperties.LiveSetting="Assertive"/>
        </StackPanel>
       </StackPanel>
      </ScrollViewer>
@@ -160,6 +172,8 @@
       <Grid><TextBlock Text="Width of each widget"/><TextBlock x:Name="PanelWidthText" HorizontalAlignment="Right"/></Grid>
       <Slider x:Name="PanelWidthSlider" Minimum="240" Maximum="440" StepFrequency="10" Value="340" ValueChanged="PanelWidthSlider_ValueChanged" AutomationProperties.Name="Widget width"/>
       <ToggleSwitch x:Name="ArtworkToggle" Header="Show media artwork" IsOn="True" AutomationProperties.Name="Show media artwork"/>
+      <TextBlock Text="Saved layouts" FontSize="18" FontWeight="SemiBold"/>
+      <controls:ProfileEditor x:Name="ProfileEditor"/>
       <TextBlock Text="Launcher" FontSize="18" FontWeight="SemiBold"/>
       <TextBlock Text="Tiles in the Launcher widget open these like a double-click in File Explorer: apps, documents, folders or web pages. No commands or arguments."
                  TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>

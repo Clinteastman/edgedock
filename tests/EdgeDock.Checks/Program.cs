@@ -371,6 +371,75 @@ try
     await File.WriteAllTextAsync(file, """{"WebCards":[{"Id":"old","Name":"Old","Url":"https://example.com/"}]}""");
     Check((await new SettingsStore().LoadAsync()).WebCards?[0].Zoom == 1.0,
           "Cards saved before zoom existed open at 100%");
+    var workLayout = LayoutProfiles.Capture(twoCards);
+    var gamingLayout = workLayout with
+    {
+        IsWebVisible = false,
+        WidgetSlots = [new WidgetSlotSettings(["stats"], "stats"), new WidgetSlotSettings(["media"], "media")],
+        WebPanelCount = 1
+    };
+    var withProfiles = SettingsStore.Normalize(twoCards with
+    {
+        Profiles =
+        [
+            new LayoutProfile("work", " Work ", null, workLayout),
+            new LayoutProfile("game", "Gaming", "cs2.exe", gamingLayout),
+            new LayoutProfile("bad", "  ", null, workLayout),
+            new LayoutProfile("game", "Copy", @"C:\Games\x.exe --wipe", workLayout)
+        ]
+    });
+    Check(withProfiles.Profiles is [{ Name: "Work", WhenRunning: null }, { Name: "Gaming", WhenRunning: "cs2" }, { Id: "game-2", WhenRunning: null }],
+          "Layout profiles keep clean names and single program names, and repair IDs");
+    var applied = LayoutProfiles.Apply(withProfiles, gamingLayout);
+    Check(!applied.IsWebVisible && applied.WidgetSlots.Count == 2 && applied.WidgetSlots[0].SelectedWidgetId == "stats" &&
+          applied.WebCards!.Count == 2 && applied.Profiles!.Count == 3,
+          "Applying a profile changes the layout and keeps web cards and the other profiles");
+    var running = new HashSet<string>(["explorer", "cs2"], StringComparer.OrdinalIgnoreCase);
+    Check(LayoutProfiles.Automatic(withProfiles.Profiles!, running)?.Name == "Gaming" &&
+          LayoutProfiles.Automatic(withProfiles.Profiles!, new HashSet<string>(["explorer"])) is null,
+          "A profile switches on while its program is running");
+    store = new SettingsStore();
+    await store.SaveAsync(withProfiles);
+    var profilesSaved = await new SettingsStore().LoadAsync();
+    Check(profilesSaved.Profiles?.Count == 3 && profilesSaved.Profiles[1].Layout.WidgetSlots[0].SelectedWidgetId == "stats" &&
+          !profilesSaved.Profiles[1].Layout.IsWebVisible && profilesSaved.Profiles[1].WhenRunning == "cs2",
+          "Layout profiles survive restart");
+    await store.SaveAsync(withProfiles with { AutoSwitch = new AutoLayoutSwitch("game", workLayout) });
+    var autoSaved = await new SettingsStore().LoadAsync();
+    Check(autoSaved.AutoSwitch?.ProfileId == "game" && autoSaved.AutoSwitch.Before.IsWebVisible == workLayout.IsWebVisible &&
+          autoSaved.AutoSwitch.Before.WebPanelCount == workLayout.WebPanelCount,
+          "The layout to return to after a program closes survives restart");
+    var overriddenAt = new DateTime(2026, 10, 11, 9, 0, 0, DateTimeKind.Utc);
+    await store.SaveAsync(withProfiles with { SuppressedProfileIds = ["game", "chat"], SuppressedSince = new Dictionary<string, DateTime> { ["game"] = overriddenAt } });
+    var suppressedLoaded = await new SettingsStore().LoadAsync();
+    Check(suppressedLoaded.SuppressedProfileIds is ["game", "chat"] && suppressedLoaded.SuppressedSince?["game"] == overriddenAt,
+          "Layouts switched off by hand, and when, stay off across restart");
+    var gameAndChat = new HashSet<string>(["game", "chat"], StringComparer.OrdinalIgnoreCase);
+    LayoutProfile[] watched = [new("a", "A", "game", workLayout), new("b", "B", "chat", workLayout)];
+    Check(LayoutProfiles.StillSuppressed(["a"], watched, gameAndChat) is ["a"] &&
+          LayoutProfiles.StillSuppressed(["a"], watched, new HashSet<string>(["chat"])).Count == 0 &&
+          LayoutProfiles.Automatic(watched, gameAndChat, ["a"])?.Id == "b" &&
+          LayoutProfiles.StillSuppressed(["a", "b"], watched, gameAndChat) is ["a", "b"] &&
+          LayoutProfiles.Automatic(watched, gameAndChat, ["a", "b"]) is null,
+          "A hand override ends when its own program stops, even while another layout's program runs");
+    var since = new Dictionary<string, DateTime> { ["a"] = overriddenAt };
+    Check(LayoutProfiles.StillSuppressed(["a"], watched, gameAndChat, since, new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase) { ["game"] = overriddenAt.AddMinutes(-5) }) is ["a"] &&
+          LayoutProfiles.StillSuppressed(["a"], watched, gameAndChat, since, new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase) { ["game"] = overriddenAt.AddMinutes(5) }).Count == 0 &&
+          LayoutProfiles.StillSuppressed(["a"], watched, gameAndChat, since, new Dictionary<string, DateTime>()) is ["a"],
+          "A hand override ends when its program has restarted, even while EdgeDock was closed");
+    Check(LayoutProfiles.NormalizeProcessName("Game.EXE") == "Game" && LayoutProfiles.NormalizeProcessName("cmd /c x") is null &&
+          LayoutProfiles.NormalizeProcessName(@"C:\x.exe") is null && LayoutProfiles.NormalizeProcessName(" ") is null,
+          "Program triggers accept a name only");
+    Check(LayoutProfiles.NormalizeProcessName("notepad++.exe") == "notepad++" && LayoutProfiles.NormalizeProcessName("Some Game") == "Some Game" &&
+          LayoutProfiles.NormalizeProcessName("game -windowed") is null &&
+          LayoutProfiles.NormalizeProcessName(new string('a', 100) + ".exe") == new string('a', 100) && LayoutProfiles.NormalizeProcessName("\"game\"") is null,
+          "Program triggers accept any file name, but not options or quotes");
+    var shown = LayoutProfiles.Capture(withProfiles);
+    Check(LayoutProfiles.Matches(shown, shown) &&
+          !LayoutProfiles.Matches(shown with { PanelWidth = shown.PanelWidth + 40 }, shown) &&
+          !LayoutProfiles.Matches(shown with { WidgetSlots = [new(["stats"], "stats")] }, shown) &&
+          !LayoutProfiles.Matches(shown with { IsWebVisible = false, WebPanelCount = shown.WebPanelCount + 1 }, shown with { IsWebVisible = false }),
+          "A saved layout reads as current only while the dashboard still matches it");
     var night = new TimeSpan(22, 30, 0);
     var morning = new TimeSpan(7, 0, 0);
     Check(ScreenSchedule.IsNight(new TimeSpan(23, 0, 0), night, morning) && ScreenSchedule.IsNight(new TimeSpan(3, 0, 0), night, morning) &&

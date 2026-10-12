@@ -1,5 +1,35 @@
 # Testing
 
+## Layout profiles (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 55 console checks pass, including
+  name and program clean-up (paths and options rejected), ID repair, applying
+  a layout without losing web cards or other layouts, choosing the automatic
+  layout from running programs, and persistence.
+- Runtime, isolated profile, with a layout set to switch on while a hidden
+  test program runs: captures showed the normal web-and-media layout, then the
+  full-width PC activity layout while the program ran, then the original
+  layout again after it exited (and saved as such).
+- Not tested yet: the drawer's layout buttons and "Save this layout as", and
+  editing layouts in Settings (need real input).
+- After review: the layout to return to is saved with the settings, so a
+  restart while the program runs still returns to the right layout (console
+  check added); automatic switches no longer reset an open Settings form;
+  saving at the 12-layout limit explains how to replace or remove one.
+  Auto-switch capture repeated after the changes.
+- Later reviews: switch state is saved before it is trusted (failed saves
+  retry); a hand override survives restart and ends when its own program stops
+  or its trigger is changed; layout names must be unique; program names accept
+  any legal file name (notepad++) but not folders, quotes or options; the
+  drawer highlights a layout only while the dashboard still matches it. Console
+  checks added; auto-switch capture repeated.
+- Fifth review: layout changes (hand choice, automatic switch, Settings save)
+  run one at a time; every overridden layout stays off until its own program
+  stops; saving Settings while a program's layout is on counts as a hand
+  choice; the drawer's selectors are rebuilt after a switch; a process exiting
+  mid-scan is skipped; hidden web settings still count when matching layouts.
+  Console checks updated; auto-switch capture repeated with a silent trigger.
+
 ## Screen schedule (10 October 2026)
 
 - Debug x64 build: zero warnings/errors. 54 console checks pass, including
