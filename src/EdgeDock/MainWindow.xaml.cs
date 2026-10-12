@@ -759,10 +759,15 @@ public sealed partial class MainWindow : Window
         PanelWidthText.Text = $"{_configuredPanelWidth:0} px";
         ArtworkToggle.IsOn = _showArtwork;
         WebVisibleToggle.IsOn = _isWebVisible;
-        WebCardEditor.LoadCards(_webCards);
         LibraryEditor.LoadSlots(_widgetSlots, _registry);
         LauncherEditor.WindowHandle = _windowHandle;
-        LauncherEditor.LoadItems(_launchers);
+        // Never while Settings is open: a divider drag refreshes these controls on every move
+        // and would wipe unsaved card and launcher edits. Settings loads them as it opens.
+        if (SettingsPanel.Visibility != Visibility.Visible)
+        {
+            WebCardEditor.LoadCards(_webCards);
+            LauncherEditor.LoadItems(_launchers);
+        }
         // An isolated test profile must not rewrite the real sign-in entry.
         StartupToggle.IsEnabled = !SettingsStore.IsIsolatedProfile;
         StartupToggle.IsOn = StartupRegistration.IsEnabled();
