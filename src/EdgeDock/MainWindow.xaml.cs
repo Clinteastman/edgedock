@@ -207,6 +207,9 @@ public sealed partial class MainWindow : Window
         _brightnessRestore = settings.PendingBrightness;
         _weatherLocation = settings.Weather;
         _fahrenheit = settings.Fahrenheit;
+        // Settings opened before loading finished shows empty lists: fill them now, at once,
+        // or a Save would delete the saved ones. Edits made after this point are kept.
+        if (SettingsPanel.Visibility == Visibility.Visible) UpdateSettingsControls(reloadDrafts: true);
         // Move to the saved screen before WebView2 creates its child HWNDs, so pages
         // render once at the right size and scale.
         RestorePreferredDisplay();
@@ -218,9 +221,7 @@ public sealed partial class MainWindow : Window
         ApplyMediaLayout();
         await BuildWebPanelsAsync();
         ApplyMediaLayout();
-        // Settings may already be open (opened before loading finished, showing the empty
-        // defaults): load the saved lists into it, or a Save would delete them.
-        UpdateSettingsControls(reloadDrafts: true);
+        UpdateSettingsControls();
     }
 
     private void RegisterDividerHandlers(PanelDivider divider)
