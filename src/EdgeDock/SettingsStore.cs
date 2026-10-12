@@ -26,6 +26,8 @@ internal sealed record EdgeDockSettings(
     double WebSplitRatio = 0.5,
     DisplayPreference? Display = null,
     bool OpenFullScreen = false,
+    ScreenScheduleSettings? Screen = null,
+    BrightnessRestore? PendingBrightness = null,
     IReadOnlyList<LauncherItem>? Launchers = null,
     WeatherLocation? Weather = null,
     bool Fahrenheit = false);
@@ -90,6 +92,20 @@ internal sealed class SettingsStore
                     ? new DisplayPreference(display.DeviceId, display.HardwareId, display.Width ?? 0, display.Height ?? 0)
                     : null,
                 stored?.OpenFullScreen ?? false,
+                Screen: stored?.Screen is { } screen
+                    ? new ScreenScheduleSettings(
+                        screen.DimAtNight ?? false,
+                        screen.DayBrightness ?? ScreenScheduleSettings.Default.DayBrightness,
+                        screen.NightBrightness ?? ScreenScheduleSettings.Default.NightBrightness,
+                        TimeSpan.TryParse(screen.NightStart, System.Globalization.CultureInfo.InvariantCulture, out var start) ? start : ScreenScheduleSettings.Default.NightStart,
+                        TimeSpan.TryParse(screen.NightEnd, System.Globalization.CultureInfo.InvariantCulture, out var end) ? end : ScreenScheduleSettings.Default.NightEnd,
+                        screen.BlankAfterMinutes ?? 0)
+                    : null,
+                PendingBrightness: stored?.PendingBrightness is { Monitor: { } restoreMonitor, Brightness: { } restoreLevel }
+                    ? new BrightnessRestore(
+                        new DisplayPreference(restoreMonitor.DeviceId, restoreMonitor.HardwareId, restoreMonitor.Width ?? 0, restoreMonitor.Height ?? 0),
+                        restoreLevel)
+                    : null,
                 Launchers: stored?.Launchers?.Where(item => item is not null)
                     .Select(item => new LauncherItem(item.Id ?? string.Empty, item.Name ?? string.Empty, item.Target ?? string.Empty))
                     .ToArray(),
@@ -133,6 +149,28 @@ internal sealed class SettingsStore
                     ? new StoredDisplay { DeviceId = display.DeviceId, HardwareId = display.HardwareId, Width = display.Width, Height = display.Height }
                     : null,
                 OpenFullScreen = settings.OpenFullScreen,
+                Screen = new StoredScreen
+                {
+                    DimAtNight = settings.Screen!.DimAtNight,
+                    DayBrightness = settings.Screen.DayBrightness,
+                    NightBrightness = settings.Screen.NightBrightness,
+                    NightStart = settings.Screen.NightStart.ToString(@"hh\:mm", System.Globalization.CultureInfo.InvariantCulture),
+                    NightEnd = settings.Screen.NightEnd.ToString(@"hh\:mm", System.Globalization.CultureInfo.InvariantCulture),
+                    BlankAfterMinutes = settings.Screen.BlankAfterMinutes
+                },
+                PendingBrightness = settings.PendingBrightness is { } restore
+                    ? new StoredRestore
+                    {
+                        Monitor = new StoredDisplay
+                        {
+                            DeviceId = restore.Monitor.DeviceId,
+                            HardwareId = restore.Monitor.HardwareId,
+                            Width = restore.Monitor.Width,
+                            Height = restore.Monitor.Height
+                        },
+                        Brightness = restore.Brightness
+                    }
+                    : null,
                 Weather = settings.Weather is { } weather
                     ? new StoredWeather { Name = weather.Name, Latitude = weather.Latitude, Longitude = weather.Longitude }
                     : null,
@@ -189,6 +227,10 @@ internal sealed class SettingsStore
             WebSplitRatio = PanelLayout.NormalizeWebSplitRatio(value.WebSplitRatio),
             Launchers = NormalizeLaunchers(value.Launchers ?? []),
             Display = NormalizeDisplay(value.Display),
+            Screen = ScreenSchedule.Normalize(value.Screen),
+            PendingBrightness = value.PendingBrightness is { } restore && NormalizeDisplay(restore.Monitor) is { } restoreMonitor
+                ? new BrightnessRestore(restoreMonitor, Math.Clamp(restore.Brightness, 0, 100))
+                : null,
             Weather = NormalizeWeather(value.Weather)
         };
     }
@@ -294,6 +336,8 @@ internal sealed class SettingsStore
         public double? WebSplitRatio { get; set; }
         public StoredDisplay? Display { get; set; }
         public bool? OpenFullScreen { get; set; }
+        public StoredScreen? Screen { get; set; }
+        public StoredRestore? PendingBrightness { get; set; }
         public StoredWeather? Weather { get; set; }
         public bool? Fahrenheit { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }
@@ -305,6 +349,22 @@ internal sealed class SettingsStore
     {
         public List<string>? EnabledWidgetIds { get; set; }
         public string? SelectedWidgetId { get; set; }
+    }
+
+    private sealed class StoredRestore
+    {
+        public StoredDisplay? Monitor { get; set; }
+        public int? Brightness { get; set; }
+    }
+
+    private sealed class StoredScreen
+    {
+        public bool? DimAtNight { get; set; }
+        public int? DayBrightness { get; set; }
+        public int? NightBrightness { get; set; }
+        public string? NightStart { get; set; }
+        public string? NightEnd { get; set; }
+        public int? BlankAfterMinutes { get; set; }
     }
 
     private sealed class StoredLauncher

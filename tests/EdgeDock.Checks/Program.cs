@@ -371,6 +371,37 @@ try
     await File.WriteAllTextAsync(file, """{"WebCards":[{"Id":"old","Name":"Old","Url":"https://example.com/"}]}""");
     Check((await new SettingsStore().LoadAsync()).WebCards?[0].Zoom == 1.0,
           "Cards saved before zoom existed open at 100%");
+    var night = new TimeSpan(22, 30, 0);
+    var morning = new TimeSpan(7, 0, 0);
+    Check(ScreenSchedule.IsNight(new TimeSpan(23, 0, 0), night, morning) && ScreenSchedule.IsNight(new TimeSpan(3, 0, 0), night, morning) &&
+          !ScreenSchedule.IsNight(new TimeSpan(7, 0, 0), night, morning) && !ScreenSchedule.IsNight(new TimeSpan(12, 0, 0), night, morning) &&
+          ScreenSchedule.IsNight(new TimeSpan(14, 0, 0), new TimeSpan(13, 0, 0), new TimeSpan(15, 0, 0)) &&
+          !ScreenSchedule.IsNight(new TimeSpan(14, 0, 0), night, night),
+          "Night runs past midnight, works within a day, and is off when start equals end");
+    var dimming = ScreenScheduleSettings.Default with { DimAtNight = true, DayBrightness = 80, NightBrightness = 15, BlankAfterMinutes = 10 };
+    Check(ScreenSchedule.Evaluate(dimming, new DateTime(2026, 10, 10, 23, 0, 0), TimeSpan.FromMinutes(2)) == new ScreenState(15, false) &&
+          ScreenSchedule.Evaluate(dimming, new DateTime(2026, 10, 10, 12, 0, 0), TimeSpan.Zero) == new ScreenState(80, false) &&
+          ScreenSchedule.Evaluate(dimming, new DateTime(2026, 10, 10, 12, 0, 0), TimeSpan.FromMinutes(11)) == new ScreenState(0, true) &&
+          ScreenSchedule.Evaluate(ScreenScheduleSettings.Default, new DateTime(2026, 10, 10, 23, 0, 0), TimeSpan.FromHours(5)) == new ScreenState(null, false),
+          "The schedule picks night or day brightness, blanks after the idle time, and does nothing when off");
+    Check(ScreenSchedule.Normalize(new ScreenScheduleSettings(true, 140, -5, TimeSpan.FromHours(30), new TimeSpan(6, 30, 45), 7)) is
+          { DayBrightness: 100, NightBrightness: 0, BlankAfterMinutes: 0 } screenFixed &&
+          screenFixed.NightStart == ScreenScheduleSettings.Default.NightStart && screenFixed.NightEnd == new TimeSpan(6, 30, 0),
+          "Screen settings recover to usable values");
+    store = new SettingsStore();
+    await store.SaveAsync(upgraded with { Screen = dimming with { NightStart = new TimeSpan(21, 45, 0) } });
+    var screenSaved = await new SettingsStore().LoadAsync();
+    Check(screenSaved.Screen == ScreenSchedule.Normalize(dimming with { NightStart = new TimeSpan(21, 45, 0) }) &&
+          (await new SettingsStore().LoadAsync()).DashboardUrl == upgraded.DashboardUrl,
+          "The screen schedule survives restart");
+    var restorePoint = new BrightnessRestore(edgePreference!, 95);
+    store = new SettingsStore();
+    await store.SaveAsync(upgraded with { PendingBrightness = restorePoint });
+    var restoreSaved = await new SettingsStore().LoadAsync();
+    Check(restoreSaved.PendingBrightness == restorePoint &&
+          SettingsStore.Normalize(upgraded with { PendingBrightness = restorePoint with { Brightness = 140 } }).PendingBrightness?.Brightness == 100 &&
+          SettingsStore.Normalize(upgraded with { PendingBrightness = new BrightnessRestore(new DisplayPreference(null, null, 0, 0), 50) }).PendingBrightness is null,
+          "A monitor's original brightness survives restart so it can be put back later");
     const string forecastJson = """
         {"utc_offset_seconds":3600,
          "current":{"time":"2026-10-10T20:00","temperature_2m":11.04,"weather_code":3,"is_day":0},

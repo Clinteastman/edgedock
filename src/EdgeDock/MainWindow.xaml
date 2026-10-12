@@ -117,6 +117,22 @@
       <Slider x:Name="BackdropTransparencySlider" Minimum="0" Maximum="100" StepFrequency="5" Value="50"
               ValueChanged="BackdropTransparencySlider_ValueChanged" AutomationProperties.Name="Background visibility"/>
       <TextBlock x:Name="BackdropHelpText" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
+      <TextBlock Text="Screen" FontSize="18" FontWeight="SemiBold"/>
+      <TextBlock Text="These apply only while EdgeDock is full screen, to the screen it is on; a windowed EdgeDock never changes any monitor. Brightness uses the monitor's own control where it allows it; otherwise EdgeDock darkens itself. Turning this off, leaving full screen or closing EdgeDock puts the monitor's brightness back."
+                 TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
+      <ToggleSwitch x:Name="DimAtNightToggle" Header="Dim at night" AutomationProperties.Name="Dim the screen at night"/>
+      <Grid ColumnSpacing="10">
+       <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+       <TimePicker x:Name="NightStartPicker" Header="Night starts" MinuteIncrement="15" HorizontalAlignment="Stretch" AutomationProperties.Name="Night starts at"/>
+       <TimePicker x:Name="NightEndPicker" Grid.Column="1" Header="Night ends" MinuteIncrement="15" HorizontalAlignment="Stretch" AutomationProperties.Name="Night ends at"/>
+      </Grid>
+      <Slider x:Name="DayBrightnessSlider" Header="Day brightness" Minimum="0" Maximum="100" StepFrequency="5" AutomationProperties.Name="Day brightness"/>
+      <Slider x:Name="NightBrightnessSlider" Header="Night brightness" Minimum="0" Maximum="100" StepFrequency="5" AutomationProperties.Name="Night brightness"/>
+      <ComboBox x:Name="BlankAfterSelector" Header="Blank the screen when idle" HorizontalAlignment="Stretch" MinHeight="52"
+                AutomationProperties.Name="Blank the screen after no input for">
+       <ComboBoxItem Content="Never"/><ComboBoxItem Content="After 5 minutes"/><ComboBoxItem Content="After 10 minutes"/>
+       <ComboBoxItem Content="After 15 minutes"/><ComboBoxItem Content="After 30 minutes"/><ComboBoxItem Content="After 1 hour"/>
+      </ComboBox>
       <TextBlock Text="Clock and weather" FontSize="18" FontWeight="SemiBold"/>
       <TextBlock Text="Weather comes from Open-Meteo, free and without an account. Find sends the town you type to Open-Meteo to look it up. After that, only the chosen place's position is sent, and only while the clock is on screen."
                  TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
@@ -159,5 +175,14 @@
     </StackPanel>
    </Grid>
   </Border>
+  <!-- Topmost: software dimming for monitors without DDC/CI, and the idle blank screen. -->
+  <Rectangle x:Name="ScreenDimLayer" Grid.RowSpan="2" Fill="Black" Opacity="0" IsHitTestVisible="False"/>
+  <!-- While blank, keyboard focus sits on this invisible button, so a key pressed to wake
+       the screen cannot reach a hidden control or web page underneath. -->
+  <Grid x:Name="ScreenBlankOverlay" Grid.RowSpan="2" Background="Black" Visibility="Collapsed"
+        PointerPressed="ScreenBlankOverlay_PointerPressed" PreviewKeyDown="ScreenBlankOverlay_PreviewKeyDown">
+   <Button x:Name="ScreenWakeButton" Opacity="0" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+           Click="ScreenWakeButton_Click" AutomationProperties.Name="Screen blanked. Tap or press any key to wake."/>
+  </Grid>
  </Grid>
 </Window>
