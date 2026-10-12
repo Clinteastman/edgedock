@@ -1,5 +1,41 @@
 # Testing
 
+## Launcher widget (10 October 2026)
+
+- Debug x64 build: zero warnings/errors. 34 console checks pass, including
+  allowed targets (file, folder, web page), rejected ones (quoted command with
+  arguments, relative path, `cmd /c`, `file:`, `javascript:`, `\\?\` paths, empty),
+  default names, persistence with repaired IDs, and the 24-item limit.
+- A captured EdgeDock window (isolated profile) showed Notepad, Documents and
+  Calculator with their real shell icons and transparency, a globe for a web
+  page, and a warning icon for a missing file, in two columns at 360px.
+- After review: target checks and icon extraction run off the UI thread, and
+  the check on tap too. Icons come from a dedicated STA thread: on thread-pool
+  (MTA) threads Calculator's icon failed and fell back to the placeholder, on
+  the STA thread all three icons loaded again (captured). Screen-reader names
+  for each launcher row now follow the Name field as it is typed.
+- Second review: Save layout checks launcher targets on the thread pool, and
+  folder names keep their dots (`Projects.v2`, `.config`; console check).
+- Third review: a save still checking launcher targets is dropped if Settings
+  closes (Cancel, toggle, Widget view) or a newer save starts (code only).
+- Not yet tested: tapping a tile to open it, the Browse buttons, and the
+  Settings save path (all need real input).
+- Later review: cancelling or closing Settings now unlocks the editors at once,
+  even while a target check is stuck on an offline drive; the stuck check's
+  result is dropped and cannot unlock a newer save. Build only (needs an
+  offline drive and real input to exercise).
+- Third review: an invalid row is focused and scrolled to after the editor is
+  unlocked; tiles share one target check per item (a stuck check is joined,
+  not repeated, and a closed launcher stops waiting at once); the
+  any-process foreground grant was removed, so a launched app relies on the
+  shell's normal hand-over. Capture repeated: icons and the missing-item marker
+  still show. Tapping tiles still needs real input.
+- Fourth review: Settings now uses the same shared target checks as the tiles
+  (a stuck drive check is joined, and an abandoned save stops waiting at once);
+  the whole Settings form stays locked until a checked save is written, and Cancel waits for
+  a save already being written instead of half-undoing it. Console check added
+  for shared checks looking again after a folder is removed.
+
 ## Audio widget (10 October 2026)
 
 - Debug x64 build: zero warnings/errors. 30 console checks pass, including app
