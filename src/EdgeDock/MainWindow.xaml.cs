@@ -218,7 +218,9 @@ public sealed partial class MainWindow : Window
         ApplyMediaLayout();
         await BuildWebPanelsAsync();
         ApplyMediaLayout();
-        UpdateSettingsControls();
+        // Settings may already be open (opened before loading finished, showing the empty
+        // defaults): load the saved lists into it, or a Save would delete them.
+        UpdateSettingsControls(reloadDrafts: true);
     }
 
     private void RegisterDividerHandlers(PanelDivider divider)
@@ -454,7 +456,7 @@ public sealed partial class MainWindow : Window
         }
 
         UrlErrorText.Visibility = Visibility.Collapsed;
-        UpdateSettingsControls();
+        UpdateSettingsControls(reloadDrafts: true);
         SettingsPanel.Visibility = Visibility.Visible;
     }
 
@@ -744,7 +746,8 @@ public sealed partial class MainWindow : Window
                 : new MicaBackdrop();
     }
 
-    private void UpdateSettingsControls()
+    /// <param name="reloadDrafts">Also reload the editable lists, even with Settings open.</param>
+    private void UpdateSettingsControls(bool reloadDrafts = false)
     {
         MaterialSelector.SelectedIndex = _material == BackdropMaterial.Acrylic ? 1 : 0;
         BackdropTransparencySlider.Value = _backdropTransparency;
@@ -761,9 +764,10 @@ public sealed partial class MainWindow : Window
         WebVisibleToggle.IsOn = _isWebVisible;
         LibraryEditor.LoadSlots(_widgetSlots, _registry);
         LauncherEditor.WindowHandle = _windowHandle;
-        // Never while Settings is open: a divider drag refreshes these controls on every move
+        // Not while Settings is open: a divider drag refreshes these controls on every move
         // and would wipe unsaved card and launcher edits. Settings loads them as it opens.
-        if (SettingsPanel.Visibility != Visibility.Visible)
+        var reloadLists = reloadDrafts || SettingsPanel.Visibility != Visibility.Visible;
+        if (reloadLists)
         {
             WebCardEditor.LoadCards(_webCards);
             LauncherEditor.LoadItems(_launchers);
@@ -773,7 +777,7 @@ public sealed partial class MainWindow : Window
         StartupToggle.IsOn = StartupRegistration.IsEnabled();
         // Never while Settings is open: a divider drag or similar refresh would otherwise wipe
         // unsaved name and program edits. Settings loads them as it opens.
-        if (SettingsPanel.Visibility != Visibility.Visible) ProfileEditor.LoadProfiles(_profiles);
+        if (reloadLists) ProfileEditor.LoadProfiles(_profiles);
         DimAtNightToggle.IsOn = _screenSettings.DimAtNight;
         DayBrightnessSlider.Value = _screenSettings.DayBrightness;
         NightBrightnessSlider.Value = _screenSettings.NightBrightness;
