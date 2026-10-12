@@ -10,7 +10,7 @@
     <TextBlock Text="EdgeDock" FontWeight="SemiBold" VerticalAlignment="Center"/>
    </StackPanel>
   </Grid>
-  <Grid x:Name="Workspace" Grid.Row="1" Padding="10">
+  <Grid x:Name="Workspace" Grid.Row="1" Padding="10" GettingFocus="Workspace_GettingFocus" PreviewKeyDown="Workspace_PreviewKeyDown">
    <Grid.ColumnDefinitions><ColumnDefinition x:Name="WebColumn" Width="*"/><ColumnDefinition x:Name="GroupDividerColumn" Width="10"/><ColumnDefinition x:Name="MediaColumn" Width="340"/></Grid.ColumnDefinitions>
             <Border x:Name="WebSurface" Grid.Column="0" CornerRadius="14" Background="#FF0B0A0E"
                     Loaded="WebSurface_LayoutChanged" SizeChanged="WebSurface_LayoutChanged">

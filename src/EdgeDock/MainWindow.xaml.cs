@@ -444,6 +444,19 @@ public sealed partial class MainWindow : Window
         UnlockSettingsEditors();
     }
 
+    // Hit testing does not stop the keyboard, so while a save runs focus may not enter the
+    // dashboard and keys aimed at it are dropped; a page or panel change made now would be
+    // overwritten by the layout the save applies.
+    private void Workspace_GettingFocus(UIElement sender, GettingFocusEventArgs args)
+    {
+        if (_checkingSave) args.TryCancel();
+    }
+
+    private void Workspace_PreviewKeyDown(object sender, KeyRoutedEventArgs args)
+    {
+        if (_checkingSave) args.Handled = true;
+    }
+
     private void UnlockSettingsEditors()
     {
         _checkingSave = false;
