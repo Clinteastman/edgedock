@@ -578,12 +578,15 @@ try
 
     var tap = new WaveformSampleTap();
     var early = new float[4];
-    tap.Write(0.25f);
+    tap.Write(0.25f, 0.5f, 0f);
     tap.CopyLatest(early);
     new WaveformAnalyzer(44100, 2, tap).Process(Enumerable.Range(1, 6000).Select(i => (float)(i % 3)).ToArray(), new WaveformRing(64));
     var latest = new float[3];
-    tap.CopyLatest(latest);
-    Check(early.SequenceEqual([0f, 0f, 0f, 0.25f]) && tap.Written == 3001 && tap.SampleRate == 44100 && latest.SequenceEqual([1.5f, 0.5f, 1f]),
+    var latestLeft = new float[3];
+    var latestRight = new float[3];
+    tap.CopyLatest(latest, latestLeft, latestRight);
+    Check(early.SequenceEqual([0f, 0f, 0f, 0.25f]) && tap.Written == 3001 && tap.SampleRate == 44100 && latest.SequenceEqual([1.5f, 0.5f, 1f]) &&
+          latestLeft.SequenceEqual([1f, 0f, 2f]) && latestRight.SequenceEqual([2f, 1f, 0f]),
           "The sample tap keeps the newest mono samples, oldest first, padded with silence at the start");
 
     foreach (var look in Enum.GetValues<WaveformLook>())
@@ -730,20 +733,62 @@ try
     Check(Near(firstBar, 0.8, 1e-5) && quietBar == 0 && Near(pulse.Levels[0], 0.55, 1e-5),
           "Pulse bars show each slice's loudest sample with gain, then fall smoothly");
 
-    Check(WaveformSettings.Normalize(null) == WaveformSettings.Default &&
-          WaveformSettings.Normalize(new WaveformSettings("  ", (WaveformView)99, (WaveformLook)9, double.NaN, false)) ==
-              WaveformSettings.Default with { AutoLevel = false } &&
+    var spectrumLook = WaveformPalette.For(WaveformLook.Spectrum);
+    var turnedOnce = spectrumLook.Rotate(360);
+    var turnedRed = new WaveformPalette(new WaveformRgb(1, 0, 0), new WaveformRgb(1, 0, 0), new WaveformRgb(1, 0, 0)).Rotate(120).Low;
+    Check(Near(turnedOnce.Low.R, spectrumLook.Low.R, 1e-4) && Near(turnedOnce.High.B, spectrumLook.High.B, 1e-4) &&
+          Near(spectrumLook.Rotate(0).Mid.G, spectrumLook.Mid.G, 1e-5) && turnedRed.B > turnedRed.R && turnedRed.B > turnedRed.G &&
+          WaveformSettings.CycleDegreesPerSecond(WaveformColourCycle.Off) == 0 &&
+          WaveformSettings.CycleDegreesPerSecond(WaveformColourCycle.Fast) > WaveformSettings.CycleDegreesPerSecond(WaveformColourCycle.Slow),
+          "Colour cycle turns a look around the colour wheel (red turns blue at 120 degrees) and back at 360");
+
+    var beat = new WaveformBeat();
+    for (var i = 0; i < 400; i++) beat.Add(0.05f, 0.2f, WaveformAnalyzer.BlockSeconds);
+    var steadyBeats = beat.Beats;
+    beat.Add(0.4f, 0.9f, WaveformAnalyzer.BlockSeconds);
+    var kicked = beat.Flash;
+    for (var i = 0; i < 10; i++) beat.Add(0.4f, 0.9f, WaveformAnalyzer.BlockSeconds);
+    var heldOff = beat.Beats;
+    for (var i = 0; i < 60; i++) beat.Add(0.05f, 0.1f, WaveformAnalyzer.BlockSeconds);
+    Check(steadyBeats == 0 && kicked == 1 && heldOff == steadyBeats + 1 && beat.Flash < 0.05f && beat.Energy is > 0.1f and < 0.9f,
+          "A bass kick well above its average flashes once, then fades; loudness eases down");
+
+    var everyView = WaveformSettings.Default with { CycleSeconds = 30 };
+    var chosen = WaveformSettings.Default with { CycleViews = [WaveformView.Fire, WaveformView.CrtScope], CycleSeconds = 10 };
+    Check(everyView.NextInCycle(WaveformView.Scroll) == WaveformView.CentreOut &&
+          everyView.NextInCycle(Enum.GetValues<WaveformView>()[^1]) == WaveformView.Scroll &&
+          chosen.NextInCycle(WaveformView.Fire) == WaveformView.CrtScope && chosen.NextInCycle(WaveformView.CrtScope) == WaveformView.Fire &&
+          chosen.NextInCycle(WaveformView.Scroll) == WaveformView.Fire,
+          "Cycle mode moves through the chosen views in order (all views when none are chosen)");
+
+    var quietScope = new float[4096];
+    var bandsLow = new float[4096];
+    var bandsMid = new float[4096];
+    var bandsHigh = new float[4096];
+    var mixed = Sine(100, 0.4, 48000, 1, 0.1).Zip(Sine(9000, 0.4, 48000, 1, 0.1), (a, b) => a + b).Take(4096).ToArray();
+    WaveformScope.SplitBands(mixed, 48000, bandsLow, bandsMid, bandsHigh);
+    static double Rms(float[] values) => Math.Sqrt(values.Skip(2048).Average(v => v * v));
+    Check(Near(Rms(bandsLow), 0.4 / Math.Sqrt(2), 0.05) && Near(Rms(bandsHigh), 0.4 / Math.Sqrt(2), 0.06) && Rms(bandsMid) < 0.12 &&
+          WaveformScope.FindStart(quietScope, 1024, 1) == 4096 - 1024,
+          "Band scopes split bass and highs apart; with no crossing the scope shows the newest window");
+
+    Check(WaveformSettings.Normalize(null).SameAs(WaveformSettings.Default) &&
+          WaveformSettings.Normalize(new WaveformSettings("  ", (WaveformView)99, (WaveformLook)99, double.NaN, false, (WaveformColourCycle)9,
+              [(WaveformView)(-1), WaveformView.Fire, WaveformView.Fire], -5))
+              .SameAs(WaveformSettings.Default with { AutoLevel = false, CycleViews = [WaveformView.Fire] }) &&
           WaveformSettings.Normalize(WaveformSettings.Default with { Speed = 5000 }).Speed == WaveformSettings.MaximumSpeed &&
           WaveformSettings.Normalize(WaveformSettings.Default with { Speed = 1 }).Speed == WaveformSettings.MinimumSpeed &&
           WaveformSettings.Normalize(WaveformSettings.Default with { Speed = 164 }).Speed == 160 &&
-          Enum.GetValues<WaveformView>().Count(WaveformSettings.Scrolls) == 3,
-          "Waveform settings recover from bad values; speed is 30 to 600 in steps of 10");
+          WaveformSettings.Normalize(WaveformSettings.Default with { CycleSeconds = 45 }).CycleSeconds == 30 &&
+          Enum.GetValues<WaveformView>().Count(WaveformSettings.Scrolls) == 4,
+          "Waveform settings recover from bad values; speed is 30 to 600 in steps of 10; cycle times snap to the offered ones");
     store = new SettingsStore();
-    var waveformChoice = new WaveformSettings(@"{0.0.1.00000000}.{abc}", WaveformView.MirrorSpectrum, WaveformLook.Ember, 320, false);
+    var waveformChoice = new WaveformSettings(@"{0.0.1.00000000}.{abc}", WaveformView.CrtScope, WaveformLook.Vapor, 320, false,
+        WaveformColourCycle.Slow, [WaveformView.Fractal, WaveformView.Copper], 60);
     await store.SaveAsync(weatherSaved with { Waveform = waveformChoice });
     var waveformSaved = await new SettingsStore().LoadAsync();
-    Check(waveformSaved.Waveform == waveformChoice && weatherSaved.Waveform == WaveformSettings.Default,
-          "Waveform source, view, look, speed and auto level survive restart; older settings get the defaults");
+    Check(waveformChoice.SameAs(waveformSaved.Waveform) && WaveformSettings.Default.SameAs(weatherSaved.Waveform),
+          "Waveform source, view, look, colour cycle, speed, auto level and cycle set survive restart; older settings get the defaults");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally

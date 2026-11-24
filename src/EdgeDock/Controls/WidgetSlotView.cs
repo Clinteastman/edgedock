@@ -101,6 +101,7 @@ internal sealed class WidgetSlotView : Grid
                     mediaWidget.ShowArtwork = _showArtwork;
                     mediaWidget.Bind(_media);
                 }
+                else if (control is WaveformWidget waveform) waveform.Media = _media;
                 _containers[index].Content = control;
             }
         }

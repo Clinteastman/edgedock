@@ -135,7 +135,10 @@ internal sealed class SettingsStore
                         Enum.TryParse<WaveformView>(waveform.View, true, out var waveView) ? waveView : WaveformSettings.Default.View,
                         Enum.TryParse<WaveformLook>(waveform.Look, true, out var waveLook) ? waveLook : WaveformSettings.Default.Look,
                         waveform.Speed ?? WaveformSettings.Default.Speed,
-                        waveform.AutoLevel ?? WaveformSettings.Default.AutoLevel)
+                        waveform.AutoLevel ?? WaveformSettings.Default.AutoLevel,
+                        Enum.TryParse<WaveformColourCycle>(waveform.ColourCycle, true, out var waveCycle) ? waveCycle : WaveformSettings.Default.ColourCycle,
+                        waveform.CycleViews?.Select(name => Enum.TryParse<WaveformView>(name, true, out var view) ? view : (WaveformView)(-1)).ToArray(),
+                        waveform.CycleSeconds ?? 0)
                     : null));
         }
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
@@ -216,7 +219,10 @@ internal sealed class SettingsStore
                     View = settings.Waveform.View.ToString(),
                     Look = settings.Waveform.Look.ToString(),
                     Speed = settings.Waveform.Speed,
-                    AutoLevel = settings.Waveform.AutoLevel
+                    AutoLevel = settings.Waveform.AutoLevel,
+                    ColourCycle = settings.Waveform.ColourCycle.ToString(),
+                    CycleViews = settings.Waveform.CycleViews?.Select(view => view.ToString()).ToList(),
+                    CycleSeconds = settings.Waveform.CycleSeconds
                 },
                 WidgetSlots = settings.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
                 ExtensionData = _extensionData
@@ -489,6 +495,9 @@ internal sealed class SettingsStore
         public string? Look { get; set; }
         public double? Speed { get; set; }
         public bool? AutoLevel { get; set; }
+        public string? ColourCycle { get; set; }
+        public List<string>? CycleViews { get; set; }
+        public int? CycleSeconds { get; set; }
     }
 
     private sealed class StoredWeather

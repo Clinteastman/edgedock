@@ -138,7 +138,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         _messageHookCallback = MessageHookCallback;
-        _registry = WidgetRegistry.CreateBuiltIns(() => _launchers, () => new ClockOptions(_weatherLocation, _fahrenheit), () => _waveform);
+        _registry = WidgetRegistry.CreateBuiltIns(() => _launchers, () => new ClockOptions(_weatherLocation, _fahrenheit), () => _waveform, SaveWaveform);
         InitializeComponent();
         RegisterDividerHandlers(WebDivider);
         RegisterDividerHandlers(GroupDivider);
@@ -669,6 +669,15 @@ public sealed partial class MainWindow : Window
         ApplyMediaLayout();
         SettingsPanel.Visibility = Visibility.Collapsed;
         UrlErrorText.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>The waveform's touch bar changed its view or look: keep it and save it.</summary>
+    private async void SaveWaveform(WaveformSettings waveform)
+    {
+        _waveform = waveform;
+        await _profileGate.WaitAsync();
+        try { await PersistAsync(CurrentSettings(), alreadyApplied: true); }
+        finally { _profileGate.Release(); }
     }
 
     private async Task<bool> PersistAsync(EdgeDockSettings settings, bool alreadyApplied = false)

@@ -1,15 +1,66 @@
 namespace EdgeDock;
 
-/// <summary>How the Waveform widget pictures the sound. Each widget shows one view.</summary>
-internal enum WaveformView { Scroll, CentreOut, Spectrogram, SpectrumBars, MirrorSpectrum, SpectrumLine, Oscilloscope, Pulse }
-internal enum WaveformLook { Spectrum, Neon, Ember, Ice }
+/// <summary>How the Waveform widget pictures the sound. Each widget shows one view. Saved by name.</summary>
+internal enum WaveformView
+{
+    // Waves over time
+    Scroll, CentreOut,
+    // Spectrum
+    SpectrumBars, MirrorSpectrum, SpectrumLine, LedBars, Spectrogram, Ridges, Ring,
+    // Oscilloscopes
+    Oscilloscope, CrtScope, CrtVectorscope, StereoScope, BandScopes, Lissajous,
+    // Flashy
+    Pulse, Club, Warp, Aurora,
+    // Demo scene
+    Plasma, Copper, Tunnel, Checkerboard,
+    // Crazy
+    Kaleidoscope, Vortex, Glitch, Fire, Metaballs, Lightning, Fractal,
+    // Space and sky
+    StarNest, Clouds, Cloudscape,
+    // More crazy
+    HypnoCircles, HexPlasma, Lasers, Voronoi, Blob, Truchet
+}
 
-/// <summary>Waveform widget choices. A null input means the sound playing on the PC.</summary>
-internal sealed record WaveformSettings(string? InputDeviceId, WaveformView View, WaveformLook Look, double Speed, bool AutoLevel)
+/// <summary>The three-colour palettes every view draws with. Saved by name.</summary>
+internal enum WaveformLook
+{
+    Spectrum, Neon, Ember, Ice, Sunset, Ocean, Borealis, Candy,
+    Vapor, Toxic, Gold, Blood, Mono, Matrix, Prism, Lava
+}
+
+/// <summary>Slowly turns the look's colours around the colour wheel.</summary>
+internal enum WaveformColourCycle { Off, Slow, Fast }
+
+/// <summary>
+/// Waveform widget choices. A null input means the sound playing on the PC. With
+/// <see cref="CycleSeconds"/> above zero the widget moves through <see cref="CycleViews"/> (all
+/// views when empty), one every so many seconds, starting from <see cref="View"/>.
+/// </summary>
+internal sealed record WaveformSettings(string? InputDeviceId, WaveformView View, WaveformLook Look, double Speed, bool AutoLevel,
+    WaveformColourCycle ColourCycle = WaveformColourCycle.Off, IReadOnlyList<WaveformView>? CycleViews = null, int CycleSeconds = 0)
 {
     public const double MinimumSpeed = 30;
     public const double MaximumSpeed = 600;
-    public static WaveformSettings Default { get; } = new(null, WaveformView.Scroll, WaveformLook.Spectrum, 160, true);
+    /// <summary>The cycle intervals Settings offers; 0 is off.</summary>
+    public static readonly int[] CycleChoices = [0, 10, 20, 30, 60, 120, 300];
+    public static WaveformSettings Default { get; } = new(null, WaveformView.Scroll, WaveformLook.Spectrum, 160, true, CycleViews: []);
+
+    /// <summary>The views the cycle moves through, in order: the chosen set, or every view.</summary>
+    public IReadOnlyList<WaveformView> CycleSet => CycleViews is { Count: > 0 } chosen ? chosen : Enum.GetValues<WaveformView>();
+
+    /// <summary>The view after <paramref name="view"/> in the cycle (the first, if it is not in the set).</summary>
+    public WaveformView NextInCycle(WaveformView view)
+    {
+        var set = CycleSet;
+        var index = -1;
+        for (var i = 0; i < set.Count; i++) if (set[i] == view) index = i;
+        return set[(index + 1) % set.Count];
+    }
+
+    /// <summary>Same choices, comparing the cycle set by its contents.</summary>
+    public bool SameAs(WaveformSettings? other) =>
+        other is not null && this with { CycleViews = null } == other with { CycleViews = null } &&
+        (CycleViews ?? []).SequenceEqual(other.CycleViews ?? []);
 
     public static WaveformSettings Normalize(WaveformSettings? value)
     {
@@ -19,13 +70,25 @@ internal sealed record WaveformSettings(string? InputDeviceId, WaveformView View
             InputDeviceId = string.IsNullOrWhiteSpace(value.InputDeviceId) ? null : value.InputDeviceId.Trim(),
             View = Enum.IsDefined(value.View) ? value.View : Default.View,
             Look = Enum.IsDefined(value.Look) ? value.Look : Default.Look,
+            ColourCycle = Enum.IsDefined(value.ColourCycle) ? value.ColourCycle : Default.ColourCycle,
+            CycleViews = (value.CycleViews ?? []).Where(Enum.IsDefined).Distinct().ToArray(),
+            CycleSeconds = CycleChoices.Contains(value.CycleSeconds) ? value.CycleSeconds : CycleChoices.Where(choice => choice <= value.CycleSeconds).DefaultIfEmpty(0).Max(),
             // Whole steps of 10 logical pixels a second, as the Settings slider offers.
             Speed = double.IsFinite(value.Speed) ? Math.Round(Math.Clamp(value.Speed, MinimumSpeed, MaximumSpeed) / 10) * 10 : Default.Speed
         };
     }
 
-    /// <summary>Views that move sideways over time, so Speed applies to them.</summary>
-    public static bool Scrolls(WaveformView view) => view is WaveformView.Scroll or WaveformView.CentreOut or WaveformView.Spectrogram;
+    /// <summary>Views that show sound over time, so Speed applies to them.</summary>
+    public static bool Scrolls(WaveformView view) =>
+        view is WaveformView.Scroll or WaveformView.CentreOut or WaveformView.Spectrogram or WaveformView.Ridges;
+
+    /// <summary>Degrees a second the colours turn for each colour cycle setting.</summary>
+    public static double CycleDegreesPerSecond(WaveformColourCycle cycle) => cycle switch
+    {
+        WaveformColourCycle.Slow => 12,
+        WaveformColourCycle.Fast => 60,
+        _ => 0
+    };
 }
 
 /// <summary>One ~5 ms block of sound: loudest sample, RMS, and RMS of three frequency bands.</summary>
@@ -147,7 +210,7 @@ internal sealed class WaveformAnalyzer
         for (var frame = 0; frame < frames; frame++)
         {
             var offset = frame * _channels;
-            var mono = 0f;
+            float mono = 0f, left = 0f, right = 0f;
             for (var channel = 0; channel < _channels; channel++)
             {
                 var sample = interleaved[offset + channel];
@@ -156,20 +219,22 @@ internal sealed class WaveformAnalyzer
                 if (magnitude > _peak) _peak = magnitude;
                 _sumSquares += sample * sample;
                 mono += sample;
+                if (channel == 0) left = sample;
+                else if (channel == 1) right = sample;
             }
-            AddMono(mono * scale, ring);
+            AddMono(mono * scale, left, _channels > 1 ? right : left, ring);
         }
     }
 
     /// <summary>Counts frames that Windows reported as silent, keeping the filters' memory.</summary>
     public void ProcessSilence(int frames, WaveformRing ring)
     {
-        for (var frame = 0; frame < frames; frame++) AddMono(0, ring);
+        for (var frame = 0; frame < frames; frame++) AddMono(0, 0, 0, ring);
     }
 
-    private void AddMono(float mono, WaveformRing ring)
+    private void AddMono(float mono, float left, float right, WaveformRing ring)
     {
-        _tap?.Write(mono);
+        _tap?.Write(mono, left, right);
         var low = _low.Process(mono);
         var mid = _mid.Process(mono);
         var high = _high.Process(mono);
@@ -238,14 +303,16 @@ internal sealed class WaveformRing
 }
 
 /// <summary>
-/// The newest mono samples, for the live views (spectrum, oscilloscope, pulse). The capture
-/// thread writes one sample at a time; the drawing code copies the newest few thousand.
-/// Old samples are simply overwritten, so a slow reader never holds the writer up.
+/// The newest samples (mono mix, left and right), for the live views. The capture thread
+/// writes one frame at a time; the drawing code copies the newest few thousand. Old samples
+/// are simply overwritten, so a slow reader never holds the writer up.
 /// </summary>
 internal sealed class WaveformSampleTap
 {
     public const int Capacity = 8192;
     private readonly float[] _samples = new float[Capacity];
+    private readonly float[] _left = new float[Capacity];
+    private readonly float[] _right = new float[Capacity];
     private long _written;
     private int _sampleRate = 48000;
 
@@ -257,23 +324,37 @@ internal sealed class WaveformSampleTap
 
     public long Written => Volatile.Read(ref _written);
 
-    public void Write(float sample)
+    public void Write(float mono, float left, float right)
     {
         var written = _written;
-        _samples[written & (Capacity - 1)] = sample;
-        Volatile.Write(ref _written, written + 1);
+        var slot = written & (Capacity - 1);
+        _samples[slot] = mono;
+        _left[slot] = left;
+        _right[slot] = right;
+        Volatile.Write(ref _written, written + 1); // Publishes the frame after it is written.
     }
 
-    /// <summary>Copies the newest samples, oldest first. Before enough have arrived, pads with silence.</summary>
-    public void CopyLatest(Span<float> destination)
+    /// <summary>Copies the newest mono samples, oldest first. Before enough have arrived, pads with silence.</summary>
+    public void CopyLatest(Span<float> mono) => CopyLatest(mono, [], []);
+
+    /// <summary>Copies the newest mono, left and right samples; pass an empty span to skip one.</summary>
+    public void CopyLatest(Span<float> mono, Span<float> left, Span<float> right)
     {
-        if (destination.Length > Capacity / 2) throw new ArgumentException("Ask for at most half the capacity.", nameof(destination));
+        if (Math.Max(mono.Length, Math.Max(left.Length, right.Length)) > Capacity / 2)
+            throw new ArgumentException("Ask for at most half the capacity.");
         var end = Written;
+        Copy(_samples, mono, end);
+        Copy(_left, left, end);
+        Copy(_right, right, end);
+    }
+
+    private static void Copy(float[] source, Span<float> destination, long end)
+    {
         var start = end - destination.Length;
         for (var i = 0; i < destination.Length; i++)
         {
             var index = start + i;
-            destination[i] = index < 0 ? 0 : _samples[index & (Capacity - 1)];
+            destination[i] = index < 0 ? 0 : source[index & (Capacity - 1)];
         }
     }
 }
@@ -289,8 +370,36 @@ internal readonly record struct WaveformPalette(WaveformRgb Low, WaveformRgb Mid
         WaveformLook.Neon => From((150, 50, 255), (255, 50, 190), (40, 235, 255)),
         WaveformLook.Ember => From((255, 55, 10), (255, 165, 25), (255, 240, 190)),
         WaveformLook.Ice => From((110, 180, 255), (185, 228, 255), (255, 255, 255)),
+        WaveformLook.Sunset => From((120, 40, 200), (255, 70, 110), (255, 190, 60)),
+        WaveformLook.Ocean => From((0, 70, 200), (0, 190, 210), (170, 255, 240)),
+        WaveformLook.Borealis => From((40, 255, 140), (40, 200, 255), (200, 90, 255)),
+        WaveformLook.Candy => From((255, 90, 180), (180, 120, 255), (90, 220, 255)),
+        WaveformLook.Vapor => From((255, 60, 200), (120, 80, 255), (0, 240, 255)),
+        WaveformLook.Toxic => From((60, 255, 0), (200, 255, 0), (240, 255, 200)),
+        WaveformLook.Gold => From((180, 90, 10), (255, 190, 40), (255, 245, 200)),
+        WaveformLook.Blood => From((120, 0, 10), (230, 20, 40), (255, 140, 140)),
+        WaveformLook.Mono => From((150, 150, 160), (215, 215, 225), (255, 255, 255)),
+        WaveformLook.Matrix => From((0, 120, 30), (0, 230, 70), (190, 255, 190)),
+        WaveformLook.Prism => From((255, 0, 80), (255, 220, 0), (0, 200, 255)),
+        WaveformLook.Lava => From((255, 30, 0), (255, 0, 120), (255, 200, 0)),
         _ => From((255, 50, 95), (70, 255, 150), (80, 165, 255))
     };
+
+    /// <summary>
+    /// The same palette turned around the colour wheel by <paramref name="degrees"/>, keeping
+    /// each colour's brightness (the usual luma-preserving hue rotation), clamped to 0-1.
+    /// </summary>
+    public WaveformPalette Rotate(double degrees)
+    {
+        var radians = degrees * Math.PI / 180;
+        var c = (float)Math.Cos(radians);
+        var s = (float)Math.Sin(radians);
+        WaveformRgb Turn(WaveformRgb x) => new(
+            Math.Clamp((0.299f + 0.701f * c + 0.168f * s) * x.R + (0.587f - 0.587f * c + 0.330f * s) * x.G + (0.114f - 0.114f * c - 0.497f * s) * x.B, 0, 1),
+            Math.Clamp((0.299f - 0.299f * c - 0.328f * s) * x.R + (0.587f + 0.413f * c + 0.035f * s) * x.G + (0.114f - 0.114f * c + 0.292f * s) * x.B, 0, 1),
+            Math.Clamp((0.299f - 0.299f * c + 1.250f * s) * x.R + (0.587f - 0.587f * c - 1.050f * s) * x.G + (0.114f + 0.886f * c - 0.203f * s) * x.B, 0, 1));
+        return new(Turn(Low), Turn(Mid), Turn(High));
+    }
 
     private static WaveformPalette From((int R, int G, int B) low, (int R, int G, int B) mid, (int R, int G, int B) high) =>
         new(Rgb(low), Rgb(mid), Rgb(high));
@@ -361,6 +470,10 @@ internal sealed class WaveformLevels
 
     /// <summary>The current, smoothed colour weights.</summary>
     public (float Low, float Mid, float High) Weights => WaveformPalette.Weights(_low, _mid, _high);
+
+    /// <summary>The smoothed band levels with the gain applied (0 to 1), for the flashy views.</summary>
+    public (float Low, float Mid, float High) Bands => (
+        Math.Clamp(_low * Gain * 2, 0, 1), Math.Clamp(_mid * Gain * 3, 0, 1), Math.Clamp(_high * Gain * 6, 0, 1));
 
     public WaveformBar Next(in WaveformColumn column)
     {
@@ -619,23 +732,90 @@ internal static class WaveformScope
     /// leaves a full window, so a steady note holds still instead of sliding. Gain is applied
     /// and the result kept within -1 to 1.
     /// </summary>
-    public static void Prepare(ReadOnlySpan<float> recent, Span<float> output, float gain)
+    public static void Prepare(ReadOnlySpan<float> recent, Span<float> output, float gain) =>
+        Copy(recent, FindStart(recent, output.Length, gain), output, gain);
+
+    /// <summary>Where the window starts: the newest rising zero crossing that leaves room for it.</summary>
+    public static int FindStart(ReadOnlySpan<float> recent, int points, float gain)
     {
-        var points = output.Length;
         if (recent.Length < points * 2) throw new ArgumentException("Pass at least twice as many recent samples as points.", nameof(recent));
         var latestStart = recent.Length - points;
-        var start = latestStart;
         // A little hysteresis so noise around zero does not count as a crossing.
         var threshold = 0.01f / Math.Max(1, gain);
         for (var i = latestStart; i > latestStart - points && i > 0; i--)
+            if (recent[i - 1] < -threshold && recent[i] >= 0) return i;
+        return latestStart;
+    }
+
+    /// <summary>Copies a window with gain, kept within -1 to 1.</summary>
+    public static void Copy(ReadOnlySpan<float> source, int start, Span<float> output, float gain)
+    {
+        for (var i = 0; i < output.Length; i++) output[i] = Math.Clamp(source[start + i] * gain, -1, 1);
+    }
+
+    /// <summary>
+    /// Splits recent samples into bass (under 200 Hz), mids (around 1.2 kHz) and highs (over
+    /// 5 kHz) with the same filters as the columns, starting fresh each call. The filters
+    /// settle within a few milliseconds, so read windows from the newer half.
+    /// </summary>
+    public static void SplitBands(ReadOnlySpan<float> recent, int sampleRate, Span<float> low, Span<float> mid, Span<float> high)
+    {
+        var lowPass = Biquad.LowPass(sampleRate, 200, 0.707);
+        var bandPass = Biquad.BandPass(sampleRate, 1200, 0.6);
+        var highPass = Biquad.HighPass(sampleRate, 5000, 0.707);
+        for (var i = 0; i < recent.Length; i++)
         {
-            if (recent[i - 1] < -threshold && recent[i] >= 0)
-            {
-                start = i;
-                break;
-            }
+            low[i] = lowPass.Process(recent[i]);
+            mid[i] = bandPass.Process(recent[i]);
+            high[i] = highPass.Process(recent[i]);
         }
-        for (var i = 0; i < points; i++) output[i] = Math.Clamp(recent[start + i] * gain, -1, 1);
+    }
+}
+
+/// <summary>
+/// Beat flash and loudness for the flashy views. A beat is the bass jumping well above its
+/// recent average; the flash then fades over about a quarter of a second. Energy follows the
+/// loudness at once on the way up and eases down.
+/// </summary>
+internal sealed class WaveformBeat
+{
+    public const float Threshold = 1.45f;
+    private const float FlashSeconds = 0.25f;
+    private const float AverageSeconds = 0.6f;
+    private const float EnergyFallSeconds = 0.4f;
+    private const double GapSeconds = 0.12;
+    private float _average;
+    private double _sinceBeat = double.MaxValue;
+    private bool _started;
+
+    public float Flash { get; private set; }
+    public float Energy { get; private set; }
+    public int Beats { get; private set; }
+
+    /// <param name="bass">This moment's bass level (any scale; compared with its own average).</param>
+    /// <param name="loudness">This moment's level with gain applied, 0 to 1.</param>
+    /// <param name="seconds">How long this moment lasts.</param>
+    public void Add(float bass, float loudness, double seconds)
+    {
+        var s = (float)Math.Max(0, seconds);
+        if (!float.IsFinite(bass) || bass < 0) bass = 0;
+        if (!_started)
+        {
+            // Start from the first reading, so steady sound does not flash while the average catches up.
+            _started = true;
+            _average = bass;
+        }
+        _sinceBeat += s;
+        if (bass > _average * Threshold && bass > 0.01f && _sinceBeat > GapSeconds)
+        {
+            Flash = 1;
+            Beats++;
+            _sinceBeat = 0;
+        }
+        else Flash *= MathF.Exp(-s * 3 / FlashSeconds);
+        _average += (bass - _average) * (1 - MathF.Exp(-s / AverageSeconds));
+        loudness = float.IsFinite(loudness) ? Math.Clamp(loudness, 0, 1) : 0;
+        Energy = loudness >= Energy ? loudness : Energy + (loudness - Energy) * (1 - MathF.Exp(-s / EnergyFallSeconds));
     }
 }
 
