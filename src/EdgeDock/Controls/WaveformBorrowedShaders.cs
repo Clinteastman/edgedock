@@ -14,6 +14,8 @@ namespace EdgeDock.Controls;
 //          everyone who wishes to use this shader I give my permission to use it in any way that
 //          you choose. Credit would be nice but I won't insist on it."
 // Style 3: "B/W logarithmic circles II" by mrange, https://www.shadertoy.com/view/mljcWR, CC0.
+// Style 4: "Very fast procedural ocean" by afl_ext, https://www.shadertoy.com/view/MdXyzX, MIT
+//          License. EdgeDock adds the cloud layer, the look's colours and the music.
 
 [D2DInputCount(0)]
 [D2DRequiresScenePosition]
@@ -26,7 +28,7 @@ internal readonly partial struct WaveformBorrowedShader(
     public Float4 Execute()
     {
         Float2 p = D2D.GetScenePosition().XY;
-        Float3 rgb = style == 0 ? StarNest(p) : (style == 1 ? HexPlasma(p) : (style == 2 ? Clouds(p) : Circles(p)));
+        Float3 rgb = style == 0 ? StarNest(p) : (style == 1 ? HexPlasma(p) : (style == 2 ? Clouds(p) : (style == 3 ? Circles(p) : Ocean(p))));
         return new Float4(Hlsl.Saturate(rgb), 1f);
     }
 
@@ -258,6 +260,160 @@ internal readonly partial struct WaveformBorrowedShader(
         // Black and white become the look's darkest and brightest colours.
         return Hlsl.Lerp(Gradient(0f) * 0.06f, Hlsl.Lerp(Gradient(0.5f + 0.5f * Hlsl.Sin(time * 0.2f)), new Float3(1f, 1f, 1f), 0.3f), col.X)
             * (0.8f + 0.4f * flash);
+    }
+
+    // ---------- Very fast procedural ocean (afl_ext, MIT) ----------
+
+    private static Float2 WaveDx(Float2 position, Float2 direction, float frequency, float timeshift)
+    {
+        float x = Hlsl.Dot(direction, position) * frequency + timeshift;
+        float wave = Hlsl.Exp(Hlsl.Sin(x) - 1f);
+        return new Float2(wave, -wave * Hlsl.Cos(x));
+    }
+
+    private float Waves(Float2 position, int iterations)
+    {
+        float phase = Hlsl.Length(position) * 0.1f;
+        float iter = 0f;
+        float frequency = 1f;
+        float timeMultiplier = 2f;
+        float weight = 1f;
+        float values = 0f;
+        float weights = 0f;
+        float clock = travel * 0.55f;
+        for (int i = 0; i < 36; i++)
+        {
+            if (i < iterations)
+            {
+                Float2 p = new Float2(Hlsl.Sin(iter), Hlsl.Cos(iter));
+                Float2 res = WaveDx(position, p, frequency, clock * timeMultiplier + phase);
+                position += p * res.Y * weight * 0.38f;
+                values += res.X * weight;
+                weights += weight;
+                weight = Hlsl.Lerp(weight, 0f, 0.2f);
+                frequency *= 1.18f;
+                timeMultiplier *= 1.07f;
+                iter += 1232.399963f;
+            }
+        }
+        return values / weights;
+    }
+
+    private Float3 SunDirection() => Hlsl.Normalize(new Float3(-0.0773502691896258f, 0.18f + Hlsl.Sin(time * 0.05f + 2.6f) * 0.12f, 0.5773502691896258f));
+
+    private Float3 Atmosphere(Float3 raydir, Float3 sundir)
+    {
+        float trick = 1f / (raydir.Y + 0.1f);
+        float trick2 = 1f / (sundir.Y * 11f + 1f);
+        float raysundt = Hlsl.Pow(Hlsl.Abs(Hlsl.Dot(sundir, raydir)), 2f);
+        Float3 blueBase = new Float3(5.5f, 13f, 22.4f) / 22.4f;
+        Float3 suncolor = Hlsl.Lerp(new Float3(1f, 1f, 1f), Hlsl.Max(new Float3(0f, 0f, 0f), new Float3(1f, 1f, 1f) - blueBase), trick2);
+        Float3 bluesky = blueBase * suncolor;
+        Float3 bluesky2 = Hlsl.Max(new Float3(0f, 0f, 0f), bluesky - new Float3(5.5f, 13f, 22.4f) * 0.002f * (trick - 6f * sundir.Y * sundir.Y));
+        bluesky2 *= trick * (0.24f + raysundt * 0.24f);
+        Float3 sky = bluesky2 * (1f + Hlsl.Pow(1f - raydir.Y, 3f)) * 0.5f;
+        // EdgeDock: lean the sky towards the look's colours.
+        return Hlsl.Lerp(sky, Gradient(Hlsl.Saturate(raydir.Y * 2f)) * Hlsl.Dot(sky, new Float3(0.33f, 0.33f, 0.33f)) * 1.6f, 0.35f);
+    }
+
+    private float Sun(Float3 dir) => Hlsl.Pow(Hlsl.Max(0f, Hlsl.Dot(dir, SunDirection())), 720f) * 210f * (0.7f + 0.8f * energy);
+
+    /// <summary>EdgeDock: soft clouds over the ocean, the same layer in the sky and in reflections.</summary>
+    private Float3 SkyWithClouds(Float3 dir)
+    {
+        Float3 sun = SunDirection();
+        Float3 sky = Atmosphere(dir, sun) + Sun(dir);
+        if (dir.Y > 0.01f)
+        {
+            Float2 cloudUv = dir.XZ / (dir.Y + 0.08f) * 0.9f + new Float2(time * 0.02f, travel * 0.03f);
+            float shape = 0f;
+            float weight = 0.6f;
+            Float2 n = cloudUv;
+            for (int i = 0; i < 6; i++)
+            {
+                shape += weight * Noise(n);
+                n = M(n) + time * 0.01f;
+                weight *= 0.5f;
+            }
+            float cover = 0.12f + 0.25f * energy;
+            float density = Hlsl.SmoothStep(0.05f, 0.45f, shape + cover - 0.2f) * Hlsl.Saturate(dir.Y * 6f);
+            float lit = Hlsl.Pow(Hlsl.Max(Hlsl.Dot(dir, sun), 0f), 4f);
+            Float3 cloud = Hlsl.Lerp(Atmosphere(new Float3(dir.X, 0.05f, dir.Z), sun) * 1.4f, new Float3(1f, 0.9f, 0.8f), 0.35f + 0.4f * lit)
+                         + new Float3(flash, flash, flash) * 0.35f;
+            sky = Hlsl.Lerp(sky, cloud, density * 0.85f);
+        }
+        return sky;
+    }
+
+    private static Float3 Aces(Float3 color)
+    {
+        Float3 v = new Float3(
+            0.59719f * color.X + 0.35458f * color.Y + 0.04823f * color.Z,
+            0.07600f * color.X + 0.90834f * color.Y + 0.01566f * color.Z,
+            0.02840f * color.X + 0.13383f * color.Y + 0.83777f * color.Z);
+        Float3 a = v * (v + 0.0245786f) - 0.000090537f;
+        Float3 b = v * (0.983729f * v + 0.4329510f) + 0.238081f;
+        Float3 r = a / b;
+        Float3 m = new Float3(
+            1.60475f * r.X - 0.53108f * r.Y - 0.07367f * r.Z,
+            -0.10208f * r.X + 1.10813f * r.Y - 0.00605f * r.Z,
+            -0.00327f * r.X - 0.07276f * r.Y + 1.07602f * r.Z);
+        return Hlsl.Pow(Hlsl.Saturate(m), new Float3(1f / 2.2f, 1f / 2.2f, 1f / 2.2f));
+    }
+
+    private Float3 Ocean(Float2 fragment)
+    {
+        Float2 uv = (fragment / size * 2f - 1f) * new Float2(size.X / size.Y, 1f);
+        uv.Y = -uv.Y;
+        Float3 ray = Hlsl.Normalize(new Float3(uv.X, uv.Y, 1.5f));
+        // Look slightly down at the water.
+        float pitch = -0.17f;
+        ray = new Float3(ray.X, ray.Y * Hlsl.Cos(pitch) - ray.Z * Hlsl.Sin(pitch), ray.Y * Hlsl.Sin(pitch) + ray.Z * Hlsl.Cos(pitch));
+        Float3 result = ray.Y >= 0f ? Aces(SkyWithClouds(ray) * 2f) : Water(ray);
+        return result;
+    }
+
+    private Float3 Water(Float3 ray)
+    {
+        // EdgeDock: the bass raises the swell.
+        float depth = 1f + 0.9f * bass;
+        Float3 origin = new Float3(travel * 0.4f, 1.5f, 1f);
+        float highHit = Hlsl.Clamp(-origin.Y / ray.Y, -1f, 9991999f);
+        float lowHit = Hlsl.Clamp((-depth - origin.Y) / ray.Y, -1f, 9991999f);
+        Float3 start = origin + ray * highHit;
+        Float3 end = origin + ray * lowHit;
+        Float3 pos = start;
+        Float3 dir = Hlsl.Normalize(end - start);
+        float dist = Hlsl.Distance(start, origin);
+        float found = 0f;
+        for (int i = 0; i < 64; i++)
+        {
+            if (found < 0.5f)
+            {
+                float height = Waves(pos.XZ, 12) * depth - depth;
+                if (height + 0.01f > pos.Y)
+                {
+                    dist = Hlsl.Distance(pos, origin);
+                    found = 1f;
+                }
+                else pos += dir * (pos.Y - height);
+            }
+        }
+        Float3 hit = origin + ray * dist;
+        const float e = 0.01f;
+        float h = Waves(hit.XZ, 36) * depth;
+        Float3 a = new Float3(hit.X, h, hit.Z);
+        Float3 normal = Hlsl.Normalize(Hlsl.Cross(
+            a - new Float3(hit.X - e, Waves(hit.XZ - new Float2(e, 0f), 36) * depth, hit.Z),
+            a - new Float3(hit.X, Waves(hit.XZ + new Float2(0f, e), 36) * depth, hit.Z + e)));
+        normal = Hlsl.Lerp(normal, new Float3(0f, 1f, 0f), 0.8f * Hlsl.Min(1f, Hlsl.Sqrt(dist * 0.01f) * 1.1f));
+        float fresnel = 0.04f + 0.96f * Hlsl.Pow(1f - Hlsl.Max(0f, Hlsl.Dot(-normal, ray)), 5f);
+        Float3 reflected = Hlsl.Normalize(Hlsl.Reflect(ray, normal));
+        reflected.Y = Hlsl.Abs(reflected.Y);
+        Float3 reflection = SkyWithClouds(reflected);
+        Float3 scattering = new Float3(0.0293f, 0.0698f, 0.1717f) * 0.1f * (0.2f + (hit.Y + depth) / depth)
+                          + Gradient(0.3f) * 0.012f * bass;
+        return Aces((fresnel * reflection + scattering) * 2f);
     }
 
     private Float3 Gradient(float t)

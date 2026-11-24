@@ -18,7 +18,9 @@ internal enum WaveformView
     // Space and sky
     StarNest, Clouds, Cloudscape,
     // More crazy
-    HypnoCircles, HexPlasma, Lasers, Voronoi, Blob, Truchet, Spheres
+    HypnoCircles, HexPlasma, Lasers, Voronoi, Blob, Truchet, Spheres, Mandelbulb,
+    // 3D scenes and more space
+    Lattice, FractalCubes, Mandelbox, OrbField, FractalForest, BlackHole, Mountains, Ocean, NeonRings
 }
 
 /// <summary>The three-colour palettes every view draws with. Saved by name.</summary>
@@ -80,7 +82,7 @@ internal sealed record WaveformSettings(string? InputDeviceId, WaveformView View
 
     /// <summary>Views that show sound over time, so Speed applies to them.</summary>
     public static bool Scrolls(WaveformView view) =>
-        view is WaveformView.Scroll or WaveformView.CentreOut or WaveformView.Spectrogram or WaveformView.Ridges;
+        view is WaveformView.Scroll or WaveformView.CentreOut or WaveformView.Spectrogram or WaveformView.Ridges or WaveformView.OrbField;
 
     /// <summary>Degrees a second the colours turn for each colour cycle setting.</summary>
     public static double CycleDegreesPerSecond(WaveformColourCycle cycle) => cycle switch
@@ -389,16 +391,31 @@ internal readonly record struct WaveformPalette(WaveformRgb Low, WaveformRgb Mid
     /// The same palette turned around the colour wheel by <paramref name="degrees"/>, keeping
     /// each colour's brightness (the usual luma-preserving hue rotation), clamped to 0-1.
     /// </summary>
-    public WaveformPalette Rotate(double degrees)
+    public WaveformPalette Rotate(double degrees) => new(Turn(Low, degrees), Turn(Mid, degrees), Turn(High, degrees));
+
+    /// <summary>
+    /// Colours that follow the music: each colour belongs to a band (low to bass, mid to mids,
+    /// high to highs). When its band hits (0 to 1) the colour swings up to 30 degrees round the
+    /// colour wheel and lifts towards white, so the whole picture changes with what is playing.
+    /// </summary>
+    public WaveformPalette React(float bass, float mid, float high) =>
+        new(Lift(Low, bass, 1), Lift(Mid, mid, -1), Lift(High, high, 1));
+
+    private static WaveformRgb Lift(WaveformRgb colour, float drive, int direction)
+    {
+        drive = float.IsFinite(drive) ? Math.Clamp(drive, 0, 1) : 0;
+        return Turn(colour, 30 * drive * direction).Whiten(0.3f * drive * drive);
+    }
+
+    private static WaveformRgb Turn(WaveformRgb x, double degrees)
     {
         var radians = degrees * Math.PI / 180;
         var c = (float)Math.Cos(radians);
         var s = (float)Math.Sin(radians);
-        WaveformRgb Turn(WaveformRgb x) => new(
+        return new(
             Math.Clamp((0.299f + 0.701f * c + 0.168f * s) * x.R + (0.587f - 0.587f * c + 0.330f * s) * x.G + (0.114f - 0.114f * c - 0.497f * s) * x.B, 0, 1),
             Math.Clamp((0.299f - 0.299f * c - 0.328f * s) * x.R + (0.587f + 0.413f * c + 0.035f * s) * x.G + (0.114f - 0.114f * c + 0.292f * s) * x.B, 0, 1),
             Math.Clamp((0.299f - 0.299f * c + 1.250f * s) * x.R + (0.587f - 0.587f * c - 1.050f * s) * x.G + (0.114f + 0.886f * c - 0.203f * s) * x.B, 0, 1));
-        return new(Turn(Low), Turn(Mid), Turn(High));
     }
 
     private static WaveformPalette From((int R, int G, int B) low, (int R, int G, int B) mid, (int R, int G, int B) high) =>

@@ -242,7 +242,9 @@ internal readonly partial struct WaveformBarsShader(
         float slot = Hlsl.Min(p.X / size.X * count, count - 0.001f);
         float index = Hlsl.Floor(slot);
         float within = slot - index;
-        Float4 entry = Band(index);
+        // Each LED bar covers its share of all 96 bands (two each at 48 bars), showing the louder.
+        float firstBand = Hlsl.Floor(index * 96f / count);
+        Float4 entry = Hlsl.Max(Band(firstBand), Band(Hlsl.Min(firstBand + 1f, 95f)));
         float rise = (size.Y - p.Y) / size.Y / 0.94f;
         float segment = Hlsl.Floor(rise * segments);
         float inSegment = Hlsl.Frac(rise * segments);

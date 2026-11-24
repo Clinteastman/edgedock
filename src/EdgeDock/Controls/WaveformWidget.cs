@@ -32,7 +32,7 @@ internal sealed class WaveformWidget : UserControl
     private const double FadeSeconds = 0.8;
     private const int Trails = 6;
 
-    private enum Renderer { Scroll, Spectrogram, Ridges, Bars, Scope, Crt, Lissajous, Ring, Field, Demo, Crazy, Borrowed, Wild }
+    private enum Renderer { Scroll, Spectrogram, Ridges, Bars, Scope, Crt, Lissajous, Ring, Field, Demo, Crazy, Borrowed, Wild, Scene, Orbs, Cosmos }
 
     [Flags]
     private enum Needs { None = 0, History = 1, SpectrogramRows = 2, Spectrum = 4, Scope = 8, Trails = 16, Stereo = 32, Bands = 64, Pulse = 128 }
@@ -468,7 +468,18 @@ internal sealed class WaveformWidget : UserControl
         WaveformView.Voronoi => (Renderer.Wild, 2),
         WaveformView.Blob => (Renderer.Wild, 3),
         WaveformView.Truchet => (Renderer.Wild, 4),
-        _ => (Renderer.Wild, 5)
+        WaveformView.Spheres => (Renderer.Wild, 5),
+        WaveformView.Mandelbulb => (Renderer.Wild, 6),
+        WaveformView.Lattice => (Renderer.Scene, 0),
+        WaveformView.FractalCubes => (Renderer.Scene, 1),
+        WaveformView.Mandelbox => (Renderer.Scene, 2),
+        WaveformView.OrbField => (Renderer.Orbs, 0),
+        WaveformView.BlackHole => (Renderer.Cosmos, 0),
+        WaveformView.Mountains => (Renderer.Cosmos, 1),
+        WaveformView.NeonRings => (Renderer.Cosmos, 2),
+        WaveformView.FractalForest => (Renderer.Cosmos, 3),
+        WaveformView.Ocean => (Renderer.Borrowed, 4),
+        _ => (Renderer.Wild, 6)
     };
 
     private static Needs NeedsOf(WaveformView view) => Map(view) switch
@@ -484,7 +495,8 @@ internal sealed class WaveformWidget : UserControl
         (Renderer.Crt, 0) => Needs.Scope | Needs.Trails,
         (Renderer.Crt, _) or (Renderer.Lissajous, _) => Needs.Stereo,
         (Renderer.Crazy, _) => Needs.Spectrum | Needs.Scope,
-        (Renderer.Wild, _) => Needs.Spectrum,
+        (Renderer.Wild, _) or (Renderer.Scene, _) or (Renderer.Cosmos, _) => Needs.Spectrum,
+        (Renderer.Orbs, _) => Needs.Spectrum | Needs.SpectrogramRows,
         _ => Needs.None
     };
 
@@ -503,6 +515,9 @@ internal sealed class WaveformWidget : UserControl
             Renderer.Ring => WithTexture(new PixelShaderEffect<WaveformRingShader>(), DataTexture()),
             Renderer.Crazy => WithTexture(new PixelShaderEffect<WaveformCrazyShader>(), DataTexture()),
             Renderer.Wild => WithTexture(new PixelShaderEffect<WaveformWildShader>(), DataTexture()),
+            Renderer.Scene => WithTexture(new PixelShaderEffect<WaveformSceneShader>(), DataTexture()),
+            Renderer.Cosmos => WithTexture(new PixelShaderEffect<WaveformCosmosShader>(), DataTexture()),
+            Renderer.Orbs => WithTexture(new PixelShaderEffect<WaveformOrbShader>(), SpectrogramTexture()),
             Renderer.Field => new PixelShaderEffect<WaveformFieldShader>(),
             Renderer.Borrowed => new PixelShaderEffect<WaveformBorrowedShader>(),
             _ => new PixelShaderEffect<WaveformDemoShader>()
@@ -579,6 +594,8 @@ internal sealed class WaveformWidget : UserControl
         _hue = (_hue + seconds * WaveformSettings.CycleDegreesPerSecond(_settings.ColourCycle)) % 360;
         var palette = WaveformPalette.For(_settings.Look);
         if (_hue != 0) palette = palette.Rotate(_hue);
+        // Colours follow the music in every view: each look colour swings with its own band.
+        palette = palette.React(_drive.Bass, _drive.Mid, _drive.High);
 
         PrepareData(capture, needs, seconds);
         if (_history is not null) UploadHistory(_history.Written);
@@ -653,6 +670,20 @@ internal sealed class WaveformWidget : UserControl
             case Renderer.Borrowed:
                 ((PixelShaderEffect<WaveformBorrowedShader>)effect).ConstantBuffer = new WaveformBorrowedShader(
                     size, low, mid, high, (float)_time, (float)_travel, bass, _drive.Energy, _beat.Flash, style);
+                break;
+            case Renderer.Scene:
+                ((PixelShaderEffect<WaveformSceneShader>)effect).ConstantBuffer = new WaveformSceneShader(
+                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _drive.Energy, _beat.Flash, style);
+                break;
+            case Renderer.Cosmos:
+                ((PixelShaderEffect<WaveformCosmosShader>)effect).ConstantBuffer = new WaveformCosmosShader(
+                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _drive.Energy, _beat.Flash, style);
+                break;
+            case Renderer.Orbs:
+                // Rows sit a fixed time apart: the faster the speed, the closer in time.
+                ((PixelShaderEffect<WaveformOrbShader>)effect).ConstantBuffer = new WaveformOrbShader(
+                    size, low, mid, high, SpectrogramHead(), (float)Math.Clamp(900 / _settings.Speed, 2, 30), SpectrogramAvailable(),
+                    _drive.Energy, _beat.Flash);
                 break;
             case Renderer.Wild:
                 ((PixelShaderEffect<WaveformWildShader>)effect).ConstantBuffer = new WaveformWildShader(

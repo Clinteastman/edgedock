@@ -12,10 +12,13 @@ internal static class WaveformNames
             WaveformView.BandScopes, WaveformView.Lissajous]),
         ("Flashy", [WaveformView.Pulse, WaveformView.Club, WaveformView.Warp, WaveformView.Aurora]),
         ("Demo scene", [WaveformView.Plasma, WaveformView.Tunnel]),
-        ("Space and sky", [WaveformView.StarNest, WaveformView.Clouds, WaveformView.Cloudscape]),
+        ("3D scenes", [WaveformView.Spheres, WaveformView.Mandelbulb, WaveformView.Lattice, WaveformView.FractalCubes,
+            WaveformView.Mandelbox, WaveformView.OrbField, WaveformView.FractalForest]),
+        ("Space and sky", [WaveformView.StarNest, WaveformView.BlackHole, WaveformView.Clouds, WaveformView.Cloudscape,
+            WaveformView.Ocean, WaveformView.Mountains]),
         ("Crazy", [WaveformView.Kaleidoscope, WaveformView.Vortex, WaveformView.Glitch, WaveformView.Fire, WaveformView.Metaballs,
             WaveformView.Lightning, WaveformView.Fractal, WaveformView.HypnoCircles, WaveformView.HexPlasma, WaveformView.Lasers,
-            WaveformView.Voronoi, WaveformView.Blob, WaveformView.Truchet, WaveformView.Spheres])
+            WaveformView.Voronoi, WaveformView.Blob, WaveformView.Truchet, WaveformView.NeonRings])
     ];
 
     public static string View(WaveformView view) => view switch
@@ -58,6 +61,16 @@ internal static class WaveformNames
         WaveformView.Blob => "Liquid blob",
         WaveformView.Truchet => "Truchet",
         WaveformView.Spheres => "Liquid spheres",
+        WaveformView.Mandelbulb => "Mandelbulb",
+        WaveformView.Lattice => "Escher lattice",
+        WaveformView.FractalCubes => "Fractal cubes",
+        WaveformView.Mandelbox => "Mandelbox flight",
+        WaveformView.OrbField => "Orb field",
+        WaveformView.FractalForest => "Fractal forest",
+        WaveformView.BlackHole => "Black hole",
+        WaveformView.Mountains => "Spectrum mountains",
+        WaveformView.Ocean => "Ocean",
+        WaveformView.NeonRings => "Neon rings",
         _ => view.ToString()
     };
 

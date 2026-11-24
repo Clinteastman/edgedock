@@ -806,7 +806,7 @@ try
           WaveformSettings.Normalize(WaveformSettings.Default with { Speed = 1 }).Speed == WaveformSettings.MinimumSpeed &&
           WaveformSettings.Normalize(WaveformSettings.Default with { Speed = 164 }).Speed == 160 &&
           WaveformSettings.Normalize(WaveformSettings.Default with { CycleSeconds = 45 }).CycleSeconds == 30 &&
-          Enum.GetValues<WaveformView>().Count(WaveformSettings.Scrolls) == 4,
+          Enum.GetValues<WaveformView>().Count(WaveformSettings.Scrolls) == 5,
           "Waveform settings recover from bad values; speed is 30 to 600 in steps of 10; cycle times snap to the offered ones");
     store = new SettingsStore();
     var waveformChoice = new WaveformSettings(@"{0.0.1.00000000}.{abc}", WaveformView.CrtScope, WaveformLook.Vapor, 320, false,
