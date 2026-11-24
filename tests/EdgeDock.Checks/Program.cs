@@ -722,6 +722,17 @@ try
     var loudOutput = new float[WaveformScope.Points];
     WaveformScope.Prepare(Enumerable.Repeat(0.001f, 4096).ToArray(), loudOutput, 2000);
     Check(loudOutput.All(value => value == 1), "Oscilloscope gain is kept within full height, and a flat signal still draws");
+    // A slow bass note changes by under 0.004 between samples: the trigger must still find it.
+    var bassScope = new float[WaveformScope.Points];
+    var bassShifted = new float[WaveformScope.Points];
+    var bassWave = Sine(60, 0.5, 48000, 1, 0.2, phase: 0.7);
+    WaveformScope.Prepare(bassWave.AsSpan(0, 4096).ToArray(), bassScope, 1);
+    WaveformScope.Prepare(bassWave.AsSpan(211, 4096).ToArray(), bassShifted, 1);
+    var bassStart = WaveformScope.FindStart(bassWave.AsSpan(0, 4096).ToArray(), WaveformScope.Points, 1);
+    var noiseStart = WaveformScope.FindStart(Enumerable.Range(0, 4096).Select(i => (float)(Math.Sin(i * 1.7) * 0.004)).ToArray(), WaveformScope.Points, 1);
+    Check(bassStart != 4096 - WaveformScope.Points && Near(bassScope[0], 0, 0.005) && bassScope[10] > bassScope[0] &&
+          bassScope.Zip(bassShifted).All(pair => Near(pair.First, pair.Second, 0.01)) && noiseStart == 4096 - WaveformScope.Points,
+          "The scope locks onto a slow 60 Hz bass note, but not onto faint noise around zero");
 
     var pulse = new WaveformPulse();
     var burst = new float[WaveformSpectrum.Size];

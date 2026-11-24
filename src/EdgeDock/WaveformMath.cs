@@ -740,10 +740,15 @@ internal static class WaveformScope
     {
         if (recent.Length < points * 2) throw new ArgumentException("Pass at least twice as many recent samples as points.", nameof(recent));
         var latestStart = recent.Length - points;
-        // A little hysteresis so noise around zero does not count as a crossing.
+        // Hysteresis: a rising zero crossing counts only if the negative swing just before it went
+        // below the threshold, so noise wobbling around zero is ignored but slow bass notes are not.
         var threshold = 0.01f / Math.Max(1, gain);
         for (var i = latestStart; i > latestStart - points && i > 0; i--)
-            if (recent[i - 1] < -threshold && recent[i] >= 0) return i;
+        {
+            if (!(recent[i - 1] < 0 && recent[i] >= 0)) continue;
+            for (var j = i - 1; j >= 0 && recent[j] < 0; j--)
+                if (recent[j] < -threshold) return i;
+        }
         return latestStart;
     }
 
