@@ -23,6 +23,19 @@ internal readonly partial struct WaveformWildShader(
     [D2DResourceTextureIndex(0)]
     private readonly D2D1ResourceTexture2D<Float4> data;
 
+    /// <summary>
+    /// Turns a view ray by the camera's look-around (yaw in Z, pitch in W of the data texture's
+    /// row 1, first entry; both zero unless the view's camera is switched on).
+    /// </summary>
+    private Float3 Look(Float3 dir)
+    {
+        Float4 camera = data.Sample(new Float2(0.5f / 1024f, 0.1875f));
+        float cy = Hlsl.Cos(camera.Z), sy = Hlsl.Sin(camera.Z);
+        Float3 d = new Float3(dir.X * cy + dir.Z * sy, dir.Y, dir.Z * cy - dir.X * sy);
+        float cp = Hlsl.Cos(camera.W), sp = Hlsl.Sin(camera.W);
+        return new Float3(d.X, d.Y * cp + d.Z * sp, d.Z * cp - d.Y * sp);
+    }
+
     public Float4 Execute()
     {
         Float2 p = D2D.GetScenePosition().XY;
@@ -45,7 +58,7 @@ internal readonly partial struct WaveformWildShader(
         Float2 uv = (fragment - size * 0.5f) / size.Y;
         uv.Y = -uv.Y;
         Float3 origin = new Float3(0f, 1.2f, travel * 1.6f);
-        Float3 dir = Hlsl.Normalize(new Float3(uv.X * 1.1f, uv.Y * 0.9f + 0.12f, 1f));
+        Float3 dir = Look(Hlsl.Normalize(new Float3(uv.X * 1.1f, uv.Y * 0.9f + 0.12f, 1f)));
         Float3 sun = Hlsl.Normalize(new Float3(0.3f, 0.12f + 0.05f * Hlsl.Sin(time * 0.03f), 1f));
         float sunAmount = Hlsl.Max(Hlsl.Dot(dir, sun), 0f);
 
@@ -200,7 +213,7 @@ internal readonly partial struct WaveformWildShader(
         Float3 forward = Hlsl.Normalize(-origin);
         Float3 right = Hlsl.Normalize(new Float3(forward.Z, 0f, -forward.X));
         Float3 upward = new Float3(0f, 1f, 0f);
-        Float3 dir = Hlsl.Normalize(forward + uv.X * right + uv.Y * upward);
+        Float3 dir = Look(Hlsl.Normalize(forward + uv.X * right + uv.Y * upward));
         float t = 0f;
         float hit = 0f;
         for (int i = 0; i < 56; i++)
@@ -322,7 +335,7 @@ internal readonly partial struct WaveformWildShader(
         Float4 first = new Float4(Band(0f), Band(1f / 7f), Band(2f / 7f), Band(3f / 7f));
         Float4 second = new Float4(Band(4f / 7f), Band(5f / 7f), Band(6f / 7f), Band(1f));
         Float3 origin = new Float3(0f, 1.15f, -4.6f);
-        Float3 dir = Hlsl.Normalize(new Float3(uv.X * 1.05f, uv.Y * 1.05f - 0.16f, 1.6f));
+        Float3 dir = Look(Hlsl.Normalize(new Float3(uv.X * 1.05f, uv.Y * 1.05f - 0.16f, 1.6f)));
         Float3 sun = Hlsl.Normalize(new Float3(-0.55f, 0.6f, -0.45f));
         float sunAmount = Hlsl.Max(Hlsl.Dot(dir, sun), 0f);
         Float3 warm = Hlsl.Lerp(new Float3(1f, 0.7f, 0.42f), Gradient(0.8f), 0.5f);
@@ -425,12 +438,15 @@ internal readonly partial struct WaveformWildShader(
     /// <summary>Which of the three bulbs (-1 bass, 0 mids, 1 highs) a point belongs to.</summary>
     private static float BulbCell(Float3 p) => Hlsl.Clamp(Hlsl.Round(p.X / BulbSpacing), -1f, 1f);
 
-    /// <summary>Distance to the nearest of the three bulbs, each with its own power.</summary>
-    private static Float2 Bulbs(Float3 p, Float3 powers)
+    /// <summary>
+    /// Distance to one bulb (cell -1 bass, 0 mids, 1 highs) from a point in that bulb's own turned
+    /// frame. The cell is given, not worked out from the turned point: turning moves points near a
+    /// zone edge across it, which would measure the neighbour and cut slices out of the bulb.
+    /// </summary>
+    private static Float2 Bulbs(Float3 local, float cell, Float3 powers)
     {
-        float cell = BulbCell(p);
         float power = cell < -0.5f ? powers.X : (cell < 0.5f ? powers.Y : powers.Z);
-        return Bulb(p - new Float3(cell * BulbSpacing, 0f, 0f), power);
+        return Bulb(local, power);
     }
 
     private Float3 Mandelbulb(Float2 fragment)
@@ -447,7 +463,7 @@ internal readonly partial struct WaveformWildShader(
         float c = Hlsl.Cos(turn);
         float s = Hlsl.Sin(turn);
         Float3 origin = new Float3(0f, 0.25f * Hlsl.Sin(time * 0.07f), -5.2f);
-        Float3 dir = Hlsl.Normalize(new Float3(uv.X, uv.Y, 1.45f - 0.2f * bass));
+        Float3 dir = Look(Hlsl.Normalize(new Float3(uv.X, uv.Y, 1.45f - 0.2f * bass)));
         float t = 0f;
         float hit = 0f;
         float steps = 0f;
@@ -461,7 +477,7 @@ internal readonly partial struct WaveformWildShader(
                 float cell = BulbCell(p);
                 Float3 local = p - new Float3(cell * BulbSpacing, 0f, 0f);
                 local = new Float3(local.X * c - local.Z * s, local.Y, local.X * s + local.Z * c);
-                Float2 d = Bulbs(local + new Float3(cell * BulbSpacing, 0f, 0f), powers);
+                Float2 d = Bulbs(local, cell, powers);
                 trap = d.Y;
                 if (d.X < 0.0012f * (1f + t)) hit = 1f;
                 else
@@ -483,12 +499,12 @@ internal readonly partial struct WaveformWildShader(
         float bulb = BulbCell(hitPoint);
         Float3 centre = new Float3(bulb * BulbSpacing, 0f, 0f);
         Float3 position = hitPoint - centre;
-        position = new Float3(position.X * c - position.Z * s, position.Y, position.X * s + position.Z * c) + centre;
+        position = new Float3(position.X * c - position.Z * s, position.Y, position.X * s + position.Z * c);
         const float e = 0.0015f;
         Float3 normal = Hlsl.Normalize(new Float3(
-            Bulbs(position + new Float3(e, 0f, 0f), powers).X - Bulbs(position - new Float3(e, 0f, 0f), powers).X,
-            Bulbs(position + new Float3(0f, e, 0f), powers).X - Bulbs(position - new Float3(0f, e, 0f), powers).X,
-            Bulbs(position + new Float3(0f, 0f, e), powers).X - Bulbs(position - new Float3(0f, 0f, e), powers).X));
+            Bulbs(position + new Float3(e, 0f, 0f), bulb, powers).X - Bulbs(position - new Float3(e, 0f, 0f), bulb, powers).X,
+            Bulbs(position + new Float3(0f, e, 0f), bulb, powers).X - Bulbs(position - new Float3(0f, e, 0f), bulb, powers).X,
+            Bulbs(position + new Float3(0f, 0f, e), bulb, powers).X - Bulbs(position - new Float3(0f, 0f, e), bulb, powers).X));
         Float3 light = Hlsl.Normalize(new Float3(0.5f, 0.8f, -0.3f));
         light = new Float3(light.X * c - light.Z * s, light.Y, light.X * s + light.Z * c);
         float diffuse = Hlsl.Max(Hlsl.Dot(normal, light), 0f);

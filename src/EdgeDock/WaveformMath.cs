@@ -42,7 +42,8 @@ internal enum WaveformColourCycle { Off, Slow, Fast }
 /// views when empty), one every so many seconds, starting from <see cref="View"/>.
 /// </summary>
 internal sealed record WaveformSettings(string? InputDeviceId, WaveformView View, WaveformLook Look, double Speed, bool AutoLevel,
-    WaveformColourCycle ColourCycle = WaveformColourCycle.Off, IReadOnlyList<WaveformView>? CycleViews = null, int CycleSeconds = 0)
+    WaveformColourCycle ColourCycle = WaveformColourCycle.Off, IReadOnlyList<WaveformView>? CycleViews = null, int CycleSeconds = 0,
+    IReadOnlyDictionary<WaveformView, WaveformTweaks>? Tweaks = null)
 {
     public const double MinimumSpeed = 30;
     public const double MaximumSpeed = 600;
@@ -64,8 +65,24 @@ internal sealed record WaveformSettings(string? InputDeviceId, WaveformView View
 
     /// <summary>Same choices, comparing the cycle set by its contents.</summary>
     public bool SameAs(WaveformSettings? other) =>
-        other is not null && this with { CycleViews = null } == other with { CycleViews = null } &&
-        (CycleViews ?? []).SequenceEqual(other.CycleViews ?? []);
+        other is not null && this with { CycleViews = null, Tweaks = null } == other with { CycleViews = null, Tweaks = null } &&
+        (CycleViews ?? []).SequenceEqual(other.CycleViews ?? []) &&
+        (Tweaks ?? new Dictionary<WaveformView, WaveformTweaks>()).Count == (other.Tweaks ?? new Dictionary<WaveformView, WaveformTweaks>()).Count &&
+        (Tweaks ?? new Dictionary<WaveformView, WaveformTweaks>()).All(entry => other.TweaksFor(entry.Key) == entry.Value);
+
+    /// <summary>The slider settings for one view (the defaults if it has none).</summary>
+    public WaveformTweaks TweaksFor(WaveformView view) =>
+        Tweaks is not null && Tweaks.TryGetValue(view, out var tweaks) ? tweaks : WaveformTweaks.Default;
+
+    /// <summary>The same settings with one view's sliders changed (defaults are not stored).</summary>
+    public WaveformSettings WithTweaks(WaveformView view, WaveformTweaks tweaks)
+    {
+        var next = new Dictionary<WaveformView, WaveformTweaks>(Tweaks ?? new Dictionary<WaveformView, WaveformTweaks>());
+        tweaks = WaveformTweaks.Normalize(tweaks);
+        if (tweaks == WaveformTweaks.Default) next.Remove(view);
+        else next[view] = tweaks;
+        return this with { Tweaks = next };
+    }
 
     public static WaveformSettings Normalize(WaveformSettings? value)
     {
@@ -78,6 +95,11 @@ internal sealed record WaveformSettings(string? InputDeviceId, WaveformView View
             ColourCycle = Enum.IsDefined(value.ColourCycle) ? value.ColourCycle : Default.ColourCycle,
             CycleViews = (value.CycleViews ?? []).Where(Enum.IsDefined).Distinct().ToArray(),
             CycleSeconds = CycleChoices.Contains(value.CycleSeconds) ? value.CycleSeconds : CycleChoices.Where(choice => choice <= value.CycleSeconds).DefaultIfEmpty(0).Max(),
+            Tweaks = (value.Tweaks ?? new Dictionary<WaveformView, WaveformTweaks>())
+                .Where(entry => Enum.IsDefined(entry.Key) && entry.Value is not null)
+                .Select(entry => (entry.Key, Tweaks: WaveformTweaks.Normalize(entry.Value)))
+                .Where(entry => entry.Tweaks != WaveformTweaks.Default)
+                .ToDictionary(entry => entry.Key, entry => entry.Tweaks),
             // Whole steps of 10 logical pixels a second, as the Settings slider offers.
             Speed = double.IsFinite(value.Speed) ? Math.Round(Math.Clamp(value.Speed, MinimumSpeed, MaximumSpeed) / 10) * 10 : Default.Speed
         };
@@ -94,6 +116,37 @@ internal sealed record WaveformSettings(string? InputDeviceId, WaveformView View
         WaveformColourCycle.Fast => 60,
         _ => 0
     };
+}
+
+/// <summary>
+/// A view's sliders: how fast it moves, how hard it reacts to the music, brightness, a turn
+/// round the colour wheel (degrees), motion trails (0 none, up to 0.92 long), how strongly a
+/// second view blends over the top (0 none, 1 full) and whether the camera moves.
+/// </summary>
+internal sealed record WaveformTweaks(double Speed = 1, double Reactivity = 1, double Brightness = 1, double Hue = 0, double Trails = 0,
+    double Blend = 0, bool Camera = false)
+{
+    public const double MinimumSpeed = 0.25, MaximumSpeed = 3;
+    public const double MaximumReactivity = 2;
+    public const double MinimumBrightness = 0.4, MaximumBrightness = 2;
+    public const double MaximumTrails = 0.92;
+    public static WaveformTweaks Default { get; } = new();
+
+    public static WaveformTweaks Normalize(WaveformTweaks? value)
+    {
+        if (value is null) return Default;
+        static double Clamp(double x, double low, double high, double fallback) =>
+            double.IsFinite(x) ? Math.Round(Math.Clamp(x, low, high), 2) : fallback;
+        var hue = double.IsFinite(value.Hue) ? Math.Round(((value.Hue % 360) + 360) % 360) : 0;
+        return new WaveformTweaks(
+            Clamp(value.Speed, MinimumSpeed, MaximumSpeed, 1),
+            Clamp(value.Reactivity, 0, MaximumReactivity, 1),
+            Clamp(value.Brightness, MinimumBrightness, MaximumBrightness, 1),
+            hue,
+            Clamp(value.Trails, 0, MaximumTrails, 0),
+            Clamp(value.Blend, 0, 1, 0),
+            value.Camera);
+    }
 }
 
 /// <summary>One ~5 ms block of sound: loudest sample, RMS, and RMS of three frequency bands.</summary>

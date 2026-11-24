@@ -3,7 +3,9 @@ using ComputeSharp;
 using ComputeSharp.D2D1;
 using ComputeSharp.D2D1.Interop;
 using ComputeSharp.D2D1.WinUI;
+using System.Numerics;
 using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Effects;
 using Microsoft.Graphics.Canvas.UI.Xaml;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -21,7 +23,9 @@ namespace EdgeDock.Controls;
 /// (WaveformShaders.cs); each frame the processor only reads the new sound, updates a few small
 /// textures and issues a draw or two. Frames follow the compositor's own clock, so nothing spins
 /// between frames, and capture and drawing both stop whenever the widget is not on screen.
-/// Tap the widget for a touch bar: previous/next view and look, cycle, and a grid of all views.
+/// Tap the widget for a touch bar: previous/next view and look, cycle, a grid of all views and
+/// a Tweak panel of sliders saved per view (speed, reactivity, brightness, colour, trails, a
+/// second view blended over the top, and camera movement).
 /// </summary>
 internal sealed class WaveformWidget : UserControl
 {
@@ -93,7 +97,28 @@ internal sealed class WaveformWidget : UserControl
     private double _spectrogramCarry;
     private bool _spectrogramLive;
     private float _historyScale;
-    private double _time, _travel, _hue;
+    private double _time, _hue;
+    // The views' own clocks: they run at each view's Speed slider.
+    private double _shaderTime, _shaderTravel;
+    private double _cameraPhase, _cameraMix;
+    private float _cameraYaw, _cameraPitch;
+
+    // Tweak panel.
+    private readonly Border _tweakPanel = new();
+    private readonly TextBlock _tweakTitle = new();
+    private readonly List<(Slider Slider, TextBlock Value, Func<double, string> Format)> _sliders = [];
+    private Slider _speedSlider = null!, _reactSlider = null!, _brightSlider = null!, _hueSlider = null!, _trailSlider = null!, _blendSlider = null!;
+    private readonly ToggleButton _cameraButton = new();
+    private WaveformView _tweakView;
+    private bool _loadingTweaks;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _saveTimer;
+
+    // Trails: each frame is drawn off screen, then kept brighter of itself and the fading last one.
+    private CanvasRenderTarget? _frame, _trailPrevious, _trailNext;
+    private readonly ColorMatrixEffect _decay = new();
+    private readonly BlendEffect _lighten = new() { Mode = BlendEffectMode.Lighten };
+    private readonly Dictionary<Renderer, (ExposureEffect Bright, Transform2DEffect Move)> _finishes = [];
+    private float _scopeBoost = 1;
     private WaveformView? _fadingFrom;
     private double _fadeStarted, _viewSince;
     private double _fadeLength = FadeSeconds;
@@ -108,6 +133,7 @@ internal sealed class WaveformWidget : UserControl
         _root.Children.Add(_status);
         BuildBar();
         BuildPicker();
+        BuildTweaks();
         IsTabStop = false;
         Content = new Border
         {
@@ -155,13 +181,19 @@ internal sealed class WaveformWidget : UserControl
             _canvas.RemoveFromVisualTree();
             _canvas = null;
         }
+        DropTrails();
+        if (_saveTimer is { IsRunning: true })
+        {
+            _saveTimer.Stop();
+            _save?.Invoke(_settings);
+        }
     }
 
     /// <summary>Twice a second: follow visibility and hide an idle touch bar.</summary>
     private void Tick()
     {
         if (_canvas is null) return;
-        if (_bar.Visibility == Visibility.Visible && _picker.Visibility != Visibility.Visible &&
+        if (_bar.Visibility == Visibility.Visible && _picker.Visibility != Visibility.Visible && _tweakPanel.Visibility != Visibility.Visible &&
             DateTime.UtcNow - _barShownAt > TimeSpan.FromSeconds(6))
             _bar.Visibility = Visibility.Collapsed;
 
@@ -262,8 +294,9 @@ internal sealed class WaveformWidget : UserControl
     {
         // Taps on the bar's or grid's own controls are theirs.
         for (var element = args.OriginalSource as DependencyObject; element is not null; element = VisualTreeHelper.GetParent(element))
-            if (element == _bar || element == _picker) return;
-        if (_picker.Visibility == Visibility.Visible) _picker.Visibility = Visibility.Collapsed;
+            if (element == _bar || element == _picker || element == _tweakPanel) return;
+        if (_tweakPanel.Visibility == Visibility.Visible) CloseTweaks();
+        else if (_picker.Visibility == Visibility.Visible) _picker.Visibility = Visibility.Collapsed;
         else if (_bar.Visibility == Visibility.Visible) _bar.Visibility = Visibility.Collapsed;
         else
         {
@@ -336,6 +369,7 @@ internal sealed class WaveformWidget : UserControl
             UpdateBar();
             _picker.Visibility = Visibility.Visible;
         }, 120));
+        row.Children.Add(TouchButton("Tweak", "Tweak this view: sliders for speed, colour and more", (_, _) => OpenTweaks(), 96));
 
         _bar.Child = new ScrollViewer
         {
@@ -452,6 +486,142 @@ internal sealed class WaveformWidget : UserControl
 
         static Windows.UI.Color Dim(WaveformRgb c) =>
             Windows.UI.Color.FromArgb(255, (byte)(c.R * 200), (byte)(c.G * 200), (byte)(c.B * 200));
+    }
+
+    // ---------- Tweak panel ----------
+
+    private void BuildTweaks()
+    {
+        var content = new StackPanel { Spacing = 6, Padding = new Thickness(18, 12, 18, 12) };
+        _tweakTitle.FontSize = 20;
+        _tweakTitle.FontWeight = FontWeights.SemiBold;
+        _tweakTitle.TextTrimming = TextTrimming.CharacterEllipsis;
+        content.Children.Add(_tweakTitle);
+
+        _speedSlider = AddSlider(content, "Speed", WaveformTweaks.MinimumSpeed, WaveformTweaks.MaximumSpeed, 0.05, value => $"{value:0.00}×");
+        _reactSlider = AddSlider(content, "React", 0, WaveformTweaks.MaximumReactivity, 0.05, value => $"{value * 100:0}%");
+        _brightSlider = AddSlider(content, "Bright", WaveformTweaks.MinimumBrightness, WaveformTweaks.MaximumBrightness, 0.05, value => $"{value * 100:0}%");
+        _hueSlider = AddSlider(content, "Colour", 0, 355, 5, value => $"{value:0}°");
+        _trailSlider = AddSlider(content, "Trails", 0, WaveformTweaks.MaximumTrails, 0.02, value => $"{value * 100:0}%");
+        _blendSlider = AddSlider(content, "Blend over", 0, 1, 0.05, value => $"{value * 100:0}%");
+
+        _cameraButton.Content = new TextBlock { Text = "Camera move", FontSize = 18 };
+        _cameraButton.MinHeight = 52;
+        _cameraButton.MinWidth = 150;
+        _cameraButton.AllowFocusOnInteraction = false;
+        _cameraButton.CornerRadius = new CornerRadius(10);
+        AutomationProperties.SetName(_cameraButton, "Camera move");
+        _cameraButton.Click += (_, _) => TweaksChanged();
+
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 0) };
+        buttons.Children.Add(_cameraButton);
+        buttons.Children.Add(TouchButton("Reset", "Reset this view's sliders", (_, _) =>
+        {
+            LoadTweaks(WaveformTweaks.Default);
+            TweaksChanged();
+        }, 96));
+        buttons.Children.Add(TouchButton("Done", "Close the sliders", (_, _) => CloseTweaks(), 96));
+        content.Children.Add(buttons);
+
+        _tweakPanel.Child = new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        _tweakPanel.Background = BarBackground;
+        _tweakPanel.CornerRadius = new CornerRadius(16);
+        _tweakPanel.Margin = new Thickness(12);
+        _tweakPanel.Width = 520;
+        _tweakPanel.HorizontalAlignment = HorizontalAlignment.Left;
+        _tweakPanel.VerticalAlignment = VerticalAlignment.Stretch;
+        _tweakPanel.Visibility = Visibility.Collapsed;
+        _root.Children.Add(_tweakPanel);
+
+        _saveTimer = DispatcherQueue.CreateTimer();
+        _saveTimer.Interval = TimeSpan.FromMilliseconds(700);
+        _saveTimer.IsRepeating = false;
+        _saveTimer.Tick += (_, _) => _save?.Invoke(_settings);
+    }
+
+    private Slider AddSlider(Panel parent, string label, double minimum, double maximum, double step, Func<double, string> format)
+    {
+        var row = new Grid { ColumnSpacing = 10 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });
+        var name = new TextBlock { Text = label, FontSize = 17, VerticalAlignment = VerticalAlignment.Center };
+        var slider = new Slider
+        {
+            Minimum = minimum,
+            Maximum = maximum,
+            StepFrequency = step,
+            SmallChange = step,
+            MinHeight = 44,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsThumbToolTipEnabled = false,
+            // Dragging must not move keyboard focus away from whatever the user is typing into.
+            AllowFocusOnInteraction = false,
+            IsTabStop = false
+        };
+        AutomationProperties.SetName(slider, label);
+        var value = new TextBlock { FontSize = 16, VerticalAlignment = VerticalAlignment.Center, TextAlignment = TextAlignment.Right };
+        Grid.SetColumn(slider, 1);
+        Grid.SetColumn(value, 2);
+        row.Children.Add(name);
+        row.Children.Add(slider);
+        row.Children.Add(value);
+        parent.Children.Add(row);
+        _sliders.Add((slider, value, format));
+        slider.ValueChanged += (_, _) =>
+        {
+            value.Text = format(slider.Value);
+            if (!_loadingTweaks) TweaksChanged();
+        };
+        return slider;
+    }
+
+    private void OpenTweaks()
+    {
+        _tweakView = _settings.View;
+        _tweakTitle.Text = "Tweak: " + WaveformNames.View(_tweakView);
+        LoadTweaks(_settings.TweaksFor(_tweakView));
+        _bar.Visibility = Visibility.Collapsed;
+        _tweakPanel.Visibility = Visibility.Visible;
+    }
+
+    private void CloseTweaks()
+    {
+        _tweakPanel.Visibility = Visibility.Collapsed;
+        // Saves straight away rather than waiting for the pause after the last move.
+        if (_saveTimer is { IsRunning: true })
+        {
+            _saveTimer.Stop();
+            _save?.Invoke(_settings);
+        }
+        // The cycle's next step is timed from now.
+        _viewSince = _time;
+    }
+
+    private void LoadTweaks(WaveformTweaks tweaks)
+    {
+        _loadingTweaks = true;
+        _speedSlider.Value = tweaks.Speed;
+        _reactSlider.Value = tweaks.Reactivity;
+        _brightSlider.Value = tweaks.Brightness;
+        _hueSlider.Value = tweaks.Hue;
+        _trailSlider.Value = tweaks.Trails;
+        _blendSlider.Value = tweaks.Blend;
+        _cameraButton.IsChecked = tweaks.Camera;
+        foreach (var (slider, value, format) in _sliders) value.Text = format(slider.Value);
+        _loadingTweaks = false;
+    }
+
+    /// <summary>A slider moved: the view changes at once and the choice is saved after a short pause.</summary>
+    private void TweaksChanged()
+    {
+        var tweaks = new WaveformTweaks(_speedSlider.Value, _reactSlider.Value, _brightSlider.Value, _hueSlider.Value,
+            _trailSlider.Value, _blendSlider.Value, _cameraButton.IsChecked == true);
+        var next = WaveformSettings.Normalize(_settings.WithTweaks(_tweakView, tweaks));
+        if (next.SameAs(_settings)) return;
+        _settings = next;
+        _saveTimer?.Stop();
+        _saveTimer?.Start();
     }
 
     // ---------- Views ----------
@@ -604,7 +774,7 @@ internal sealed class WaveformWidget : UserControl
         _time += seconds;
 
         // Cycle mode: move on once this view has had its time.
-        if (_settings.CycleSeconds > 0 && _time - _viewSince >= _settings.CycleSeconds)
+        if (_settings.CycleSeconds > 0 && _time - _viewSince >= _settings.CycleSeconds && _tweakPanel.Visibility != Visibility.Visible)
             ChangeSettings(_settings with { View = _settings.NextInCycle(_settings.View) }, save: false);
 
         var fade = _fadingFrom is null ? 1 : Math.Clamp((_time - _fadeStarted) / _fadeLength, 0, 1);
@@ -631,13 +801,15 @@ internal sealed class WaveformWidget : UserControl
             if (_history is not null && _history.Add(bar, out var entry)) _newEntries.Add(entry);
         }
         _scrollPosition = _clock.Advance(seconds, _received);
-        // Motion surges with each hit: travel speeds up with the music's own dynamics.
-        _travel += seconds * (0.2 + 2.6 * _drive.Energy + 1.2 * _drive.Bass);
+        // Motion surges with each hit: travel speeds up with the music's own dynamics. The views'
+        // clocks run at the shown view's Speed slider, and its Reactivity scales the surge.
+        var tweaks = _settings.TweaksFor(_settings.View);
+        _shaderTime += seconds * tweaks.Speed;
+        _shaderTravel += seconds * tweaks.Speed * (0.2 + tweaks.Reactivity * (2.6 * _drive.Energy + 1.2 * _drive.Bass));
         _hue = (_hue + seconds * WaveformSettings.CycleDegreesPerSecond(_settings.ColourCycle)) % 360;
         var palette = WaveformPalette.For(_settings.Look);
         if (_hue != 0) palette = palette.Rotate(_hue);
-        // Colours follow the music in every view: each look colour swings with its own band.
-        palette = palette.React(_drive.Bass, _drive.Mid, _drive.High);
+        MoveCamera(tweaks, seconds);
 
         PrepareData(capture, needs, seconds);
         if (_history is not null) UploadHistory(_history.Written);
@@ -648,24 +820,115 @@ internal sealed class WaveformWidget : UserControl
         var ds = args.DrawingSession;
         ds.Units = CanvasUnits.Pixels;
         var area = new Windows.Foundation.Rect(0, 0, width, height);
+        var trails = _settings.TweaksFor(_settings.View).Trails * fade + (_fadingFrom is { } was ? _settings.TweaksFor(was).Trails * (1 - fade) : 0);
+        if (trails < 0.01)
+        {
+            DropTrails();
+            DrawViews(ds, size, area, palette, fade, scale);
+            return;
+        }
+        // Trails: draw the frame off screen, keep the brighter of it and the fading last frame.
+        EnsureTrails(sender, width, height);
+        using (var frame = _frame!.CreateDrawingSession())
+        {
+            frame.Clear(PanelColour);
+            DrawViews(frame, size, area, palette, fade, scale);
+        }
+        var keep = (float)trails;
+        _decay.Source = _trailPrevious;
+        _decay.ColorMatrix = new Matrix5x4 { M11 = keep, M22 = keep, M33 = keep, M44 = 1 };
+        _lighten.Background = _frame;
+        _lighten.Foreground = _decay;
+        using (var next = _trailNext!.CreateDrawingSession())
+        {
+            next.Blend = CanvasBlend.Copy;
+            next.DrawImage(_lighten);
+        }
+        ds.DrawImage(_trailNext);
+        (_trailPrevious, _trailNext) = (_trailNext, _trailPrevious);
+    }
+
+    private void DrawViews(CanvasDrawingSession ds, Float2 size, Windows.Foundation.Rect area, WaveformPalette palette, double fade, float scale)
+    {
         if (_fadingFrom is { } old) DrawView(ds, old, size, area, palette, (float)(1 - fade), scale);
         DrawView(ds, _settings.View, size, area, palette, (float)fade, scale);
     }
 
+    private void EnsureTrails(CanvasControl sender, float width, float height)
+    {
+        if (_frame is not null && _frame.Device == sender.Device && _frame.SizeInPixels.Width == (uint)width && _frame.SizeInPixels.Height == (uint)height)
+            return;
+        DropTrails();
+        _frame = new CanvasRenderTarget(sender, width, height, 96);
+        _trailPrevious = new CanvasRenderTarget(sender, width, height, 96);
+        _trailNext = new CanvasRenderTarget(sender, width, height, 96);
+        using var clear = _trailPrevious.CreateDrawingSession();
+        clear.Clear(PanelColour);
+    }
+
+    private void DropTrails()
+    {
+        if (_frame is null) return;
+        _decay.Source = null;
+        _lighten.Background = null;
+        _lighten.Foreground = null;
+        _frame.Dispose();
+        _trailPrevious?.Dispose();
+        _trailNext?.Dispose();
+        _frame = _trailPrevious = _trailNext = null;
+    }
+
+    /// <summary>
+    /// Camera movement (when the view's Camera button is on): a slow look-around that 3D views
+    /// turn their rays by, plus a gentle drift, zoom and roll of the whole picture. It eases in
+    /// and out over a second or so rather than jumping.
+    /// </summary>
+    private void MoveCamera(WaveformTweaks tweaks, double seconds)
+    {
+        _cameraMix = Math.Clamp(_cameraMix + (tweaks.Camera ? seconds : -seconds) * 0.8, 0, 1);
+        _cameraPhase += seconds * tweaks.Speed * (0.25 + 0.6 * _drive.Energy);
+        var mix = (float)_cameraMix;
+        var phase = (float)_cameraPhase;
+        _cameraYaw = mix * (0.34f * MathF.Sin(phase * 0.9f) + 0.1f * MathF.Sin(phase * 2.3f + 1f));
+        _cameraPitch = mix * (0.12f * MathF.Sin(phase * 0.7f + 2f) + 0.05f * _drive.Bass);
+    }
+
+    /// <summary>The picture's drift, zoom and roll for the camera, about the middle of the area.</summary>
+    private Matrix3x2 CameraMove(Float2 size)
+    {
+        var mix = (float)_cameraMix;
+        var phase = (float)_cameraPhase;
+        var zoom = 1 + mix * (0.1f + 0.06f * _drive.Bass);
+        var roll = mix * 0.022f * MathF.Sin(phase * 0.6f);
+        var drift = new Vector2(mix * 0.02f * size.X * MathF.Sin(phase * 0.5f), 0);
+        var middle = new Vector2(size.X / 2, size.Y / 2);
+        return Matrix3x2.CreateTranslation(-middle) * Matrix3x2.CreateScale(zoom) * Matrix3x2.CreateRotation(roll) *
+            Matrix3x2.CreateTranslation(middle + drift);
+    }
+
+    /// <param name="layer">The sliders of the view this one sits in (mashup, blend), or null for its own.</param>
     private void DrawView(CanvasDrawingSession ds, WaveformView view, Float2 size, Windows.Foundation.Rect area,
-        WaveformPalette palette, float opacity, float scale)
+        WaveformPalette palette, float opacity, float scale, WaveformTweaks? layer = null)
     {
         if (opacity <= 0.001f) return;
+        var tweaks = layer ?? _settings.TweaksFor(view);
         if (view == WaveformView.Mashup)
         {
-            DrawMashup(ds, size, area, palette, opacity, scale);
+            DrawMashup(ds, size, area, palette, opacity, scale, tweaks);
             return;
         }
+        // Reactivity scales how hard the music drives the view, colours included.
+        var react = (float)tweaks.Reactivity;
+        var (bass, mids, highs) = (MathF.Min(_drive.Bass * react, 1.5f), MathF.Min(_drive.Mid * react, 1.5f), MathF.Min(_drive.High * react, 1.5f));
+        var energy = MathF.Min(_drive.Energy * react, 1.5f);
+        var flash = MathF.Min(_beat.Flash * react, 1f);
+        if (tweaks.Hue != 0) palette = palette.Rotate(tweaks.Hue);
+        // Colours follow the music in every view: each look colour swings with its own band.
+        palette = palette.React(MathF.Min(bass, 1), MathF.Min(mids, 1), MathF.Min(highs, 1));
         var (renderer, style) = Map(view);
         var (low, mid, high) = (ToFloat3(palette.Low), ToFloat3(palette.Mid), ToFloat3(palette.High));
         var (lowWeight, midWeight, highWeight) = _levels.Weights;
         var current = ToFloat3(palette.Mix(lowWeight, midWeight, highWeight));
-        var (bass, mids, highs) = (_drive.Bass, _drive.Mid, _drive.High);
         var effect = Effect(renderer);
         switch (renderer)
         {
@@ -691,61 +954,90 @@ internal sealed class WaveformWidget : UserControl
             case Renderer.Bars:
                 ((PixelShaderEffect<WaveformBarsShader>)effect).ConstantBuffer = new WaveformBarsShader(
                     size, low, mid, high, current, style,
-                    style == 3 ? WaveformPulse.Bars : style == 4 ? 48 : WaveformSpectrum.Bands, _beat.Flash);
+                    style == 3 ? WaveformPulse.Bars : style == 4 ? 48 : WaveformSpectrum.Bands, flash);
                 break;
             case Renderer.Scope:
                 ((PixelShaderEffect<WaveformScopeShader>)effect).ConstantBuffer = new WaveformScopeShader(size, current, low, mid, high, style);
                 break;
             case Renderer.Crt:
-                ((PixelShaderEffect<WaveformCrtShader>)effect).ConstantBuffer = new WaveformCrtShader(size, mid, style, (float)_time);
+                ((PixelShaderEffect<WaveformCrtShader>)effect).ConstantBuffer = new WaveformCrtShader(size, mid, style, (float)_shaderTime);
                 break;
             case Renderer.Lissajous:
                 ((PixelShaderEffect<WaveformLissajousShader>)effect).ConstantBuffer = new WaveformLissajousShader(size, current, low);
                 break;
             case Renderer.Ring:
                 ((PixelShaderEffect<WaveformRingShader>)effect).ConstantBuffer = new WaveformRingShader(
-                    size, low, mid, high, current, bass, _beat.Flash, (float)_time);
+                    size, low, mid, high, current, bass, flash, (float)_shaderTime);
                 break;
             case Renderer.Field:
                 ((PixelShaderEffect<WaveformFieldShader>)effect).ConstantBuffer = new WaveformFieldShader(
-                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _drive.Energy, _beat.Flash, style);
+                    size, low, mid, high, (float)_shaderTime, (float)_shaderTravel, bass, mids, highs, energy, flash, style);
                 break;
             case Renderer.Demo:
                 ((PixelShaderEffect<WaveformDemoShader>)effect).ConstantBuffer = new WaveformDemoShader(
-                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _drive.Energy, _beat.Flash, MathF.Max(2, MathF.Round(3 * scale)));
+                    size, low, mid, high, (float)_shaderTime, (float)_shaderTravel, bass, mids, highs, energy, flash, MathF.Max(2, MathF.Round(3 * scale)));
                 break;
             case Renderer.Borrowed:
                 ((PixelShaderEffect<WaveformBorrowedShader>)effect).ConstantBuffer = new WaveformBorrowedShader(
-                    size, low, mid, high, (float)_time, (float)_travel, bass, _drive.Energy, _beat.Flash, style);
+                    size, low, mid, high, (float)_shaderTime, (float)_shaderTravel, bass, energy, flash, style);
                 break;
             case Renderer.Mania:
                 ((PixelShaderEffect<WaveformManiaShader>)effect).ConstantBuffer = new WaveformManiaShader(
-                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _drive.Energy, _beat.Flash, style);
+                    size, low, mid, high, (float)_shaderTime, (float)_shaderTravel, bass, mids, highs, energy, flash, style);
                 break;
             case Renderer.Scene:
                 ((PixelShaderEffect<WaveformSceneShader>)effect).ConstantBuffer = new WaveformSceneShader(
-                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _drive.Energy, _beat.Flash, style);
+                    size, low, mid, high, (float)_shaderTime, (float)_shaderTravel, bass, mids, highs, energy, flash, style);
                 break;
             case Renderer.Cosmos:
                 ((PixelShaderEffect<WaveformCosmosShader>)effect).ConstantBuffer = new WaveformCosmosShader(
-                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _drive.Energy, _beat.Flash, style);
+                    size, low, mid, high, (float)_shaderTime, (float)_shaderTravel, bass, mids, highs, energy, flash, style);
                 break;
             case Renderer.Orbs:
                 // Rows sit a fixed time apart: the faster the speed, the closer in time.
                 ((PixelShaderEffect<WaveformOrbShader>)effect).ConstantBuffer = new WaveformOrbShader(
                     size, low, mid, high, SpectrogramHead(), (float)Math.Clamp(900 / _settings.Speed, 2, 30), SpectrogramAvailable(),
-                    _drive.Energy, _beat.Flash);
+                    energy, flash);
                 break;
             case Renderer.Wild:
                 ((PixelShaderEffect<WaveformWildShader>)effect).ConstantBuffer = new WaveformWildShader(
-                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _drive.Energy, _beat.Flash, style);
+                    size, low, mid, high, (float)_shaderTime, (float)_shaderTravel, bass, mids, highs, energy, flash, style);
                 break;
             default:
                 ((PixelShaderEffect<WaveformCrazyShader>)effect).ConstantBuffer = new WaveformCrazyShader(
-                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _drive.Energy, _beat.Flash, style);
+                    size, low, mid, high, (float)_shaderTime, (float)_shaderTravel, bass, mids, highs, energy, flash, style);
                 break;
         }
-        ds.DrawImage(effect, 0, 0, area, opacity);
+        ds.DrawImage(Finish(renderer, effect, size, tweaks), 0, 0, area, opacity);
+
+        // Blend over: a second view from the mashup set added on top as light, pulsing with the bass.
+        if (layer is null && tweaks.Blend > 0.01)
+        {
+            AdvanceMashup();
+            var over = MashupPool[_mashTop] == view ? MashupPool[_mashBase] : MashupPool[_mashTop];
+            var rise = (float)Math.Clamp((_time - _mashSince) / 2.5, 0, 1);
+            ds.Blend = CanvasBlend.Add;
+            DrawView(ds, over, size, area, palette, opacity * rise * (float)tweaks.Blend * (0.45f + 0.4f * bass + 0.15f * flash), scale,
+                tweaks with { Blend = 0, Hue = 0 });
+            ds.Blend = CanvasBlend.SourceOver;
+        }
+    }
+
+    /// <summary>Brightness and camera movement on top of a view's shader, when either is in use.</summary>
+    private ICanvasImage Finish(Renderer renderer, ICanvasImage effect, Float2 size, WaveformTweaks tweaks)
+    {
+        var bright = Math.Abs(tweaks.Brightness - 1) > 0.01;
+        var moving = _cameraMix > 0.001;
+        if (!bright && !moving) return effect;
+        if (!_finishes.TryGetValue(renderer, out var finish))
+        {
+            var exposure = new ExposureEffect { Source = effect };
+            finish = (exposure, new Transform2DEffect { Source = exposure });
+            _finishes[renderer] = finish;
+        }
+        finish.Bright.Exposure = (float)Math.Log2(tweaks.Brightness);
+        finish.Move.TransformMatrix = moving ? CameraMove(size) : Matrix3x2.Identity;
+        return finish.Move;
     }
 
     /// <summary>Views that mix well; the mashup layers two of them with additive light.</summary>
@@ -763,20 +1055,28 @@ internal sealed class WaveformWidget : UserControl
     /// Two views at once: a base and a top layer added as light, the top pulsing with the bass.
     /// Every eight seconds the top becomes the base and a new top fades in.
     /// </summary>
-    private void DrawMashup(CanvasDrawingSession ds, Float2 size, Windows.Foundation.Rect area, WaveformPalette palette, float opacity, float scale)
+    private void DrawMashup(CanvasDrawingSession ds, Float2 size, Windows.Foundation.Rect area, WaveformPalette palette, float opacity, float scale,
+        WaveformTweaks tweaks)
     {
-        if (_time - _mashSince >= 8)
-        {
-            _mashSince = _time;
-            _mashBase = _mashTop;
-            _mashTop = (_mashTop + 1 + (int)(_beat.Flash * 7) + (int)(_time % 5)) % MashupPool.Length;
-            if (_mashTop == _mashBase) _mashTop = (_mashTop + 1) % MashupPool.Length;
-        }
+        AdvanceMashup();
         var rise = (float)Math.Clamp((_time - _mashSince) / 2.5, 0, 1);
-        DrawView(ds, MashupPool[_mashBase], size, area, palette, opacity, scale);
+        var layer = tweaks with { Blend = 0 };
+        DrawView(ds, MashupPool[_mashBase], size, area, palette, opacity, scale, layer);
         ds.Blend = CanvasBlend.Add;
-        DrawView(ds, MashupPool[_mashTop], size, area, palette, opacity * rise * (0.35f + 0.45f * _drive.Bass + 0.2f * _beat.Flash), scale);
+        // The Blend slider makes the top layer stronger still.
+        var strength = 0.35f + 0.45f * _drive.Bass + 0.2f * _beat.Flash;
+        DrawView(ds, MashupPool[_mashTop], size, area, palette, opacity * rise * strength * (1 + (float)tweaks.Blend), scale, layer);
         ds.Blend = CanvasBlend.SourceOver;
+    }
+
+    /// <summary>Every eight seconds the top layer becomes the base and a new top fades in.</summary>
+    private void AdvanceMashup()
+    {
+        if (_time - _mashSince < 8) return;
+        _mashSince = _time;
+        _mashBase = _mashTop;
+        _mashTop = (_mashTop + 1 + (int)(_beat.Flash * 7) + (int)(_time % 5)) % MashupPool.Length;
+        if (_mashTop == _mashBase) _mashTop = (_mashTop + 1) % MashupPool.Length;
     }
 
     /// <summary>Fills the live data texture with what this frame's views read.</summary>
@@ -789,6 +1089,19 @@ internal sealed class WaveformWidget : UserControl
         capture.Samples.CopyLatest(_recent, stereo ? _recentLeft : [], stereo ? _recentRight : []);
         var newest = _recent.AsSpan(_recent.Length - WaveformSpectrum.Size);
         Array.Clear(_data);
+        // The camera's look-around for 3D views (row 1, first entry, Z and W).
+        _data[Index(1, 0) + 2] = _cameraYaw;
+        _data[Index(1, 0) + 3] = _cameraPitch;
+        // Scopes fill their height: on top of the level gain, the shown stretch of wave is scaled
+        // so its loudest point reaches about nine tenths (quick to shrink, slower to grow).
+        if (needs.HasFlag(Needs.Scope) || needs.HasFlag(Needs.Bands) || stereo)
+        {
+            var loudest = 0f;
+            for (var i = Math.Max(0, _recent.Length - DataWidth * 2); i < _recent.Length; i++) loudest = MathF.Max(loudest, MathF.Abs(_recent[i]));
+            var target = Math.Clamp(0.9f / MathF.Max(loudest * gain, 0.02f), 1, 6);
+            _scopeBoost += (target - _scopeBoost) * (float)Math.Min(1, seconds * (target < _scopeBoost ? 12 : 1.5));
+            gain *= _scopeBoost;
+        }
 
         if (needs.HasFlag(Needs.Scope) || needs.HasFlag(Needs.Bands))
         {

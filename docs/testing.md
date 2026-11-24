@@ -43,6 +43,15 @@
   clock, one-view cycle saving every frame, the scope trigger on slow notes, LED
   bars covering the whole spectrum, and bands above a low-rate input's Nyquist
   frequency. 121 console checks pass.
+- Tweak panel (24 November 2026), Release on the Edge with music: the panel
+  opened from a real click on the touch bar; slider changes showed at once
+  (trails, blend over, brightness on the CRT vectorscope; camera move on the
+  Mandelbulb, which now looks around) and were saved under that view in
+  settings.json; Reset put the view back and removed its entry. CPU stayed
+  6-17% of one core. Also in this round: scopes scale their trace to fill the
+  height, more detailed fire, livelier fractal land. 124 console checks pass.
+  Known: with Camera move on, the Mandelbulb can show a straight seam where
+  rays cross from one bulb's zone into the next.
 - Stops when not seen: capture and drawing follow `WidgetVisibility` (minimised,
   scrolled away, collapsed while the screen schedule has blanked the display).
   Code path shared with PC activity; not re-measured for this widget.

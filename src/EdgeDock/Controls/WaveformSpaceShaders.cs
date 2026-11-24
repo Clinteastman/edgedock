@@ -93,6 +93,19 @@ internal readonly partial struct WaveformCosmosShader(
     [D2DResourceTextureIndex(0)]
     private readonly D2D1ResourceTexture2D<Float4> data;
 
+    /// <summary>
+    /// Turns a view ray by the camera's look-around (yaw in Z, pitch in W of the data texture's
+    /// row 1, first entry; both zero unless the view's camera is switched on).
+    /// </summary>
+    private Float3 Look(Float3 dir)
+    {
+        Float4 camera = data.Sample(new Float2(0.5f / 1024f, 0.1875f));
+        float cy = Hlsl.Cos(camera.Z), sy = Hlsl.Sin(camera.Z);
+        Float3 d = new Float3(dir.X * cy + dir.Z * sy, dir.Y, dir.Z * cy - dir.X * sy);
+        float cp = Hlsl.Cos(camera.W), sp = Hlsl.Sin(camera.W);
+        return new Float3(d.X, d.Y * cp + d.Z * sp, d.Z * cp - d.Y * sp);
+    }
+
     public Float4 Execute()
     {
         Float2 p = D2D.GetScenePosition().XY;
@@ -213,7 +226,7 @@ internal readonly partial struct WaveformCosmosShader(
         Float2 uv = (fragment - size * 0.5f) / size.Y;
         uv.Y = -uv.Y;
         Float3 origin = new Float3(0f, 1.6f, travel * 1.2f);
-        Float3 dir = Hlsl.Normalize(new Float3(uv.X, uv.Y - 0.12f, 1.25f));
+        Float3 dir = Look(Hlsl.Normalize(new Float3(uv.X, uv.Y - 0.12f, 1.25f)));
         Float3 sun = Hlsl.Normalize(new Float3(0.2f, 0.18f, 1f));
         float sunAmount = Hlsl.Max(Hlsl.Dot(dir, sun), 0f);
         Float3 horizon = Hlsl.Lerp(new Float3(1f, 0.55f, 0.35f), Gradient(0.9f), 0.45f);
@@ -315,7 +328,7 @@ internal readonly partial struct WaveformCosmosShader(
         Float2 uv = (fragment - size * 0.5f) / size.Y;
         uv.Y = -uv.Y;
         Float3 origin = new Float3(2f + Hlsl.Sin(time * 0.1f) * 0.8f, 1.3f, travel * 0.8f);
-        Float3 dir = Hlsl.Normalize(new Float3(uv.X, uv.Y + 0.05f, 1.1f));
+        Float3 dir = Look(Hlsl.Normalize(new Float3(uv.X, uv.Y + 0.05f, 1.1f)));
         float t = 0f;
         float hit = 0f;
         float steps = 0f;

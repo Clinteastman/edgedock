@@ -138,7 +138,13 @@ internal sealed class SettingsStore
                         waveform.AutoLevel ?? WaveformSettings.Default.AutoLevel,
                         Enum.TryParse<WaveformColourCycle>(waveform.ColourCycle, true, out var waveCycle) ? waveCycle : WaveformSettings.Default.ColourCycle,
                         waveform.CycleViews?.Select(name => Enum.TryParse<WaveformView>(name, true, out var view) ? view : (WaveformView)(-1)).ToArray(),
-                        waveform.CycleSeconds ?? 0)
+                        waveform.CycleSeconds ?? 0,
+                        waveform.Tweaks?
+                            .Where(entry => entry.Value is not null && Enum.TryParse<WaveformView>(entry.Key, true, out _))
+                            .ToDictionary(
+                                entry => Enum.Parse<WaveformView>(entry.Key, true),
+                                entry => new WaveformTweaks(entry.Value!.Speed ?? 1, entry.Value.Reactivity ?? 1, entry.Value.Brightness ?? 1,
+                                    entry.Value.Hue ?? 0, entry.Value.Trails ?? 0, entry.Value.Blend ?? 0, entry.Value.Camera ?? false)))
                     : null));
         }
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
@@ -222,7 +228,19 @@ internal sealed class SettingsStore
                     AutoLevel = settings.Waveform.AutoLevel,
                     ColourCycle = settings.Waveform.ColourCycle.ToString(),
                     CycleViews = settings.Waveform.CycleViews?.Select(view => view.ToString()).ToList(),
-                    CycleSeconds = settings.Waveform.CycleSeconds
+                    CycleSeconds = settings.Waveform.CycleSeconds,
+                    Tweaks = settings.Waveform.Tweaks?.ToDictionary(
+                        entry => entry.Key.ToString(),
+                        entry => (StoredTweaks?)new StoredTweaks
+                        {
+                            Speed = entry.Value.Speed,
+                            Reactivity = entry.Value.Reactivity,
+                            Brightness = entry.Value.Brightness,
+                            Hue = entry.Value.Hue,
+                            Trails = entry.Value.Trails,
+                            Blend = entry.Value.Blend,
+                            Camera = entry.Value.Camera
+                        })
                 },
                 WidgetSlots = settings.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
                 ExtensionData = _extensionData
@@ -498,6 +516,18 @@ internal sealed class SettingsStore
         public string? ColourCycle { get; set; }
         public List<string>? CycleViews { get; set; }
         public int? CycleSeconds { get; set; }
+        public Dictionary<string, StoredTweaks?>? Tweaks { get; set; }
+    }
+
+    private sealed class StoredTweaks
+    {
+        public double? Speed { get; set; }
+        public double? Reactivity { get; set; }
+        public double? Brightness { get; set; }
+        public double? Hue { get; set; }
+        public double? Trails { get; set; }
+        public double? Blend { get; set; }
+        public bool? Camera { get; set; }
     }
 
     private sealed class StoredWeather

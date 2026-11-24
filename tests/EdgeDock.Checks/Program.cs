@@ -829,6 +829,26 @@ try
     var waveformSaved = await new SettingsStore().LoadAsync();
     Check(waveformChoice.SameAs(waveformSaved.Waveform) && WaveformSettings.Default.SameAs(weatherSaved.Waveform),
           "Waveform source, view, look, colour cycle, speed, auto level and cycle set survive restart; older settings get the defaults");
+
+    var wild = WaveformTweaks.Normalize(new WaveformTweaks(99, -1, double.NaN, -30, 5, 2, true));
+    var tweaked = WaveformSettings.Default.WithTweaks(WaveformView.Fire, new WaveformTweaks(Speed: 2, Trails: 0.5, Camera: true));
+    Check(wild == new WaveformTweaks(WaveformTweaks.MaximumSpeed, 0, 1, 330, WaveformTweaks.MaximumTrails, 1, true) &&
+          WaveformTweaks.Normalize(null) == WaveformTweaks.Default &&
+          tweaked.TweaksFor(WaveformView.Fire).Speed == 2 && tweaked.TweaksFor(WaveformView.Plasma) == WaveformTweaks.Default &&
+          !tweaked.SameAs(WaveformSettings.Default) &&
+          tweaked.WithTweaks(WaveformView.Fire, WaveformTweaks.Default).SameAs(WaveformSettings.Default) &&
+          tweaked.WithTweaks(WaveformView.Fire, WaveformTweaks.Default).Tweaks!.Count == 0 &&
+          WaveformSettings.Normalize(WaveformSettings.Default with
+          {
+              Tweaks = new Dictionary<WaveformView, WaveformTweaks> { [(WaveformView)99] = new(Speed: 2), [WaveformView.Ocean] = WaveformTweaks.Default }
+          }).Tweaks!.Count == 0,
+          "View sliders clamp to their ranges, are kept per view, and a view put back to the defaults or an unknown view is not stored");
+    var tweakedChoice = waveformChoice.WithTweaks(WaveformView.CrtScope, new WaveformTweaks(0.5, 1.5, 1.2, 90, 0.3, 0.4, true))
+        .WithTweaks(WaveformView.Ocean, new WaveformTweaks(Hue: 180));
+    await store.SaveAsync(weatherSaved with { Waveform = tweakedChoice });
+    var tweakedSaved = await new SettingsStore().LoadAsync();
+    Check(tweakedChoice.SameAs(tweakedSaved.Waveform) && !waveformChoice.SameAs(tweakedSaved.Waveform),
+          "Each view's sliders survive restart");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally

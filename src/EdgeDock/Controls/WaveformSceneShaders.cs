@@ -24,6 +24,19 @@ internal readonly partial struct WaveformSceneShader(
     [D2DResourceTextureIndex(0)]
     private readonly D2D1ResourceTexture2D<Float4> data;
 
+    /// <summary>
+    /// Turns a view ray by the camera's look-around (yaw in Z, pitch in W of the data texture's
+    /// row 1, first entry; both zero unless the view's camera is switched on).
+    /// </summary>
+    private Float3 Look(Float3 dir)
+    {
+        Float4 camera = data.Sample(new Float2(0.5f / 1024f, 0.1875f));
+        float cy = Hlsl.Cos(camera.Z), sy = Hlsl.Sin(camera.Z);
+        Float3 d = new Float3(dir.X * cy + dir.Z * sy, dir.Y, dir.Z * cy - dir.X * sy);
+        float cp = Hlsl.Cos(camera.W), sp = Hlsl.Sin(camera.W);
+        return new Float3(d.X, d.Y * cp + d.Z * sp, d.Z * cp - d.Y * sp);
+    }
+
     public Float4 Execute()
     {
         Float2 p = D2D.GetScenePosition().XY;
@@ -64,7 +77,7 @@ internal readonly partial struct WaveformSceneShader(
         Float3 origin = new Float3(1f + Hlsl.Sin(time * 0.13f) * 0.6f, 1f + Hlsl.Cos(time * 0.11f) * 0.6f, travel * 1.4f);
         float yaw = Hlsl.Sin(time * 0.07f) * 0.6f;
         float pitch = Hlsl.Sin(time * 0.05f) * 0.3f;
-        Float3 dir = Hlsl.Normalize(new Float3(uv.X, uv.Y, 1.2f));
+        Float3 dir = Look(Hlsl.Normalize(new Float3(uv.X, uv.Y, 1.2f)));
         dir = new Float3(dir.X * Hlsl.Cos(yaw) + dir.Z * Hlsl.Sin(yaw), dir.Y, -dir.X * Hlsl.Sin(yaw) + dir.Z * Hlsl.Cos(yaw));
         dir = new Float3(dir.X, dir.Y * Hlsl.Cos(pitch) - dir.Z * Hlsl.Sin(pitch), dir.Y * Hlsl.Sin(pitch) + dir.Z * Hlsl.Cos(pitch));
 
@@ -138,7 +151,7 @@ internal readonly partial struct WaveformSceneShader(
         float spin = travel * 0.18f;
         float tilt = 0.5f + 0.25f * Hlsl.Sin(time * 0.21f);
         Float3 origin = new Float3(0f, 0f, -4.2f + 0.4f * bass);
-        Float3 dir = Hlsl.Normalize(new Float3(uv.X, uv.Y, 1.5f));
+        Float3 dir = Look(Hlsl.Normalize(new Float3(uv.X, uv.Y, 1.5f)));
         float t = 0f;
         float hit = 0f;
         float shaped = 0f;
@@ -236,7 +249,7 @@ internal readonly partial struct WaveformSceneShader(
         Float3 forward = Hlsl.Normalize(-origin);
         Float3 right = Hlsl.Normalize(Hlsl.Cross(new Float3(0f, 1f, 0f), forward));
         Float3 upward = Hlsl.Cross(forward, right);
-        Float3 dir = Hlsl.Normalize(forward * 1.6f + uv.X * right + uv.Y * upward);
+        Float3 dir = Look(Hlsl.Normalize(forward * 1.6f + uv.X * right + uv.Y * upward));
         float t = 0f;
         float hit = 0f;
         float steps = 0f;

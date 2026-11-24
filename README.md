@@ -85,7 +85,11 @@ contribute. This is not a signed installer or a finished consumer release.
   Space, Classic meters, Everything), and a cycle mode that melts from view to
   view through a chosen set
   every 10 seconds to 5 minutes. Tap the widget for a touch bar (previous/next
-  view and look, cycle, all views and playlists); choices are saved. Every
+  view and look, cycle, all views and playlists); choices are saved. Its
+  Tweak panel has sliders saved per view: speed, reactivity, brightness,
+  colour shift, motion trails, a second view blended over the top, and a
+  Camera move button (3D views look around; every view drifts, zooms and
+  rolls gently). Every
   view is a GPU shader; see [testing notes](docs/testing.md) for CPU figures.
   Limits: apps that use WASAPI exclusive mode (some DAWs and audiophile players)
   bypass the Windows mixer, so their sound cannot be shown while they hold the

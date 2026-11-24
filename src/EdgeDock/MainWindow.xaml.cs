@@ -625,7 +625,8 @@ public sealed partial class MainWindow : Window
             SuppressedSince: SinceFor(suppressedIds),
             Weather: WeatherPlaceSelector.SelectedItem is ComboBoxItem { Tag: WeatherLocation place } ? place : null,
             Fahrenheit: FahrenheitToggle.IsOn,
-            Waveform: WaveformEditor.Read()));
+            // The widget's own slider settings are kept: the Settings page does not edit them.
+            Waveform: WaveformEditor.Read() with { Tweaks = _waveform.Tweaks }));
         // From here the save is committed: Cancel and closing Settings wait for it.
         _persistingSave = true;
         if (!await PersistAsync(settings)) return;

@@ -367,7 +367,7 @@ internal readonly partial struct WaveformLissajousShader(Float2 size, Float3 cur
     {
         Float2 p = D2D.GetScenePosition().XY;
         Float2 centre = size * 0.5f;
-        float up = size.Y * 0.46f;
+        float up = size.Y * 0.36f;
         float across = Hlsl.Min(size.X * 0.46f, up * 2.4f);
         float nearest = 1e6f;
         float density = 0f;
@@ -635,7 +635,7 @@ internal readonly partial struct WaveformCrtShader(Float2 size, Float3 phosphor,
     {
         float perPixel = 1024f / size.X;
         float x = p.X * perPixel;
-        float amplitude = size.Y * 0.38f;
+        float amplitude = size.Y * 0.44f;
         float middle = size.Y * 0.5f;
         float y0 = middle - Sample(x - perPixel, row) * amplitude;
         float y1 = middle - Sample(x, row) * amplitude;
@@ -652,7 +652,7 @@ internal readonly partial struct WaveformCrtShader(Float2 size, Float3 phosphor,
     private Float3 Vector(Float2 p)
     {
         Float2 middle = size * 0.5f;
-        float up = size.Y * 0.4f;
+        float up = size.Y * 0.32f;
         float across = Hlsl.Min(size.X * 0.42f, up * 2.2f);
         float nearest = 1e6f;
         Float2 previous = Point(0, middle, up, across);
@@ -809,16 +809,62 @@ internal readonly partial struct WaveformCrazyShader(
 
     private Float3 Fire(Float2 p)
     {
+        // Flames tall where their band is loud (bass in the middle, highs at the sides). The field
+        // is pushed about by slower turbulence so tongues curl and lick, with fine flicker on top,
+        // sparks rising with the highs, a hot bed at the bottom and faint smoke above.
         Float2 uv = p / size.Y;
         float height = 1f - p.Y / size.Y;
-        float n = Noise(uv * new Float2(4f, 3f) + new Float2(0f, time * 1.6f)) * 0.55f
-                + Noise(uv * new Float2(9f, 7f) + new Float2(0f, time * 2.7f)) * 0.3f
-                + Noise(uv * new Float2(19f, 15f) + new Float2(0f, time * 4.1f)) * 0.15f;
         float column = Band(Hlsl.Saturate(Hlsl.Abs(p.X / size.X - 0.5f) * 2f));
-        float heat = Hlsl.Saturate(n * 1.5f - height * (1.6f - column * 0.9f - bass * 0.9f) + 0.15f);
-        Float3 rgb = heat < 0.5f ? Hlsl.Lerp(new Float3(0f, 0f, 0f), Gradient(0f), heat * 2f)
-                                 : Hlsl.Lerp(Gradient(0f), Hlsl.Lerp(Gradient(1f), new Float3(1f, 1f, 1f), 0.5f), heat * 2f - 1f);
-        return rgb * Hlsl.Saturate(heat * 3f);
+        float rise = time * (1.3f + 1.4f * energy);
+        Float2 q = uv * new Float2(3.2f, 2.1f) + new Float2(0f, rise);
+        Float2 warp = new Float2(Fbm(q * 0.7f + new Float2(1.7f, -rise * 0.3f)), Fbm(q * 0.7f + new Float2(5.2f, 1.3f))) - 0.5f;
+        float body = Fbm(q + warp * (1.3f + 1.1f * bass));
+        float flicker = Noise(uv * new Float2(28f, 16f) + new Float2(0f, rise * 2.6f) + warp * 4f);
+        float flame = body * 1.3f + flicker * 0.25f;
+        float reach = 1.6f - column * 1.05f - bass * 0.75f;
+        float heat = Hlsl.Saturate(flame * 1.7f - height * reach * 1.3f - 0.05f);
+        heat = heat * heat * (3f - 2f * heat);
+
+        // Smoky dark red at the edges, the look's colours through the body, white-hot in the core.
+        Float3 edge = Gradient(0f) * 0.55f;
+        Float3 core = Hlsl.Lerp(Gradient(1f), new Float3(1f, 1f, 1f), 0.65f);
+        Float3 rgb = heat < 0.45f ? Hlsl.Lerp(new Float3(0f, 0f, 0f), edge, heat / 0.45f)
+                   : (heat < 0.8f ? Hlsl.Lerp(edge, Gradient(0.5f), (heat - 0.45f) / 0.35f)
+                                  : Hlsl.Lerp(Gradient(0.5f), core, (heat - 0.8f) / 0.2f));
+        rgb *= Hlsl.Saturate(heat * 2.5f) * (0.75f + 0.5f * energy + 0.3f * flash);
+
+        // A glowing bed of embers along the bottom.
+        float bed = Hlsl.Exp(-height * 14f) * (0.35f + 0.9f * column + 0.4f * bass) * (0.6f + 0.4f * flicker);
+        rgb += Gradient(0.25f) * bed;
+
+        // Sparks: small bright points drifting up and sideways, more and brighter with the highs.
+        float cellSize = size.Y * 0.045f;
+        Float2 drift = new Float2(p.X + Hlsl.Sin(p.Y * 0.012f + time * 1.3f) * cellSize * 0.8f, p.Y + time * size.Y * (0.22f + 0.35f * energy));
+        Float2 cell = Hlsl.Floor(drift / cellSize);
+        float h = Hash(cell.X * 17.31f + cell.Y * 113.17f);
+        Float2 centre = (cell + 0.5f + (new Float2(Hash(h * 31.7f), Hash(h * 57.3f)) - 0.5f) * 0.7f) * cellSize;
+        float spark = Hlsl.Step(0.9f - 0.14f * highs, h) * Hlsl.Exp(-Hlsl.Length(drift - centre) / (1.2f + 2.2f * highs))
+                    * Hlsl.Saturate(1.1f - height) * (0.5f + 0.5f * Hlsl.Sin(time * 9f + h * 40f));
+        rgb += core * spark * (0.8f + highs);
+
+        // Faint smoke curling above the flames.
+        float smoke = Fbm(q * 0.6f + warp * 2f - new Float2(0f, rise * 0.4f)) * Hlsl.Saturate(height * 1.4f - 0.35f) * (1f - heat);
+        rgb += Gradient(0.1f) * smoke * 0.07f;
+        return rgb;
+    }
+
+    /// <summary>Five octaves of value noise.</summary>
+    private static float Fbm(Float2 x)
+    {
+        float sum = 0f;
+        float amplitude = 0.5f;
+        for (int octave = 0; octave < 5; octave++)
+        {
+            sum += Noise(x) * amplitude;
+            x = new Float2(x.X * 1.6f + x.Y * 1.2f, x.Y * 1.6f - x.X * 1.2f);
+            amplitude *= 0.5f;
+        }
+        return sum / 0.97f;
     }
 
     private Float3 Metaballs(Float2 p)

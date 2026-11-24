@@ -26,6 +26,19 @@ internal readonly partial struct WaveformManiaShader(
     [D2DResourceTextureIndex(0)]
     private readonly D2D1ResourceTexture2D<Float4> data;
 
+    /// <summary>
+    /// Turns a view ray by the camera's look-around (yaw in Z, pitch in W of the data texture's
+    /// row 1, first entry; both zero unless the view's camera is switched on).
+    /// </summary>
+    private Float3 Look(Float3 dir)
+    {
+        Float4 camera = data.Sample(new Float2(0.5f / 1024f, 0.1875f));
+        float cy = Hlsl.Cos(camera.Z), sy = Hlsl.Sin(camera.Z);
+        Float3 d = new Float3(dir.X * cy + dir.Z * sy, dir.Y, dir.Z * cy - dir.X * sy);
+        float cp = Hlsl.Cos(camera.W), sp = Hlsl.Sin(camera.W);
+        return new Float3(d.X, d.Y * cp + d.Z * sp, d.Z * cp - d.Y * sp);
+    }
+
     public Float4 Execute()
     {
         Float2 p = D2D.GetScenePosition().XY;
@@ -213,7 +226,7 @@ internal readonly partial struct WaveformManiaShader(
         Float2 uv = (fragment - size * 0.5f) / size.Y;
         uv.Y = -uv.Y;
         Float3 origin = new Float3(0.5f + Hlsl.Sin(time * 0.3f) * 0.3f, 3.4f + 0.4f * Hlsl.Sin(time * 0.2f), travel * 3f);
-        Float3 dir = Hlsl.Normalize(new Float3(uv.X, uv.Y - 0.45f, 1.1f));
+        Float3 dir = Look(Hlsl.Normalize(new Float3(uv.X, uv.Y - 0.45f, 1.1f)));
         float t = 0f;
         float hit = 0f;
         for (int i = 0; i < 110; i++)
@@ -324,7 +337,7 @@ internal readonly partial struct WaveformManiaShader(
         Float3 forward = Hlsl.Normalize(-origin);
         Float3 right = Hlsl.Normalize(new Float3(forward.Z, 0f, -forward.X));
         Float3 upward = Hlsl.Cross(right, forward);
-        Float3 dir = Hlsl.Normalize(forward * 1.4f + uv.X * right + uv.Y * upward);
+        Float3 dir = Look(Hlsl.Normalize(forward * 1.4f + uv.X * right + uv.Y * upward));
         float t = 0f;
         float hit = 0f;
         float glow = 0f;
@@ -371,7 +384,7 @@ internal readonly partial struct WaveformManiaShader(
         Float2 uv = (fragment - size * 0.5f) / size.Y;
         uv.Y = -uv.Y;
         Float3 origin = new Float3(0f, 0.3f, -6f);
-        Float3 dir = Hlsl.Normalize(new Float3(uv.X, uv.Y - 0.05f, 1.5f));
+        Float3 dir = Look(Hlsl.Normalize(new Float3(uv.X, uv.Y - 0.05f, 1.5f)));
         Float3 levels = new Float3(Spectrum(0.1f, first, second), Spectrum(0.5f, first, second), Spectrum(0.9f, first, second));
         Float3 rgb = new Float3(0f, 0f, 0f);
         float t = 0f;
@@ -404,7 +417,7 @@ internal readonly partial struct WaveformManiaShader(
         float previous = 0f;
         for (int i = 0; i < 10; i++)
         {
-            p = Hlsl.Abs(p) / Hlsl.Dot(p, p) - new Float3(0.55f + 0.08f * bass, 0.6f, 0.56f + 0.05f * mids);
+            p = Hlsl.Abs(p) / Hlsl.Dot(p, p) - new Float3(0.55f + 0.16f * bass, 0.6f + 0.05f * highs, 0.56f + 0.12f * mids);
             float length = Hlsl.Length(p);
             accumulated += Hlsl.Abs(length - previous);
             previous = length;
@@ -418,8 +431,8 @@ internal readonly partial struct WaveformManiaShader(
         // fractal, and the ground glows with the band beneath it.
         Float2 uv = (fragment - size * 0.5f) / size.Y;
         uv.Y = -uv.Y;
-        Float3 origin = new Float3(Hlsl.Sin(time * 0.1f) * 0.5f, 1.1f, travel * 0.6f);
-        Float3 dir = Hlsl.Normalize(new Float3(uv.X, uv.Y - 0.3f, 1.2f));
+        Float3 origin = new Float3(Hlsl.Sin(time * 0.1f) * 0.5f, 1.15f + 0.15f * bass, travel * 1.6f);
+        Float3 dir = Look(Hlsl.Normalize(new Float3(uv.X, uv.Y - 0.3f, 1.2f)));
         Float3 sky = Hlsl.Lerp(Gradient(0.85f) * 0.5f, Gradient(0.1f) * 0.12f, Hlsl.Saturate(uv.Y * 2f + 0.3f));
         float t = 0.2f;
         float hit = 0f;
@@ -429,7 +442,7 @@ internal readonly partial struct WaveformManiaShader(
             if (hit < 0.5f && t < 12f)
             {
                 Float3 p = origin + dir * t;
-                height = (1f - Hlsl.Exp(-Kaliset(p.XZ * 0.25f) * 0.035f)) * 1.1f - 0.2f;
+                height = (1f - Hlsl.Exp(-Kaliset(p.XZ * 0.25f) * 0.035f)) * (1.1f + 0.7f * bass) - 0.2f;
                 float gap = p.Y - height;
                 if (gap < 0.004f * t) hit = 1f;
                 else t += Hlsl.Max(gap * 0.5f, 0.02f);
@@ -439,9 +452,10 @@ internal readonly partial struct WaveformManiaShader(
         Float3 position = origin + dir * t;
         float band = Hlsl.Saturate(position.X / 6f + 0.5f);
         float level = Spectrum(band, first, second);
-        Float3 colour = Gradient(Hlsl.Saturate(height * 1.1f)) * (0.35f + 0.65f * height) + Gradient(band) * level * level * 0.5f;
-        float fog = Hlsl.Exp(-t * 0.18f);
-        return Hlsl.Lerp(sky, colour * (0.7f + 0.5f * energy), fog);
+        Float3 colour = Gradient(Hlsl.Saturate(height * 1.1f)) * (0.3f + 0.7f * height) * (0.5f + 0.9f * level)
+            + Gradient(band) * level * level * Hlsl.Saturate(height * 1.5f) * 1.2f + new Float3(flash, flash, flash) * 0.15f;
+        float fog = Hlsl.Exp(-t * 0.1f);
+        return Hlsl.Lerp(sky, colour * (0.6f + 0.7f * energy), fog);
     }
 
     /// <summary>A spectrum level at 0 (bass) to 1 (highs). Read before any varying loop.</summary>
