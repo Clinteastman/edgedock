@@ -14,6 +14,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Windows.System;
 
 namespace EdgeDock.Controls;
 
@@ -111,6 +112,7 @@ internal sealed class WaveformWidget : UserControl
     private readonly List<(Slider Slider, TextBlock Value, Func<double, string> Format)> _sliders = [];
     private Slider _speedSlider = null!, _reactSlider = null!, _brightSlider = null!, _hueSlider = null!, _trailSlider = null!, _blendSlider = null!;
     private readonly ToggleButton _cameraButton = new();
+    private Control? _barFirst, _pickerFirst;
     private readonly List<(Grid Row, ColumnDefinition Label, ColumnDefinition Value, Slider Slider)> _sliderRows = [];
     private bool? _tweaksNarrow;
     private WaveformView _tweakView;
@@ -139,7 +141,12 @@ internal sealed class WaveformWidget : UserControl
         BuildBar();
         BuildPicker();
         BuildTweaks();
-        IsTabStop = false;
+        // Keyboard users reach the widget with Tab; Enter or Space opens the touch bar and Escape
+        // closes it. Taps never move keyboard focus here, so typing elsewhere is not disturbed.
+        IsTabStop = true;
+        AllowFocusOnInteraction = false;
+        UseSystemFocusVisuals = true;
+        KeyDown += Widget_KeyDown;
         Content = new Border
         {
             CornerRadius = new CornerRadius(14),
@@ -197,7 +204,7 @@ internal sealed class WaveformWidget : UserControl
         if (_canvas is null) return;
         FollowSaved();
         if (_bar.Visibility == Visibility.Visible && _picker.Visibility != Visibility.Visible && _tweakPanel.Visibility != Visibility.Visible &&
-            DateTime.UtcNow - _barShownAt > TimeSpan.FromSeconds(6))
+            !FocusWithin(_bar) && DateTime.UtcNow - _barShownAt > TimeSpan.FromSeconds(6))
             _bar.Visibility = Visibility.Collapsed;
 
         // Listens and draws only while seen; see WidgetVisibility.
@@ -339,6 +346,58 @@ internal sealed class WaveformWidget : UserControl
         }
     }
 
+    // ---------- Keyboard ----------
+
+    private void Widget_KeyDown(object sender, KeyRoutedEventArgs args)
+    {
+        if ((args.Key == VirtualKey.Enter || args.Key == VirtualKey.Space) && args.OriginalSource == this)
+        {
+            UpdateBar();
+            _bar.Visibility = Visibility.Visible;
+            FocusInto(_barFirst);
+            args.Handled = true;
+        }
+        else if (args.Key == VirtualKey.Escape)
+        {
+            if (_tweakPanel.Visibility == Visibility.Visible) CloseTweaks();
+            else if (_picker.Visibility == Visibility.Visible) HidePicker();
+            else if (_bar.Visibility == Visibility.Visible)
+            {
+                _bar.Visibility = Visibility.Collapsed;
+                Focus(FocusState.Keyboard);
+            }
+            else return;
+            args.Handled = true;
+        }
+    }
+
+    /// <summary>Whether keyboard focus is on the element or inside it.</summary>
+    private bool FocusWithin(DependencyObject element)
+    {
+        if (XamlRoot is null) return false;
+        for (var focused = FocusManager.GetFocusedElement(XamlRoot) as DependencyObject; focused is not null; focused = VisualTreeHelper.GetParent(focused))
+            if (focused == element) return true;
+        return false;
+    }
+
+    /// <summary>Moves keyboard focus to a panel's first control once the panel has been laid out.</summary>
+    private void FocusInto(Control? first)
+    {
+        if (first is null) return;
+        // Lays the newly shown panel out first: a control that has not been measured cannot take focus.
+        UpdateLayout();
+        if (!first.Focus(FocusState.Keyboard))
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => first.Focus(FocusState.Keyboard));
+    }
+
+    /// <summary>Closes the view grid; keyboard focus inside it returns to the widget.</summary>
+    private void HidePicker()
+    {
+        var keyboard = FocusWithin(_picker);
+        _picker.Visibility = Visibility.Collapsed;
+        if (keyboard) Focus(FocusState.Keyboard);
+    }
+
     private void UpdateBar()
     {
         _viewName.Text = WaveformNames.View(_settings.View);
@@ -389,7 +448,8 @@ internal sealed class WaveformWidget : UserControl
         _cycleButton.Click += (_, _) => ChangeSettings(_settings with { CycleSeconds = _settings.CycleSeconds > 0 ? 0 : 30 });
 
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        row.Children.Add(TouchButton("◀", "Previous view", (_, _) => StepView(-1)));
+        _barFirst = TouchButton("◀", "Previous view", (_, _) => StepView(-1));
+        row.Children.Add(_barFirst);
         row.Children.Add(_viewName);
         row.Children.Add(TouchButton("▶", "Next view", (_, _) => StepView(1)));
         row.Children.Add(new Border { Width = 12 });
@@ -401,7 +461,9 @@ internal sealed class WaveformWidget : UserControl
         row.Children.Add(TouchButton("All views", "Show all views and looks", (_, _) =>
         {
             UpdateBar();
+            var keyboard = FocusWithin(this);
             _picker.Visibility = Visibility.Visible;
+            if (keyboard) FocusInto(_pickerFirst);
         }, 120));
         row.Children.Add(TouchButton("Tweak", "Tweak this view: sliders for speed, colour and more", (_, _) => OpenTweaks(), 96));
 
@@ -427,11 +489,12 @@ internal sealed class WaveformWidget : UserControl
         var content = new StackPanel { Spacing = 8, Padding = new Thickness(20) };
         var header = new Grid();
         header.Children.Add(new TextBlock { Text = "Choose a view", FontSize = 22, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
-        var close = TouchButton("✕", "Close", (_, _) => _picker.Visibility = Visibility.Collapsed);
+        var close = TouchButton("✕", "Close", (_, _) => HidePicker());
         close.HorizontalAlignment = HorizontalAlignment.Right;
         // Clear of EdgeDock's own controls handle in the top-right corner.
         close.Margin = new Thickness(0, 0, 72, 0);
         header.Children.Add(close);
+        _pickerFirst = close;
         content.Children.Add(header);
         foreach (var (group, views) in WaveformNames.Groups)
         {
@@ -442,7 +505,7 @@ internal sealed class WaveformWidget : UserControl
                 var tile = TouchButton(WaveformNames.View(view), WaveformNames.View(view), (_, _) =>
                 {
                     ChangeSettings(_settings with { View = view });
-                    _picker.Visibility = Visibility.Collapsed;
+                    HidePicker();
                 }, 188);
                 tile.HorizontalAlignment = HorizontalAlignment.Stretch;
                 tile.Margin = new Thickness(0, 0, 8, 8);
@@ -465,7 +528,7 @@ internal sealed class WaveformWidget : UserControl
                     CycleSeconds = _settings.CycleSeconds > 0 ? _settings.CycleSeconds : 30,
                     View = set.Length > 0 ? set[0] : _settings.View
                 });
-                _picker.Visibility = Visibility.Collapsed;
+                HidePicker();
             }, 188);
             tile.HorizontalAlignment = HorizontalAlignment.Stretch;
             tile.Margin = new Thickness(0, 0, 8, 8);
@@ -658,13 +721,17 @@ internal sealed class WaveformWidget : UserControl
         _tweakView = _settings.View;
         _tweakTitle.Text = "Tweak: " + WaveformNames.View(_tweakView);
         LoadTweaks(_settings.TweaksFor(_tweakView));
+        var keyboard = FocusWithin(this);
         _bar.Visibility = Visibility.Collapsed;
         _tweakPanel.Visibility = Visibility.Visible;
+        if (keyboard) FocusInto(_speedSlider);
     }
 
     private void CloseTweaks()
     {
+        var keyboard = FocusWithin(_tweakPanel);
         _tweakPanel.Visibility = Visibility.Collapsed;
+        if (keyboard) Focus(FocusState.Keyboard);
         // Saves straight away rather than waiting for the pause after the last move.
         if (_saveTimer is { IsRunning: true }) SaveTweaks();
         // The cycle's next step is timed from now.
