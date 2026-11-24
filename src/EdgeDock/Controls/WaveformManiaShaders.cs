@@ -10,7 +10,9 @@ namespace EdgeDock.Controls;
 /// spinning mirrored tunnel. 3: Mandelbrot zoom, diving into the set again and again. 4: spectrum
 /// city, a fast flight between towers whose heights follow the spectrum. 5: DNA helix, a double
 /// strand of orbs across the screen, one pair per band. 6: liquid colour, domain-warped noise
-/// flowing faster with the music. 7: crystal shards, a spinning folded crystal.
+/// flowing faster with the music. 7: crystal shards, a spinning folded crystal. 8: glass cubes,
+/// three neon-edged glass cubes across the screen, one per band. 9: fractal land, a flight over a
+/// landscape grown from the Kali set.
 /// </summary>
 [D2DInputCount(0)]
 [D2DRequiresScenePosition]
@@ -37,7 +39,9 @@ internal readonly partial struct WaveformManiaShader(
         else if (style == 4) rgb = City(p, first, second);
         else if (style == 5) rgb = Helix(p);
         else if (style == 6) rgb = LiquidColour(p, first);
-        else rgb = Shards(p, first);
+        else if (style == 7) rgb = Shards(p, first);
+        else if (style == 8) rgb = GlassCubes(p, first, second);
+        else rgb = FractalLand(p, first, second);
         return new Float4(Hlsl.Saturate(rgb), 1f);
     }
 
@@ -342,6 +346,102 @@ internal readonly partial struct WaveformManiaShader(
             rgb += Gradient(band) * (0.4f + 0.9f * Hlsl.Lerp(levels.X, levels.W, band)) + new Float3(flash, flash, flash) * 0.2f;
         }
         return rgb;
+    }
+
+    // ---------- Glass cubes ----------
+
+    private const float GlassSpacing = 3.4f;
+
+    /// <summary>Distance to the edges of a cube frame (X) and to its faces (Y).</summary>
+    private static Float2 CubeFrame(Float3 p, float size, float edge)
+    {
+        Float3 q = Hlsl.Abs(p) - size;
+        float box = Hlsl.Length(Hlsl.Max(q, new Float3(0f, 0f, 0f))) + Hlsl.Min(Hlsl.Max(q.X, Hlsl.Max(q.Y, q.Z)), 0f);
+        Float3 w = Hlsl.Abs(q + edge) - edge;
+        float a = Hlsl.Length(Hlsl.Max(new Float3(q.X, w.Y, w.Z), new Float3(0f, 0f, 0f))) + Hlsl.Min(Hlsl.Max(q.X, Hlsl.Max(w.Y, w.Z)), 0f);
+        float b = Hlsl.Length(Hlsl.Max(new Float3(w.X, q.Y, w.Z), new Float3(0f, 0f, 0f))) + Hlsl.Min(Hlsl.Max(w.X, Hlsl.Max(q.Y, w.Z)), 0f);
+        float c = Hlsl.Length(Hlsl.Max(new Float3(w.X, w.Y, q.Z), new Float3(0f, 0f, 0f))) + Hlsl.Min(Hlsl.Max(w.X, Hlsl.Max(w.Y, q.Z)), 0f);
+        return new Float2(Hlsl.Min(a, Hlsl.Min(b, c)), box);
+    }
+
+    private Float3 GlassCubes(Float2 fragment, Float4 first, Float4 second)
+    {
+        // Three glass cubes across the screen (bass, mids, highs). Their neon edges glow with
+        // their band; light gathers as the ray passes through the glass.
+        Float2 uv = (fragment - size * 0.5f) / size.Y;
+        uv.Y = -uv.Y;
+        Float3 origin = new Float3(0f, 0.3f, -6f);
+        Float3 dir = Hlsl.Normalize(new Float3(uv.X, uv.Y - 0.05f, 1.5f));
+        Float3 levels = new Float3(Spectrum(0.1f, first, second), Spectrum(0.5f, first, second), Spectrum(0.9f, first, second));
+        Float3 rgb = new Float3(0f, 0f, 0f);
+        float t = 0f;
+        for (int i = 0; i < 90; i++)
+        {
+            Float3 p = origin + dir * t;
+            float cell = Hlsl.Clamp(Hlsl.Round(p.X / GlassSpacing), -1f, 1f);
+            float level = cell < -0.5f ? levels.X : (cell < 0.5f ? levels.Y : levels.Z);
+            Float3 local = p - new Float3(cell * GlassSpacing, 0f, 0f);
+            Float2 xz = Rotate(new Float2(local.X, local.Z), travel * 0.25f + cell);
+            Float2 yz = Rotate(new Float2(local.Y, xz.Y), time * 0.3f + cell * 0.7f);
+            local = new Float3(xz.X, yz.X, yz.Y);
+            Float2 d = CubeFrame(local, 0.95f + 0.25f * level, 0.04f);
+            Float3 colour = Gradient(cell * 0.5f + 0.5f);
+            // Edges: bright neon glow. Inside the glass: a soft haze of the band's colour.
+            rgb += colour * (0.012f / (0.004f + d.X * d.X * 40f)) * (0.2f + 1.2f * level) * 0.02f;
+            rgb += colour * Hlsl.Step(d.Y, 0f) * 0.012f * (0.3f + level);
+            t += Hlsl.Clamp(Hlsl.Min(Hlsl.Abs(d.X), Hlsl.Abs(d.Y) + 0.05f) * 0.7f, 0.02f, 0.4f);
+        }
+        float floorGlow = Hlsl.Exp(-Hlsl.Abs(uv.Y + 0.32f) * 25f) * 0.08f * (0.5f + energy);
+        return rgb + Gradient(0.5f) * floorGlow + new Float3(flash, flash, flash) * 0.04f;
+    }
+
+    // ---------- Fractal land ----------
+
+    private float Kaliset(Float2 q)
+    {
+        Float3 p = new Float3(q.X, q.Y, 0.65f);
+        float accumulated = 0f;
+        float previous = 0f;
+        for (int i = 0; i < 10; i++)
+        {
+            p = Hlsl.Abs(p) / Hlsl.Dot(p, p) - new Float3(0.55f + 0.08f * bass, 0.6f, 0.56f + 0.05f * mids);
+            float length = Hlsl.Length(p);
+            accumulated += Hlsl.Abs(length - previous);
+            previous = length;
+        }
+        return accumulated;
+    }
+
+    private Float3 FractalLand(Float2 fragment, Float4 first, Float4 second)
+    {
+        // A flight over a landscape made from the Kali set: heights and colours come from the
+        // fractal, and the ground glows with the band beneath it.
+        Float2 uv = (fragment - size * 0.5f) / size.Y;
+        uv.Y = -uv.Y;
+        Float3 origin = new Float3(Hlsl.Sin(time * 0.1f) * 0.5f, 1.1f, travel * 0.6f);
+        Float3 dir = Hlsl.Normalize(new Float3(uv.X, uv.Y - 0.3f, 1.2f));
+        Float3 sky = Hlsl.Lerp(Gradient(0.85f) * 0.5f, Gradient(0.1f) * 0.12f, Hlsl.Saturate(uv.Y * 2f + 0.3f));
+        float t = 0.2f;
+        float hit = 0f;
+        float height = 0f;
+        for (int i = 0; i < 80; i++)
+        {
+            if (hit < 0.5f && t < 12f)
+            {
+                Float3 p = origin + dir * t;
+                height = (1f - Hlsl.Exp(-Kaliset(p.XZ * 0.25f) * 0.035f)) * 1.1f - 0.2f;
+                float gap = p.Y - height;
+                if (gap < 0.004f * t) hit = 1f;
+                else t += Hlsl.Max(gap * 0.5f, 0.02f);
+            }
+        }
+        if (hit < 0.5f) return sky;
+        Float3 position = origin + dir * t;
+        float band = Hlsl.Saturate(position.X / 6f + 0.5f);
+        float level = Spectrum(band, first, second);
+        Float3 colour = Gradient(Hlsl.Saturate(height * 1.1f)) * (0.35f + 0.65f * height) + Gradient(band) * level * level * 0.5f;
+        float fog = Hlsl.Exp(-t * 0.18f);
+        return Hlsl.Lerp(sky, colour * (0.7f + 0.5f * energy), fog);
     }
 
     /// <summary>A spectrum level at 0 (bass) to 1 (highs). Read before any varying loop.</summary>

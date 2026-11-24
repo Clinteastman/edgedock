@@ -65,7 +65,7 @@ contribute. This is not a signed installer or a finished consumer release.
   needs a kernel driver.
 - **Waveform** turns the panel (or the whole Edge, with web hidden and one
   widget panel) into a music visualiser driven by what the PC is playing, or by
-  an input such as an audio interface or mixer. 57 views in ten groups:
+  an input such as an audio interface or mixer. 59 views in ten groups:
   waves (scrolling, centre out); spectrum (bars, mirror, line, LED, spectrogram,
   ridges, ring); oscilloscopes (plain, a curved-glass CRT scope and vectorscope
   with phosphor afterglow, stereo, band scopes, Lissajous); flashy (pulse, club,
@@ -74,7 +74,8 @@ contribute. This is not a signed installer or a finished consumer release.
   Mandelbox, orb field, fractal forest); space and sky (star nest, black hole,
   clouds, cloudscape, ocean, spectrum mountains); mania (mashup, which blends
   two views at once, hyperspace, synth grid, kaleido tunnel, Mandelbrot zoom,
-  spectrum city, DNA helix, liquid colour, crystal shards); and crazy
+  spectrum city, DNA helix, liquid colour, crystal shards, glass cubes, fractal
+  land); and crazy
   (kaleidoscope, vortex, glitch, fire, metaballs, lightning, fractal, hypno
   circles, hex plasma, lasers, Voronoi cells, liquid blob, truchet, neon rings).
   Each view gives its parts to different frequency bands (bass, mids, highs),

@@ -22,7 +22,8 @@ internal enum WaveformView
     // 3D scenes and more space
     Lattice, FractalCubes, Mandelbox, OrbField, FractalForest, BlackHole, Mountains, Ocean, NeonRings,
     // Mania
-    Hyperspace, SynthGrid, KaleidoTunnel, MandelbrotZoom, City, Helix, LiquidColour, Shards, Mashup
+    Hyperspace, SynthGrid, KaleidoTunnel, MandelbrotZoom, City, Helix, LiquidColour, Shards, Mashup,
+    GlassCubes, FractalLand
 }
 
 /// <summary>The three-colour palettes every view draws with. Saved by name.</summary>

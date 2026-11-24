@@ -513,6 +513,8 @@ internal sealed class WaveformWidget : UserControl
         WaveformView.LiquidColour => (Renderer.Mania, 6),
         WaveformView.Shards => (Renderer.Mania, 7),
         WaveformView.Mashup => (Renderer.Mashup, 0),
+        WaveformView.GlassCubes => (Renderer.Mania, 8),
+        WaveformView.FractalLand => (Renderer.Mania, 9),
         _ => (Renderer.Wild, 6)
     };
 

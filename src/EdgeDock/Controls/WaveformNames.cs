@@ -17,7 +17,8 @@ internal static class WaveformNames
         ("Space and sky", [WaveformView.StarNest, WaveformView.BlackHole, WaveformView.Clouds, WaveformView.Cloudscape,
             WaveformView.Ocean, WaveformView.Mountains]),
         ("Mania", [WaveformView.Mashup, WaveformView.Hyperspace, WaveformView.SynthGrid, WaveformView.KaleidoTunnel,
-            WaveformView.MandelbrotZoom, WaveformView.City, WaveformView.Helix, WaveformView.LiquidColour, WaveformView.Shards]),
+            WaveformView.MandelbrotZoom, WaveformView.City, WaveformView.Helix, WaveformView.LiquidColour, WaveformView.Shards,
+            WaveformView.GlassCubes, WaveformView.FractalLand]),
         ("Crazy", [WaveformView.Kaleidoscope, WaveformView.Vortex, WaveformView.Glitch, WaveformView.Fire, WaveformView.Metaballs,
             WaveformView.Lightning, WaveformView.Fractal, WaveformView.HypnoCircles, WaveformView.HexPlasma, WaveformView.Lasers,
             WaveformView.Voronoi, WaveformView.Blob, WaveformView.Truchet, WaveformView.NeonRings])
@@ -82,6 +83,8 @@ internal static class WaveformNames
         WaveformView.LiquidColour => "Liquid colour",
         WaveformView.Shards => "Crystal shards",
         WaveformView.Mashup => "Mashup",
+        WaveformView.GlassCubes => "Glass cubes",
+        WaveformView.FractalLand => "Fractal land",
         _ => view.ToString()
     };
 
@@ -93,7 +96,8 @@ internal static class WaveformNames
         ("Chill", [WaveformView.Ocean, WaveformView.Clouds, WaveformView.Cloudscape, WaveformView.Aurora, WaveformView.OrbField,
             WaveformView.Spheres, WaveformView.StarNest, WaveformView.Mountains, WaveformView.SpectrumLine, WaveformView.LiquidColour]),
         ("3D trip", [WaveformView.Mandelbulb, WaveformView.Mandelbox, WaveformView.FractalCubes, WaveformView.Lattice,
-            WaveformView.FractalForest, WaveformView.Spheres, WaveformView.BlackHole, WaveformView.Blob, WaveformView.Shards, WaveformView.City]),
+            WaveformView.FractalForest, WaveformView.Spheres, WaveformView.BlackHole, WaveformView.Blob, WaveformView.Shards, WaveformView.City,
+            WaveformView.GlassCubes, WaveformView.FractalLand]),
         ("Rave", [WaveformView.Club, WaveformView.Lasers, WaveformView.Hyperspace, WaveformView.KaleidoTunnel, WaveformView.Glitch,
             WaveformView.NeonRings, WaveformView.Mashup, WaveformView.Warp, WaveformView.Lightning, WaveformView.Pulse]),
         ("Retro", [WaveformView.CrtScope, WaveformView.CrtVectorscope, WaveformView.SynthGrid, WaveformView.Tunnel, WaveformView.Plasma,
