@@ -65,19 +65,26 @@ contribute. This is not a signed installer or a finished consumer release.
   needs a kernel driver.
 - **Waveform** turns the panel (or the whole Edge, with web hidden and one
   widget panel) into a music visualiser driven by what the PC is playing, or by
-  an input such as an audio interface or mixer. 38 views in seven groups:
-  waves (scrolling, centre out), spectrum (bars, mirror, line, LED, spectrogram,
-  ridges, ring), oscilloscopes (plain, a curved-glass CRT scope and vectorscope
-  with phosphor afterglow, stereo, band scopes, Lissajous), flashy (pulse, club
-  flashes on the beat, warp, aurora), demo scene (plasma, tunnel), space and
-  sky (star nest, clouds, a raymarched cloudscape) and crazy (kaleidoscope,
-  vortex, glitch, fire, metaballs, lightning, fractal, hypno circles, hex
-  plasma, lasers, Voronoi cells, liquid blob, truchet, liquid spheres). The
-  flashy views follow each band against its own recent range, so every kick,
-  snare and hi-hat moves them, even in loud tracks. 16 colour looks, an
-  optional colour cycle, and a cycle mode that crossfades through a chosen set
-  of views every 10 seconds to 5 minutes. Tap the widget for a touch bar
-  (previous/next view and look, cycle, all views); choices are saved. Every
+  an input such as an audio interface or mixer. 57 views in ten groups:
+  waves (scrolling, centre out); spectrum (bars, mirror, line, LED, spectrogram,
+  ridges, ring); oscilloscopes (plain, a curved-glass CRT scope and vectorscope
+  with phosphor afterglow, stereo, band scopes, Lissajous); flashy (pulse, club,
+  warp, aurora); demo scene (plasma, tunnel); 3D scenes (liquid spheres with one
+  ball per band, three Mandelbulbs, Escher lattice, three fractal cubes,
+  Mandelbox, orb field, fractal forest); space and sky (star nest, black hole,
+  clouds, cloudscape, ocean, spectrum mountains); mania (mashup, which blends
+  two views at once, hyperspace, synth grid, kaleido tunnel, Mandelbrot zoom,
+  spectrum city, DNA helix, liquid colour, crystal shards); and crazy
+  (kaleidoscope, vortex, glitch, fire, metaballs, lightning, fractal, hypno
+  circles, hex plasma, lasers, Voronoi cells, liquid blob, truchet, neon rings).
+  Each view gives its parts to different frequency bands (bass, mids, highs),
+  measured against their own recent range so every kick, snare and hi-hat
+  moves them, and every look's colours swing with the music. 16 colour looks,
+  an optional colour cycle, ready-made playlists (Chill, 3D trip, Rave, Retro,
+  Space, Classic meters, Everything), and a cycle mode that melts from view to
+  view through a chosen set
+  every 10 seconds to 5 minutes. Tap the widget for a touch bar (previous/next
+  view and look, cycle, all views and playlists); choices are saved. Every
   view is a GPU shader; see [testing notes](docs/testing.md) for CPU figures.
   Limits: apps that use WASAPI exclusive mode (some DAWs and audiophile players)
   bypass the Windows mixer, so their sound cannot be shown while they hold the

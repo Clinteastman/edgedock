@@ -16,6 +16,8 @@ internal static class WaveformNames
             WaveformView.Mandelbox, WaveformView.OrbField, WaveformView.FractalForest]),
         ("Space and sky", [WaveformView.StarNest, WaveformView.BlackHole, WaveformView.Clouds, WaveformView.Cloudscape,
             WaveformView.Ocean, WaveformView.Mountains]),
+        ("Mania", [WaveformView.Mashup, WaveformView.Hyperspace, WaveformView.SynthGrid, WaveformView.KaleidoTunnel,
+            WaveformView.MandelbrotZoom, WaveformView.City, WaveformView.Helix, WaveformView.LiquidColour, WaveformView.Shards]),
         ("Crazy", [WaveformView.Kaleidoscope, WaveformView.Vortex, WaveformView.Glitch, WaveformView.Fire, WaveformView.Metaballs,
             WaveformView.Lightning, WaveformView.Fractal, WaveformView.HypnoCircles, WaveformView.HexPlasma, WaveformView.Lasers,
             WaveformView.Voronoi, WaveformView.Blob, WaveformView.Truchet, WaveformView.NeonRings])
@@ -71,10 +73,37 @@ internal static class WaveformNames
         WaveformView.Mountains => "Spectrum mountains",
         WaveformView.Ocean => "Ocean",
         WaveformView.NeonRings => "Neon rings",
+        WaveformView.Hyperspace => "Hyperspace",
+        WaveformView.SynthGrid => "Synth grid",
+        WaveformView.KaleidoTunnel => "Kaleido tunnel",
+        WaveformView.MandelbrotZoom => "Mandelbrot zoom",
+        WaveformView.City => "Spectrum city",
+        WaveformView.Helix => "DNA helix",
+        WaveformView.LiquidColour => "Liquid colour",
+        WaveformView.Shards => "Crystal shards",
+        WaveformView.Mashup => "Mashup",
         _ => view.ToString()
     };
 
     public static string Look(WaveformLook look) => look.ToString();
+
+    /// <summary>Ready-made sets for cycle mode, picked with one tap.</summary>
+    public static readonly (string Name, WaveformView[] Views)[] Playlists =
+    [
+        ("Chill", [WaveformView.Ocean, WaveformView.Clouds, WaveformView.Cloudscape, WaveformView.Aurora, WaveformView.OrbField,
+            WaveformView.Spheres, WaveformView.StarNest, WaveformView.Mountains, WaveformView.SpectrumLine, WaveformView.LiquidColour]),
+        ("3D trip", [WaveformView.Mandelbulb, WaveformView.Mandelbox, WaveformView.FractalCubes, WaveformView.Lattice,
+            WaveformView.FractalForest, WaveformView.Spheres, WaveformView.BlackHole, WaveformView.Blob, WaveformView.Shards, WaveformView.City]),
+        ("Rave", [WaveformView.Club, WaveformView.Lasers, WaveformView.Hyperspace, WaveformView.KaleidoTunnel, WaveformView.Glitch,
+            WaveformView.NeonRings, WaveformView.Mashup, WaveformView.Warp, WaveformView.Lightning, WaveformView.Pulse]),
+        ("Retro", [WaveformView.CrtScope, WaveformView.CrtVectorscope, WaveformView.SynthGrid, WaveformView.Tunnel, WaveformView.Plasma,
+            WaveformView.LedBars, WaveformView.HypnoCircles, WaveformView.Oscilloscope]),
+        ("Space", [WaveformView.StarNest, WaveformView.BlackHole, WaveformView.Hyperspace, WaveformView.OrbField, WaveformView.Warp,
+            WaveformView.Cloudscape, WaveformView.MandelbrotZoom]),
+        ("Classic meters", [WaveformView.Scroll, WaveformView.CentreOut, WaveformView.SpectrumBars, WaveformView.MirrorSpectrum,
+            WaveformView.Spectrogram, WaveformView.Ridges, WaveformView.LedBars, WaveformView.Ring]),
+        ("Everything", [])
+    ];
 
     public static string Cycle(int seconds) => seconds switch
     {

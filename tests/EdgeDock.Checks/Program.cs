@@ -693,6 +693,13 @@ try
     Check(Math.Abs(loudestBand - expectedBand) <= 1 && Near(analyser.BandAmplitude(loudestBand), 0.5, 0.08) &&
           analyser.Levels[loudestBand] > 0.95 && analyser.Levels[5] < 0.3 && analyser.Levels[WaveformSpectrum.Bands - 2] < 0.3,
           "A 1 kHz tone at half scale fills its own spectrum band, and not the bass or top bands");
+    // A 16 kHz input carries nothing above 8 kHz: a tone just under that must not light the top bands.
+    var narrowInput = new WaveformSpectrum(autoLevel: false);
+    var nearNyquist = Sine(7992, 0.5, 16000, 1, 0.2).AsSpan(0, WaveformSpectrum.Size).ToArray();
+    for (var frame = 0; frame < 15; frame++) narrowInput.Update(nearNyquist, 16000, 1 / 60.0);
+    Check(narrowInput.BandAmplitude(WaveformSpectrum.Bands - 1) == 0 && narrowInput.Levels[WaveformSpectrum.Bands - 1] == 0 &&
+          Enumerable.Range(0, WaveformSpectrum.Bands).Max(band => narrowInput.BandAmplitude(band)) > 0.3f,
+          "Bands above a low-rate input's top frequency stay dark");
     var silence = new float[WaveformSpectrum.Size];
     for (var frame = 0; frame < 12; frame++) analyser.Update(silence, 48000, 1 / 60.0);
     var peakHeld = analyser.Peaks[loudestBand];

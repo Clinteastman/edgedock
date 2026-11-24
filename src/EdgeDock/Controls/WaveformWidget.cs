@@ -30,9 +30,10 @@ internal sealed class WaveformWidget : UserControl
     private const int DataRows = 8;
     private const int SpectrogramRate = 60;
     private const double FadeSeconds = 0.8;
+    private const double CycleFadeSeconds = 2.5;
     private const int Trails = 6;
 
-    private enum Renderer { Scroll, Spectrogram, Ridges, Bars, Scope, Crt, Lissajous, Ring, Field, Demo, Crazy, Borrowed, Wild, Scene, Orbs, Cosmos }
+    private enum Renderer { Scroll, Spectrogram, Ridges, Bars, Scope, Crt, Lissajous, Ring, Field, Demo, Crazy, Borrowed, Wild, Scene, Orbs, Cosmos, Mania, Mashup }
 
     [Flags]
     private enum Needs { None = 0, History = 1, SpectrogramRows = 2, Spectrum = 4, Scope = 8, Trails = 16, Stereo = 32, Bands = 64, Pulse = 128 }
@@ -95,6 +96,7 @@ internal sealed class WaveformWidget : UserControl
     private double _time, _travel, _hue;
     private WaveformView? _fadingFrom;
     private double _fadeStarted, _viewSince;
+    private double _fadeLength = FadeSeconds;
 
     public WaveformWidget(Func<WaveformSettings> settings, Action<WaveformSettings>? save = null)
     {
@@ -231,6 +233,8 @@ internal sealed class WaveformWidget : UserControl
         {
             _fadingFrom = _settings.View;
             _fadeStarted = _time;
+            // The cycle melts slowly from one view into the next; a tap answers quickly.
+            _fadeLength = save ? FadeSeconds : CycleFadeSeconds;
         }
         // The cycle's next step is timed from now, even when the view stays the same.
         _viewSince = _time;
@@ -378,6 +382,27 @@ internal sealed class WaveformWidget : UserControl
             content.Children.Add(tiles);
         }
 
+        content.Children.Add(Heading("Playlists: cycle through a set"));
+        var playlists = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, ItemWidth = 196, ItemHeight = 64 };
+        foreach (var (name, views) in WaveformNames.Playlists)
+        {
+            var set = views;
+            var tile = TouchButton(name, "Playlist: " + name, (_, _) =>
+            {
+                ChangeSettings(_settings with
+                {
+                    CycleViews = set,
+                    CycleSeconds = _settings.CycleSeconds > 0 ? _settings.CycleSeconds : 30,
+                    View = set.Length > 0 ? set[0] : _settings.View
+                });
+                _picker.Visibility = Visibility.Collapsed;
+            }, 188);
+            tile.HorizontalAlignment = HorizontalAlignment.Stretch;
+            tile.Margin = new Thickness(0, 0, 8, 8);
+            playlists.Children.Add(tile);
+        }
+        content.Children.Add(playlists);
+
         content.Children.Add(Heading("Looks"));
         var looks = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, ItemWidth = 146, ItemHeight = 64 };
         foreach (var look in Enum.GetValues<WaveformLook>())
@@ -479,6 +504,15 @@ internal sealed class WaveformWidget : UserControl
         WaveformView.NeonRings => (Renderer.Cosmos, 2),
         WaveformView.FractalForest => (Renderer.Cosmos, 3),
         WaveformView.Ocean => (Renderer.Borrowed, 4),
+        WaveformView.Hyperspace => (Renderer.Mania, 0),
+        WaveformView.SynthGrid => (Renderer.Mania, 1),
+        WaveformView.KaleidoTunnel => (Renderer.Mania, 2),
+        WaveformView.MandelbrotZoom => (Renderer.Mania, 3),
+        WaveformView.City => (Renderer.Mania, 4),
+        WaveformView.Helix => (Renderer.Mania, 5),
+        WaveformView.LiquidColour => (Renderer.Mania, 6),
+        WaveformView.Shards => (Renderer.Mania, 7),
+        WaveformView.Mashup => (Renderer.Mashup, 0),
         _ => (Renderer.Wild, 6)
     };
 
@@ -495,7 +529,8 @@ internal sealed class WaveformWidget : UserControl
         (Renderer.Crt, 0) => Needs.Scope | Needs.Trails,
         (Renderer.Crt, _) or (Renderer.Lissajous, _) => Needs.Stereo,
         (Renderer.Crazy, _) => Needs.Spectrum | Needs.Scope,
-        (Renderer.Wild, _) or (Renderer.Scene, _) or (Renderer.Cosmos, _) => Needs.Spectrum,
+        (Renderer.Wild, _) or (Renderer.Scene, _) or (Renderer.Cosmos, _) or (Renderer.Mania, _) => Needs.Spectrum,
+        (Renderer.Mashup, _) => Needs.Spectrum | Needs.Scope,
         (Renderer.Orbs, _) => Needs.Spectrum | Needs.SpectrogramRows,
         _ => Needs.None
     };
@@ -517,6 +552,7 @@ internal sealed class WaveformWidget : UserControl
             Renderer.Wild => WithTexture(new PixelShaderEffect<WaveformWildShader>(), DataTexture()),
             Renderer.Scene => WithTexture(new PixelShaderEffect<WaveformSceneShader>(), DataTexture()),
             Renderer.Cosmos => WithTexture(new PixelShaderEffect<WaveformCosmosShader>(), DataTexture()),
+            Renderer.Mania => WithTexture(new PixelShaderEffect<WaveformManiaShader>(), DataTexture()),
             Renderer.Orbs => WithTexture(new PixelShaderEffect<WaveformOrbShader>(), SpectrogramTexture()),
             Renderer.Field => new PixelShaderEffect<WaveformFieldShader>(),
             Renderer.Borrowed => new PixelShaderEffect<WaveformBorrowedShader>(),
@@ -567,9 +603,11 @@ internal sealed class WaveformWidget : UserControl
         if (_settings.CycleSeconds > 0 && _time - _viewSince >= _settings.CycleSeconds)
             ChangeSettings(_settings with { View = _settings.NextInCycle(_settings.View) }, save: false);
 
-        var fade = _fadingFrom is null ? 1 : Math.Clamp((_time - _fadeStarted) / FadeSeconds, 0, 1);
+        var fade = _fadingFrom is null ? 1 : Math.Clamp((_time - _fadeStarted) / _fadeLength, 0, 1);
         if (fade >= 1) _fadingFrom = null;
         var needs = NeedsOf(_settings.View) | (_fadingFrom is { } from ? NeedsOf(from) : Needs.None);
+        if (_settings.View == WaveformView.Mashup || _fadingFrom == WaveformView.Mashup)
+            needs |= NeedsOf(MashupPool[_mashBase]) | NeedsOf(MashupPool[_mashTop]);
 
         // Read the new 5 ms columns: level, colour, beat and the scrolling history.
         var scrolling = needs.HasFlag(Needs.History);
@@ -614,6 +652,11 @@ internal sealed class WaveformWidget : UserControl
         WaveformPalette palette, float opacity, float scale)
     {
         if (opacity <= 0.001f) return;
+        if (view == WaveformView.Mashup)
+        {
+            DrawMashup(ds, size, area, palette, opacity, scale);
+            return;
+        }
         var (renderer, style) = Map(view);
         var (low, mid, high) = (ToFloat3(palette.Low), ToFloat3(palette.Mid), ToFloat3(palette.High));
         var (lowWeight, midWeight, highWeight) = _levels.Weights;
@@ -671,6 +714,10 @@ internal sealed class WaveformWidget : UserControl
                 ((PixelShaderEffect<WaveformBorrowedShader>)effect).ConstantBuffer = new WaveformBorrowedShader(
                     size, low, mid, high, (float)_time, (float)_travel, bass, _drive.Energy, _beat.Flash, style);
                 break;
+            case Renderer.Mania:
+                ((PixelShaderEffect<WaveformManiaShader>)effect).ConstantBuffer = new WaveformManiaShader(
+                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _drive.Energy, _beat.Flash, style);
+                break;
             case Renderer.Scene:
                 ((PixelShaderEffect<WaveformSceneShader>)effect).ConstantBuffer = new WaveformSceneShader(
                     size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _drive.Energy, _beat.Flash, style);
@@ -695,6 +742,37 @@ internal sealed class WaveformWidget : UserControl
                 break;
         }
         ds.DrawImage(effect, 0, 0, area, opacity);
+    }
+
+    /// <summary>Views that mix well; the mashup layers two of them with additive light.</summary>
+    private static readonly WaveformView[] MashupPool =
+    [
+        WaveformView.Hyperspace, WaveformView.KaleidoTunnel, WaveformView.LiquidColour, WaveformView.NeonRings, WaveformView.Lasers,
+        WaveformView.Kaleidoscope, WaveformView.Vortex, WaveformView.Warp, WaveformView.Aurora, WaveformView.StarNest,
+        WaveformView.Plasma, WaveformView.HexPlasma, WaveformView.Voronoi, WaveformView.Helix, WaveformView.Lightning,
+        WaveformView.Fire, WaveformView.Metaballs, WaveformView.OrbField, WaveformView.SynthGrid, WaveformView.Truchet
+    ];
+    private int _mashBase, _mashTop = 1;
+    private double _mashSince;
+
+    /// <summary>
+    /// Two views at once: a base and a top layer added as light, the top pulsing with the bass.
+    /// Every eight seconds the top becomes the base and a new top fades in.
+    /// </summary>
+    private void DrawMashup(CanvasDrawingSession ds, Float2 size, Windows.Foundation.Rect area, WaveformPalette palette, float opacity, float scale)
+    {
+        if (_time - _mashSince >= 8)
+        {
+            _mashSince = _time;
+            _mashBase = _mashTop;
+            _mashTop = (_mashTop + 1 + (int)(_beat.Flash * 7) + (int)(_time % 5)) % MashupPool.Length;
+            if (_mashTop == _mashBase) _mashTop = (_mashTop + 1) % MashupPool.Length;
+        }
+        var rise = (float)Math.Clamp((_time - _mashSince) / 2.5, 0, 1);
+        DrawView(ds, MashupPool[_mashBase], size, area, palette, opacity, scale);
+        ds.Blend = CanvasBlend.Add;
+        DrawView(ds, MashupPool[_mashTop], size, area, palette, opacity * rise * (0.35f + 0.45f * _drive.Bass + 0.2f * _beat.Flash), scale);
+        ds.Blend = CanvasBlend.SourceOver;
     }
 
     /// <summary>Fills the live data texture with what this frame's views read.</summary>

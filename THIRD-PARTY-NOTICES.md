@@ -35,7 +35,14 @@ collection of ports (https://github.com/Zygo/xscreensaver/tree/master/hacks/glx/
 - Source: https://www.shadertoy.com/view/mljcWR
 - Licence: CC0 1.0 (public domain dedication)
 
-## MIT License text (applies to Star Nest and Hexagon Plasma)
+## Very fast procedural ocean
+
+- Author: afl_ext
+- Source: https://www.shadertoy.com/view/MdXyzX
+- Licence: MIT ("afl_ext 2017-2024, MIT License")
+- EdgeDock adds a cloud layer (also seen in the reflections), the look's colours and the music.
+
+## MIT License text (applies to Star Nest, Hexagon Plasma and the procedural ocean)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software
 and associated documentation files (the "Software"), to deal in the Software without

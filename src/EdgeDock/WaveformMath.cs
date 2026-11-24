@@ -20,7 +20,9 @@ internal enum WaveformView
     // More crazy
     HypnoCircles, HexPlasma, Lasers, Voronoi, Blob, Truchet, Spheres, Mandelbulb,
     // 3D scenes and more space
-    Lattice, FractalCubes, Mandelbox, OrbField, FractalForest, BlackHole, Mountains, Ocean, NeonRings
+    Lattice, FractalCubes, Mandelbox, OrbField, FractalForest, BlackHole, Mountains, Ocean, NeonRings,
+    // Mania
+    Hyperspace, SynthGrid, KaleidoTunnel, MandelbrotZoom, City, Helix, LiquidColour, Shards, Mashup
 }
 
 /// <summary>The three-colour palettes every view draws with. Saved by name.</summary>
@@ -686,6 +688,7 @@ internal sealed class WaveformSpectrum
         // A Hann-windowed sine of amplitude A peaks at A * N / 4.
         var scale = 4f / Size;
         var binHz = sampleRate / (double)Size;
+        var nyquist = sampleRate / 2.0;
         var frameTop = float.MinValue;
         Span<float> decibels = stackalloc float[Bands];
         for (var band = 0; band < Bands; band++)
@@ -693,7 +696,9 @@ internal sealed class WaveformSpectrum
             var first = (int)Math.Ceiling(_bandLow[band] / binHz);
             var last = Math.Min(Size / 2 - 1, (int)Math.Floor(_bandHigh[band] / binHz));
             float amplitude;
-            if (last >= first)
+            // A band above what this input can carry (a 16 kHz microphone stops at 8 kHz) is silent.
+            if (_bandLow[band] >= nyquist) amplitude = 0;
+            else if (last >= first)
             {
                 amplitude = 0;
                 for (var bin = first; bin <= last; bin++) amplitude = Math.Max(amplitude, Magnitude(bin));
