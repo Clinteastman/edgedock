@@ -573,11 +573,22 @@ internal sealed class WaveformHistory
     private int _merged;
 
     /// <param name="pixelsPerSecond">Physical pixels the picture moves each second.</param>
-    public WaveformHistory(double pixelsPerSecond)
+    /// <param name="origin">Columns the capture had already delivered when this history began.</param>
+    public WaveformHistory(double pixelsPerSecond, long origin = 0)
     {
         ColumnsPerEntry = Math.Max(1, WaveformAnalyzer.ColumnsPerSecond / Math.Max(1, pixelsPerSecond));
         PixelsPerEntry = pixelsPerSecond * ColumnsPerEntry / WaveformAnalyzer.ColumnsPerSecond;
+        Origin = origin;
     }
+
+    public long Origin { get; }
+
+    /// <summary>
+    /// Where the picture's newest edge is, in entries, for the capture's smooth column clock:
+    /// one entry behind the newest so it never shows one still being filled, and measured from
+    /// this history's own start so it moves smoothly between entries.
+    /// </summary>
+    public double Head(double clockColumns) => Math.Max(0, Math.Min((clockColumns - Origin) / ColumnsPerEntry - 1, Written - 1));
 
     public double ColumnsPerEntry { get; }
     public double PixelsPerEntry { get; }

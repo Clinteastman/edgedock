@@ -652,6 +652,13 @@ try
           new WaveformHistory(1000).PixelsPerEntry == 5,
           "Scroll history keeps an entry per pixel or more, merging columns at slow speeds by their loudest moment");
 
+    // A history begun after 1000 columns (a view switch or a new speed) at 4 columns an entry.
+    var lateHistory = new WaveformHistory(50, 1000);
+    for (var i = 0; i < 40; i++) lateHistory.Add(new WaveformBar(0.5f, 0.2f, 0.5f, 0.5f), out _);
+    Check(lateHistory.Written == 10 && Near(lateHistory.Head(1030), 6.5, 1e-9) && Near(lateHistory.Head(1031), 6.75, 1e-9) &&
+          lateHistory.Head(1100) == 9 && lateHistory.Head(500) == 0,
+          "A history begun mid-capture scrolls smoothly between entries, measured from its own start");
+
     // Windows delivers 10 ms packets (2 columns); frames come every 1/60 s.
     var clock = new WaveformClock();
     long received = 0;

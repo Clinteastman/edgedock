@@ -798,7 +798,8 @@ internal sealed class WaveformWidget : UserControl
         var scrollSpeed = _settings.Speed * _settings.TweaksFor(scrollView).Speed;
         if (scrolling && (_history is null || _historyScale != scale || _historySpeed != scrollSpeed))
         {
-            _history = new WaveformHistory(scrollSpeed * scale);
+            // The history counts from now: the scroll clock is measured from this column on.
+            _history = new WaveformHistory(scrollSpeed * scale, _received);
             _historyScale = scale;
             _historySpeed = scrollSpeed;
             _newEntries.Clear();
@@ -948,7 +949,7 @@ internal sealed class WaveformWidget : UserControl
             {
                 var history = _history!;
                 // One entry behind the newest, so the picture never reads an entry still being filled.
-                var head = Math.Max(0, Math.Min(_scrollPosition / history.ColumnsPerEntry - 1, history.Written - 1));
+                var head = history.Head(_scrollPosition);
                 ((PixelShaderEffect<WaveformScrollShader>)effect).ConstantBuffer = new WaveformScrollShader(
                     size, low, mid, high, (float)(head % WaveformHistory.Length), (float)history.PixelsPerEntry,
                     (float)Math.Min(head + 1, WaveformHistory.Length - 1), style);
