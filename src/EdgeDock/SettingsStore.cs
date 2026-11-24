@@ -34,7 +34,8 @@ internal sealed record EdgeDockSettings(
     BrightnessRestore? PendingBrightness = null,
     IReadOnlyList<LauncherItem>? Launchers = null,
     WeatherLocation? Weather = null,
-    bool Fahrenheit = false);
+    bool Fahrenheit = false,
+    WaveformSettings? Waveform = null);
 
 internal sealed class SettingsStore
 {
@@ -127,7 +128,15 @@ internal sealed class SettingsStore
                     ? new WeatherLocation(weatherName, latitude, longitude)
                     : null,
                 // Before a choice is saved, follow the region: Fahrenheit where Windows uses it.
-                Fahrenheit: stored?.Fahrenheit ?? !System.Globalization.RegionInfo.CurrentRegion.IsMetric));
+                Fahrenheit: stored?.Fahrenheit ?? !System.Globalization.RegionInfo.CurrentRegion.IsMetric,
+                Waveform: stored?.Waveform is { } waveform
+                    ? new WaveformSettings(
+                        waveform.InputDeviceId,
+                        Enum.TryParse<WaveformView>(waveform.View, true, out var waveView) ? waveView : WaveformSettings.Default.View,
+                        Enum.TryParse<WaveformLook>(waveform.Look, true, out var waveLook) ? waveLook : WaveformSettings.Default.Look,
+                        waveform.Speed ?? WaveformSettings.Default.Speed,
+                        waveform.AutoLevel ?? WaveformSettings.Default.AutoLevel)
+                    : null));
         }
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -201,6 +210,14 @@ internal sealed class SettingsStore
                     ? new StoredWeather { Name = weather.Name, Latitude = weather.Latitude, Longitude = weather.Longitude }
                     : null,
                 Fahrenheit = settings.Fahrenheit,
+                Waveform = new StoredWaveform
+                {
+                    InputDeviceId = settings.Waveform!.InputDeviceId,
+                    View = settings.Waveform.View.ToString(),
+                    Look = settings.Waveform.Look.ToString(),
+                    Speed = settings.Waveform.Speed,
+                    AutoLevel = settings.Waveform.AutoLevel
+                },
                 WidgetSlots = settings.WidgetSlots.Select(slot => new StoredSlot { EnabledWidgetIds = slot.EnabledWidgetIds.ToList(), SelectedWidgetId = slot.SelectedWidgetId }).ToList(),
                 ExtensionData = _extensionData
             };
@@ -267,7 +284,8 @@ internal sealed class SettingsStore
             PendingBrightness = value.PendingBrightness is { } restore && NormalizeDisplay(restore.Monitor) is { } restoreMonitor
                 ? new BrightnessRestore(restoreMonitor, Math.Clamp(restore.Brightness, 0, 100))
                 : null,
-            Weather = NormalizeWeather(value.Weather)
+            Weather = NormalizeWeather(value.Weather),
+            Waveform = WaveformSettings.Normalize(value.Waveform)
         };
     }
 
@@ -380,6 +398,7 @@ internal sealed class SettingsStore
         public StoredRestore? PendingBrightness { get; set; }
         public StoredWeather? Weather { get; set; }
         public bool? Fahrenheit { get; set; }
+        public StoredWaveform? Waveform { get; set; }
         public List<StoredSlot>? WidgetSlots { get; set; }
         public List<StoredLauncher>? Launchers { get; set; }
         [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; }
@@ -461,6 +480,15 @@ internal sealed class SettingsStore
         public string? Id { get; set; }
         public string? Name { get; set; }
         public string? Target { get; set; }
+    }
+
+    private sealed class StoredWaveform
+    {
+        public string? InputDeviceId { get; set; }
+        public string? View { get; set; }
+        public string? Look { get; set; }
+        public double? Speed { get; set; }
+        public bool? AutoLevel { get; set; }
     }
 
     private sealed class StoredWeather

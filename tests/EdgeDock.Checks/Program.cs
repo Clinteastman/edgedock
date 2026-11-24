@@ -507,6 +507,243 @@ try
     Check(weatherSaved.Weather == new WeatherLocation("Manchester", 53.48, -2.24) && weatherSaved.Fahrenheit &&
           SettingsStore.Normalize(upgraded with { Weather = new WeatherLocation("Nowhere", 120, 0) }).Weather is null,
           "The weather place and units survive restart; impossible places are dropped");
+
+    // ---------- Waveform: synthetic sample buffers only, nothing is played ----------
+    static float[] Sine(double frequency, double amplitude, int sampleRate, int channels, double seconds, double phase = 0)
+    {
+        var frames = (int)(sampleRate * seconds);
+        var samples = new float[frames * channels];
+        for (var frame = 0; frame < frames; frame++)
+            for (var channel = 0; channel < channels; channel++)
+                samples[frame * channels + channel] = (float)(amplitude * Math.Sin(2 * Math.PI * frequency * frame / sampleRate + phase));
+        return samples;
+    }
+    static List<WaveformColumn> Analyse(float[] samples, int sampleRate, int channels)
+    {
+        var ring = new WaveformRing(4096);
+        new WaveformAnalyzer(sampleRate, channels).Process(samples, ring);
+        var columns = new List<WaveformColumn>();
+        while (ring.TryRead(out var column)) columns.Add(column);
+        return columns;
+    }
+    static bool Near(double value, double expected, double tolerance) => Math.Abs(value - expected) <= tolerance;
+
+    var bass = Analyse(Sine(100, 0.5, 48000, 2, 0.5), 48000, 2);
+    var settled = bass.Skip(20).ToArray();
+    Check(bass.Count == 100 && settled.All(c => Near(c.Peak, 0.5, 0.01) && Near(c.Rms, 0.5 / Math.Sqrt(2), 0.03)),
+          "Waveform columns are 5 ms blocks with the right peak and RMS (100 Hz, stereo, 48 kHz)");
+    Check(settled.Average(c => c.Low) > 0.3 && settled.Average(c => c.High) < 0.01 && settled.Average(c => c.Mid) < 0.15,
+          "A bass tone lands in the low band");
+    var highs = Analyse(Sine(9000, 0.5, 48000, 2, 0.5), 48000, 2).Skip(20).ToArray();
+    Check(highs.Average(c => c.High) > 0.3 && highs.Average(c => c.Low) < 0.01,
+          "A 9 kHz tone lands in the high band");
+    var mids = Analyse(Sine(1200, 0.5, 44100, 1, 0.5), 44100, 1).Skip(20).ToArray();
+    Check(Near(mids.Average(c => c.Mid), 0.5 / Math.Sqrt(2), 0.03) && mids.Average(c => c.Low) < 0.05 && mids.Average(c => c.High) < 0.05,
+          "A 1.2 kHz tone passes the mid band at full level (mono, 44.1 kHz)");
+
+    var partialRing = new WaveformRing(16);
+    var blocks = new WaveformAnalyzer(48000, 2);
+    blocks.Process(new float[100 * 2], partialRing);
+    var afterFirst = partialRing.Count;
+    blocks.Process(new float[140 * 2 + 1], partialRing); // The odd sample is half a frame.
+    blocks.ProcessSilence(240, partialRing);
+    Check(blocks.BlockFrames == 240 && afterFirst == 0 && partialRing.Count == 2 && blocks.ColumnsWritten == 2,
+          "Waveform blocks carry over between packets and count reported silence");
+    Check(Analyse([float.NaN, float.PositiveInfinity, .. new float[238]], 48000, 1) is [{ Peak: 0, Rms: 0, Low: 0 }],
+          "Unusable samples count as silence");
+
+    var smallRing = new WaveformRing(4);
+    var accepted = Enumerable.Range(1, 5).Count(i => smallRing.TryWrite(new WaveformColumn(i, 0, 0, 0, 0)));
+    smallRing.TryRead(out var firstOut);
+    smallRing.Clear();
+    Check(accepted == 4 && firstOut.Peak == 1 && smallRing.Count == 0 && !smallRing.TryRead(out _),
+          "The waveform ring keeps order, drops when full and can be cleared by the reader");
+    var sharedRing = new WaveformRing(256);
+    const int handedOver = 200_000;
+    var producer = Task.Run(() =>
+    {
+        for (var i = 1; i <= handedOver;)
+            if (sharedRing.TryWrite(new WaveformColumn(i, 0, 0, 0, 0))) i++;
+            else Thread.Yield();
+    });
+    var expectedNext = 1;
+    var inOrder = true;
+    while (expectedNext <= handedOver)
+    {
+        if (sharedRing.TryRead(out var item)) { inOrder &= item.Peak == expectedNext; expectedNext++; }
+        else Thread.Yield();
+    }
+    await producer;
+    Check(inOrder, "The waveform ring hands 200,000 columns between threads without loss or reordering");
+
+    var tap = new WaveformSampleTap();
+    var early = new float[4];
+    tap.Write(0.25f);
+    tap.CopyLatest(early);
+    new WaveformAnalyzer(44100, 2, tap).Process(Enumerable.Range(1, 6000).Select(i => (float)(i % 3)).ToArray(), new WaveformRing(64));
+    var latest = new float[3];
+    tap.CopyLatest(latest);
+    Check(early.SequenceEqual([0f, 0f, 0f, 0.25f]) && tap.Written == 3001 && tap.SampleRate == 44100 && latest.SequenceEqual([1.5f, 0.5f, 1f]),
+          "The sample tap keeps the newest mono samples, oldest first, padded with silence at the start");
+
+    foreach (var look in Enum.GetValues<WaveformLook>())
+    {
+        var palette = WaveformPalette.For(look);
+        var mixes = new[] { palette.Mix(1, 0, 0), palette.Mix(0, 1, 0), palette.Mix(0, 0, 1), palette.Mix(0.3f, 0.2f, 0.5f) };
+        if (!mixes.All(c => Near(Math.Max(c.R, Math.Max(c.G, c.B)), 1, 0.0001) && c.R >= 0 && c.G >= 0 && c.B >= 0))
+            throw new InvalidOperationException($"{look} colours are not brightened to full");
+    }
+    Check(true, "Every look's mixed colour is brightened so its strongest channel is full");
+    var spectrum = WaveformPalette.For(WaveformLook.Spectrum);
+    Check(WaveformPalette.Weights(1, 0, 0) == (1, 0, 0) && spectrum.Mix(1, 0, 0) == new WaveformRgb(1, 50 / 255f, 95 / 255f) &&
+          WaveformPalette.Weights(0, 0, 1) == (0, 0, 1) && spectrum.Mix(0, 0, 1) == new WaveformRgb(80 / 255f, 165 / 255f, 1),
+          "Pure bass shows the low colour; pure highs show the high colour");
+    // Weights 1 : 1.8 : 4.5, so 0.45 of bass balances 0.1 of highs: an even mix, then brightened.
+    var (evenLow, evenMid, evenHigh) = WaveformPalette.Weights(0.45f, 0, 0.1f);
+    var even = spectrum.Mix(evenLow, evenMid, evenHigh);
+    Check(Near(evenLow, 0.5, 1e-6) && Near(evenHigh, 0.5, 1e-6) &&
+          Near(even.R, 167.5 / 175, 1e-5) && Near(even.G, 107.5 / 175, 1e-5) && Near(even.B, 1, 1e-5),
+          "Band weights balance bass against highs before mixing");
+    Check(WaveformPalette.Weights(0, 0, 0) == (0, 1, 0) && WaveformPalette.Weights(float.NaN, -1, float.PositiveInfinity) == (0, 1, 0),
+          "Silence and unusable band values show the mid colour");
+    var whitened = new WaveformRgb(0.4f, 0, 0.8f).Whiten(0.5f);
+    Check(Near(whitened.R, 0.7, 1e-6) && Near(whitened.G, 0.5, 1e-6) && Near(whitened.B, 0.9, 1e-6),
+          "The RMS bar's colour leans towards white");
+
+    static WaveformBar Feed(WaveformLevels levels, WaveformColumn column, double seconds)
+    {
+        WaveformBar bar = default;
+        for (var i = 0; i < (int)Math.Round(seconds / WaveformAnalyzer.BlockSeconds); i++) bar = levels.Next(column);
+        return bar;
+    }
+    var quiet = new WaveformColumn(0.1f, 0.05f, 0.05f, 0, 0);
+    var lifted = new WaveformLevels(true);
+    Check(Near(Feed(lifted, quiet, 6).Peak, WaveformLevels.Target, 0.001) && Near(lifted.Gain, 9.2, 0.01) &&
+          Near(Feed(new WaveformLevels(false), quiet, 6).Peak, 0.1, 0.0001) && new WaveformLevels(false).Gain == 1,
+          "Auto level lifts a steady quiet sound to 92% height; without it the level is kept");
+    var afterLoud = new WaveformLevels(true);
+    Feed(afterLoud, new WaveformColumn(1, 0.5f, 0.5f, 0, 0), 1);
+    var quietAfterLoud = Feed(afterLoud, quiet, 5);
+    Check(Near(afterLoud.Envelope, 0.5, 0.01) && Near(quietAfterLoud.Peak, 0.1 * 0.92 / 0.5, 0.01),
+          "Auto level falls by half over five seconds after a loud moment");
+    var fixedLevel = new WaveformLevels(false).Next(new WaveformColumn(0.95f, 0.9f, 0, 0, 0));
+    Check(fixedLevel.Peak == 0.95f && fixedLevel.Rms == 1, "RMS is drawn 1.45 times larger, never past full height");
+    var colourShift = new WaveformLevels(false);
+    Feed(colourShift, new WaveformColumn(0.5f, 0.3f, 0.3f, 0, 0), 1);
+    var justAfter = colourShift.Next(new WaveformColumn(0.5f, 0.3f, 0, 0, 0.3f));
+    var later = Feed(colourShift, new WaveformColumn(0.5f, 0.3f, 0, 0, 0.3f), 0.2);
+    Check(justAfter.LowWeight > 0.4 && later.HighWeight > 0.95, "Band colour changes smoothly rather than flickering");
+
+    var fastHistory = new WaveformHistory(240);
+    var slowHistory = new WaveformHistory(50);
+    WaveformBar lastSlow = default;
+    for (var i = 0; i < 400; i++)
+    {
+        var bar = new WaveformBar(i % 4 == 1 ? 0.9f : 0.1f, 0.05f, 0.2f, 0.4f);
+        fastHistory.Add(bar, out _);
+        if (slowHistory.Add(bar, out var merged)) lastSlow = merged;
+    }
+    Check(fastHistory.ColumnsPerEntry == 1 && Near(fastHistory.PixelsPerEntry, 1.2, 1e-9) && fastHistory.Written == 400 &&
+          slowHistory.ColumnsPerEntry == 4 && slowHistory.PixelsPerEntry == 1 && slowHistory.Written == 100 &&
+          lastSlow.Peak == 0.9f && lastSlow.Rms == 0.05f && Near(lastSlow.LowWeight, 0.2, 1e-6) && Near(lastSlow.HighWeight, 0.4, 1e-6) &&
+          new WaveformHistory(1000).PixelsPerEntry == 5,
+          "Scroll history keeps an entry per pixel or more, merging columns at slow speeds by their loudest moment");
+
+    // Windows delivers 10 ms packets (2 columns); frames come every 1/60 s.
+    var clock = new WaveformClock();
+    long received = 0;
+    var previousPosition = double.NaN;
+    var steps = new List<double>();
+    var neverAhead = true;
+    for (var frame = 1; frame <= 600; frame++)
+    {
+        received = (long)(frame / 60.0 * 100) * 2;
+        var position = clock.Advance(1 / 60.0, received);
+        neverAhead &= position <= received - 1;
+        if (frame > 120) steps.Add(position - previousPosition);
+        previousPosition = position;
+    }
+    Check(neverAhead && steps.All(step => Near(step, 200 / 60.0, 0.2)) && Near(received - previousPosition, WaveformClock.Latency, 3),
+          "The scrolling picture moves at an even speed about 40 ms behind the newest sound, never ahead of it");
+    var stalled = new WaveformClock();
+    stalled.Advance(0, 100);
+    for (var frame = 0; frame < 12; frame++) stalled.Advance(1 / 60.0, 100);
+    var duringStall = stalled.Advance(1 / 60.0, 100);
+    var afterGap = stalled.Advance(1 / 60.0, 400);
+    Check(duringStall == 99 && Near(afterGap, 400 - WaveformClock.Latency + 200 / 60.0, 1e-6),
+          "A stall waits at the newest column; a long gap jumps back in line");
+
+    var fftReal = new float[64];
+    var fftImaginary = new float[64];
+    for (var i = 0; i < 64; i++) fftReal[i] = (float)Math.Cos(2 * Math.PI * 5 * i / 64);
+    WaveformFft.Forward(fftReal, fftImaginary);
+    var magnitudes = Enumerable.Range(0, 64).Select(i => Math.Sqrt(fftReal[i] * fftReal[i] + fftImaginary[i] * fftImaginary[i])).ToArray();
+    Check(Near(magnitudes[5], 32, 1e-3) && Near(magnitudes[59], 32, 1e-3) &&
+          magnitudes.Where((_, i) => i != 5 && i != 59).All(m => m < 1e-3),
+          "The FFT puts a pure tone in its own bin at the right size");
+
+    var analyser = new WaveformSpectrum(autoLevel: false);
+    var tone = Sine(1000, 0.5, 48000, 1, 0.1).AsSpan(0, WaveformSpectrum.Size).ToArray();
+    for (var frame = 0; frame < 15; frame++) analyser.Update(tone, 48000, 1 / 60.0);
+    var loudestBand = analyser.Levels.ToArray().Select((level, band) => (level, band)).MaxBy(x => x.level).band;
+    var expectedBand = (int)(Math.Log(1000 / WaveformSpectrum.LowestHz) / Math.Log(WaveformSpectrum.HighestHz / WaveformSpectrum.LowestHz) * WaveformSpectrum.Bands);
+    Check(Math.Abs(loudestBand - expectedBand) <= 1 && Near(analyser.BandAmplitude(loudestBand), 0.5, 0.08) &&
+          analyser.Levels[loudestBand] > 0.95 && analyser.Levels[5] < 0.3 && analyser.Levels[WaveformSpectrum.Bands - 2] < 0.3,
+          "A 1 kHz tone at half scale fills its own spectrum band, and not the bass or top bands");
+    var silence = new float[WaveformSpectrum.Size];
+    for (var frame = 0; frame < 12; frame++) analyser.Update(silence, 48000, 1 / 60.0);
+    var peakHeld = analyser.Peaks[loudestBand];
+    for (var frame = 0; frame < 60; frame++) analyser.Update(silence, 48000, 1 / 60.0);
+    Check(analyser.Levels[loudestBand] < 0.01 && peakHeld > 0.95 && analyser.Peaks[loudestBand] < 0.5,
+          "After the sound stops the bars fall within a second; the peak marker holds, then follows");
+    var quietTone = Sine(1000, 0.01, 44100, 1, 0.1).AsSpan(0, WaveformSpectrum.Size).ToArray();
+    var autoSpectrum = new WaveformSpectrum(autoLevel: true);
+    var fixedSpectrum = new WaveformSpectrum(autoLevel: false);
+    // Auto level starts at -20 dB and falls 4 dB a second towards the loudest band.
+    for (var frame = 0; frame < 400; frame++)
+    {
+        autoSpectrum.Update(quietTone, 44100, 1 / 60.0);
+        fixedSpectrum.Update(quietTone, 44100, 1 / 60.0);
+    }
+    Check(autoSpectrum.Levels.ToArray().Max() > 0.95 && Near(fixedSpectrum.Levels.ToArray().Max(), (-40 + 66) / 60.0, 0.04),
+          "Auto level fills the spectrum for a quiet tone; without it a -40 dB tone reaches about 43%");
+
+    var scopeOutput = new float[WaveformScope.Points];
+    var recentSamples = Sine(220, 0.5, 48000, 1, 0.1, phase: 1.1).AsSpan(0, 4096).ToArray();
+    WaveformScope.Prepare(recentSamples, scopeOutput, 1.5f);
+    var shiftedOutput = new float[WaveformScope.Points];
+    WaveformScope.Prepare(Sine(220, 0.5, 48000, 1, 0.1, phase: 1.1).AsSpan(37, 4096).ToArray(), shiftedOutput, 1.5f);
+    Check(Near(scopeOutput[0], 0, 0.05) && scopeOutput[3] > scopeOutput[0] && Near(scopeOutput.Max(), 0.75, 0.01) &&
+          scopeOutput.Zip(shiftedOutput).All(pair => Near(pair.First, pair.Second, 0.05)),
+          "The oscilloscope starts on a rising zero crossing, so a steady note holds still as time moves on");
+    var loudOutput = new float[WaveformScope.Points];
+    WaveformScope.Prepare(Enumerable.Repeat(0.001f, 4096).ToArray(), loudOutput, 2000);
+    Check(loudOutput.All(value => value == 1), "Oscilloscope gain is kept within full height, and a flat signal still draws");
+
+    var pulse = new WaveformPulse();
+    var burst = new float[WaveformSpectrum.Size];
+    for (var i = 0; i < 32; i++) burst[i] = i % 2 == 0 ? 0.4f : -0.4f;
+    pulse.Update(burst, 2, 1 / 60.0);
+    var firstBar = pulse.Levels[0];
+    var quietBar = pulse.Levels[10];
+    pulse.Update(new float[WaveformSpectrum.Size], 2, 0.1);
+    Check(Near(firstBar, 0.8, 1e-5) && quietBar == 0 && Near(pulse.Levels[0], 0.55, 1e-5),
+          "Pulse bars show each slice's loudest sample with gain, then fall smoothly");
+
+    Check(WaveformSettings.Normalize(null) == WaveformSettings.Default &&
+          WaveformSettings.Normalize(new WaveformSettings("  ", (WaveformView)99, (WaveformLook)9, double.NaN, false)) ==
+              WaveformSettings.Default with { AutoLevel = false } &&
+          WaveformSettings.Normalize(WaveformSettings.Default with { Speed = 5000 }).Speed == WaveformSettings.MaximumSpeed &&
+          WaveformSettings.Normalize(WaveformSettings.Default with { Speed = 1 }).Speed == WaveformSettings.MinimumSpeed &&
+          WaveformSettings.Normalize(WaveformSettings.Default with { Speed = 164 }).Speed == 160 &&
+          Enum.GetValues<WaveformView>().Count(WaveformSettings.Scrolls) == 3,
+          "Waveform settings recover from bad values; speed is 30 to 600 in steps of 10");
+    store = new SettingsStore();
+    var waveformChoice = new WaveformSettings(@"{0.0.1.00000000}.{abc}", WaveformView.MirrorSpectrum, WaveformLook.Ember, 320, false);
+    await store.SaveAsync(weatherSaved with { Waveform = waveformChoice });
+    var waveformSaved = await new SettingsStore().LoadAsync();
+    Check(waveformSaved.Waveform == waveformChoice && weatherSaved.Waveform == WaveformSettings.Default,
+          "Waveform source, view, look, speed and auto level survive restart; older settings get the defaults");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally

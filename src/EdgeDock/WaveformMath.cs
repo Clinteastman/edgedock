@@ -1,0 +1,664 @@
+namespace EdgeDock;
+
+/// <summary>How the Waveform widget pictures the sound. Each widget shows one view.</summary>
+internal enum WaveformView { Scroll, CentreOut, Spectrogram, SpectrumBars, MirrorSpectrum, SpectrumLine, Oscilloscope, Pulse }
+internal enum WaveformLook { Spectrum, Neon, Ember, Ice }
+
+/// <summary>Waveform widget choices. A null input means the sound playing on the PC.</summary>
+internal sealed record WaveformSettings(string? InputDeviceId, WaveformView View, WaveformLook Look, double Speed, bool AutoLevel)
+{
+    public const double MinimumSpeed = 30;
+    public const double MaximumSpeed = 600;
+    public static WaveformSettings Default { get; } = new(null, WaveformView.Scroll, WaveformLook.Spectrum, 160, true);
+
+    public static WaveformSettings Normalize(WaveformSettings? value)
+    {
+        if (value is null) return Default;
+        return value with
+        {
+            InputDeviceId = string.IsNullOrWhiteSpace(value.InputDeviceId) ? null : value.InputDeviceId.Trim(),
+            View = Enum.IsDefined(value.View) ? value.View : Default.View,
+            Look = Enum.IsDefined(value.Look) ? value.Look : Default.Look,
+            // Whole steps of 10 logical pixels a second, as the Settings slider offers.
+            Speed = double.IsFinite(value.Speed) ? Math.Round(Math.Clamp(value.Speed, MinimumSpeed, MaximumSpeed) / 10) * 10 : Default.Speed
+        };
+    }
+
+    /// <summary>Views that move sideways over time, so Speed applies to them.</summary>
+    public static bool Scrolls(WaveformView view) => view is WaveformView.Scroll or WaveformView.CentreOut or WaveformView.Spectrogram;
+}
+
+/// <summary>One ~5 ms block of sound: loudest sample, RMS, and RMS of three frequency bands.</summary>
+internal readonly record struct WaveformColumn(float Peak, float Rms, float Low, float Mid, float High);
+
+/// <summary>A colour with 0-1 channels.</summary>
+internal readonly record struct WaveformRgb(float R, float G, float B)
+{
+    /// <summary>Moves the colour towards white by <paramref name="amount"/> (0 to 1).</summary>
+    public WaveformRgb Whiten(float amount) => new(R + (1 - R) * amount, G + (1 - G) * amount, B + (1 - B) * amount);
+}
+
+/// <summary>
+/// A drawn moment: heights as a fraction of half the panel (0 to 1), and how much of the low
+/// and high palette colours to mix in (the mid colour takes the rest).
+/// </summary>
+internal readonly record struct WaveformBar(float Peak, float Rms, float LowWeight, float HighWeight)
+{
+    public float MidWeight => Math.Max(0, 1 - LowWeight - HighWeight);
+}
+
+/// <summary>
+/// A second-order IIR filter (RBJ audio EQ cookbook), transposed direct form II.
+/// Coefficients are normalised so a0 is 1.
+/// </summary>
+internal struct Biquad
+{
+    private readonly float _b0, _b1, _b2, _a1, _a2;
+    private float _z1, _z2;
+
+    private Biquad(double b0, double b1, double b2, double a0, double a1, double a2)
+    {
+        _b0 = (float)(b0 / a0);
+        _b1 = (float)(b1 / a0);
+        _b2 = (float)(b2 / a0);
+        _a1 = (float)(a1 / a0);
+        _a2 = (float)(a2 / a0);
+        _z1 = _z2 = 0;
+    }
+
+    public static Biquad LowPass(double sampleRate, double frequency, double q)
+    {
+        var (cos, alpha) = Prepare(sampleRate, frequency, q);
+        return new((1 - cos) / 2, 1 - cos, (1 - cos) / 2, 1 + alpha, -2 * cos, 1 - alpha);
+    }
+
+    public static Biquad HighPass(double sampleRate, double frequency, double q)
+    {
+        var (cos, alpha) = Prepare(sampleRate, frequency, q);
+        return new((1 + cos) / 2, -(1 + cos), (1 + cos) / 2, 1 + alpha, -2 * cos, 1 - alpha);
+    }
+
+    /// <summary>Band-pass with 0 dB gain at the centre frequency.</summary>
+    public static Biquad BandPass(double sampleRate, double frequency, double q)
+    {
+        var (cos, alpha) = Prepare(sampleRate, frequency, q);
+        return new(alpha, 0, -alpha, 1 + alpha, -2 * cos, 1 - alpha);
+    }
+
+    private static (double Cos, double Alpha) Prepare(double sampleRate, double frequency, double q)
+    {
+        // Keep the corner below Nyquist so very low sample rates still give a stable filter.
+        var f = Math.Min(frequency, sampleRate * 0.45);
+        var w0 = 2 * Math.PI * f / sampleRate;
+        return (Math.Cos(w0), Math.Sin(w0) / (2 * q));
+    }
+
+    public float Process(float x)
+    {
+        var y = _b0 * x + _z1;
+        _z1 = _b1 * x - _a1 * y + _z2;
+        _z2 = _b2 * x - _a2 * y;
+        // Flush denormals after long silence; they are very slow on some processors.
+        if (Math.Abs(_z1) < 1e-20f) _z1 = 0;
+        if (Math.Abs(_z2) < 1e-20f) _z2 = 0;
+        return y;
+    }
+}
+
+/// <summary>
+/// Turns interleaved float samples into <see cref="WaveformColumn"/>s, one per ~5 ms block, and
+/// passes the mono mix to a <see cref="WaveformSampleTap"/> for the live views. Runs on the
+/// capture thread only. Peak and RMS use every channel; the three bands use the mono mix
+/// (bass under 200 Hz, mids around 1.2 kHz, highs over 5 kHz).
+/// </summary>
+internal sealed class WaveformAnalyzer
+{
+    public const double BlockSeconds = 0.005;
+    public const double ColumnsPerSecond = 1 / BlockSeconds;
+    private readonly int _channels;
+    private readonly int _blockFrames;
+    private readonly WaveformSampleTap? _tap;
+    private Biquad _low, _mid, _high;
+    private int _frames;
+    private float _peak;
+    private double _sumSquares, _lowSquares, _midSquares, _highSquares;
+
+    public WaveformAnalyzer(int sampleRate, int channels, WaveformSampleTap? tap = null)
+    {
+        if (sampleRate <= 0) throw new ArgumentOutOfRangeException(nameof(sampleRate));
+        if (channels <= 0) throw new ArgumentOutOfRangeException(nameof(channels));
+        _channels = channels;
+        _tap = tap;
+        if (tap is not null) tap.SampleRate = sampleRate;
+        _blockFrames = Math.Max(1, (int)Math.Round(sampleRate * BlockSeconds));
+        _low = Biquad.LowPass(sampleRate, 200, 0.707);
+        _mid = Biquad.BandPass(sampleRate, 1200, 0.6);
+        _high = Biquad.HighPass(sampleRate, 5000, 0.707);
+    }
+
+    public int BlockFrames => _blockFrames;
+    public long ColumnsWritten { get; private set; }
+
+    /// <summary>Analyses whole frames of interleaved samples; a trailing partial frame is ignored.</summary>
+    public void Process(ReadOnlySpan<float> interleaved, WaveformRing ring)
+    {
+        var frames = interleaved.Length / _channels;
+        var scale = 1f / _channels;
+        for (var frame = 0; frame < frames; frame++)
+        {
+            var offset = frame * _channels;
+            var mono = 0f;
+            for (var channel = 0; channel < _channels; channel++)
+            {
+                var sample = interleaved[offset + channel];
+                if (!float.IsFinite(sample)) sample = 0;
+                var magnitude = Math.Abs(sample);
+                if (magnitude > _peak) _peak = magnitude;
+                _sumSquares += sample * sample;
+                mono += sample;
+            }
+            AddMono(mono * scale, ring);
+        }
+    }
+
+    /// <summary>Counts frames that Windows reported as silent, keeping the filters' memory.</summary>
+    public void ProcessSilence(int frames, WaveformRing ring)
+    {
+        for (var frame = 0; frame < frames; frame++) AddMono(0, ring);
+    }
+
+    private void AddMono(float mono, WaveformRing ring)
+    {
+        _tap?.Write(mono);
+        var low = _low.Process(mono);
+        var mid = _mid.Process(mono);
+        var high = _high.Process(mono);
+        _lowSquares += low * low;
+        _midSquares += mid * mid;
+        _highSquares += high * high;
+        if (++_frames < _blockFrames) return;
+        var count = (double)_frames;
+        ring.TryWrite(new WaveformColumn(
+            Math.Min(1f, _peak),
+            (float)Math.Min(1, Math.Sqrt(_sumSquares / (count * _channels))),
+            (float)Math.Sqrt(_lowSquares / count),
+            (float)Math.Sqrt(_midSquares / count),
+            (float)Math.Sqrt(_highSquares / count)));
+        ColumnsWritten++;
+        _frames = 0;
+        _peak = 0;
+        _sumSquares = _lowSquares = _midSquares = _highSquares = 0;
+    }
+}
+
+/// <summary>
+/// Lock-free single-producer, single-consumer queue of columns: the capture thread writes,
+/// the drawing code reads. When full (the reader stopped), new columns are dropped.
+/// </summary>
+internal sealed class WaveformRing
+{
+    private readonly WaveformColumn[] _items;
+    private readonly long _mask;
+    private long _head; // Next slot to write; only the producer changes it.
+    private long _tail; // Next slot to read; only the consumer changes it.
+
+    public WaveformRing(int capacity)
+    {
+        if (capacity < 2 || (capacity & (capacity - 1)) != 0) throw new ArgumentException("Capacity must be a power of two.", nameof(capacity));
+        _items = new WaveformColumn[capacity];
+        _mask = capacity - 1;
+    }
+
+    public int Count => (int)(Volatile.Read(ref _head) - Volatile.Read(ref _tail));
+
+    public bool TryWrite(in WaveformColumn column)
+    {
+        var head = _head;
+        if (head - Volatile.Read(ref _tail) >= _items.Length) return false;
+        _items[head & _mask] = column;
+        Volatile.Write(ref _head, head + 1); // Publishes the slot after it is written.
+        return true;
+    }
+
+    public bool TryRead(out WaveformColumn column)
+    {
+        var tail = _tail;
+        if (tail == Volatile.Read(ref _head))
+        {
+            column = default;
+            return false;
+        }
+        column = _items[tail & _mask];
+        Volatile.Write(ref _tail, tail + 1);
+        return true;
+    }
+
+    /// <summary>Consumer only: drops everything waiting, for example after a pause.</summary>
+    public void Clear() => Volatile.Write(ref _tail, Volatile.Read(ref _head));
+}
+
+/// <summary>
+/// The newest mono samples, for the live views (spectrum, oscilloscope, pulse). The capture
+/// thread writes one sample at a time; the drawing code copies the newest few thousand.
+/// Old samples are simply overwritten, so a slow reader never holds the writer up.
+/// </summary>
+internal sealed class WaveformSampleTap
+{
+    public const int Capacity = 8192;
+    private readonly float[] _samples = new float[Capacity];
+    private long _written;
+    private int _sampleRate = 48000;
+
+    public int SampleRate
+    {
+        get => Volatile.Read(ref _sampleRate);
+        set => Volatile.Write(ref _sampleRate, value);
+    }
+
+    public long Written => Volatile.Read(ref _written);
+
+    public void Write(float sample)
+    {
+        var written = _written;
+        _samples[written & (Capacity - 1)] = sample;
+        Volatile.Write(ref _written, written + 1);
+    }
+
+    /// <summary>Copies the newest samples, oldest first. Before enough have arrived, pads with silence.</summary>
+    public void CopyLatest(Span<float> destination)
+    {
+        if (destination.Length > Capacity / 2) throw new ArgumentException("Ask for at most half the capacity.", nameof(destination));
+        var end = Written;
+        var start = end - destination.Length;
+        for (var i = 0; i < destination.Length; i++)
+        {
+            var index = start + i;
+            destination[i] = index < 0 ? 0 : _samples[index & (Capacity - 1)];
+        }
+    }
+}
+
+/// <summary>The three palette colours a look mixes by band energy.</summary>
+internal readonly record struct WaveformPalette(WaveformRgb Low, WaveformRgb Mid, WaveformRgb High)
+{
+    // Band weights even out typical music, where bass carries far more energy than highs.
+    public const float LowWeight = 1f, MidWeight = 1.8f, HighWeight = 4.5f;
+
+    public static WaveformPalette For(WaveformLook look) => look switch
+    {
+        WaveformLook.Neon => From((150, 50, 255), (255, 50, 190), (40, 235, 255)),
+        WaveformLook.Ember => From((255, 55, 10), (255, 165, 25), (255, 240, 190)),
+        WaveformLook.Ice => From((110, 180, 255), (185, 228, 255), (255, 255, 255)),
+        _ => From((255, 50, 95), (70, 255, 150), (80, 165, 255))
+    };
+
+    private static WaveformPalette From((int R, int G, int B) low, (int R, int G, int B) mid, (int R, int G, int B) high) =>
+        new(Rgb(low), Rgb(mid), Rgb(high));
+
+    private static WaveformRgb Rgb((int R, int G, int B) c) => new(c.R / 255f, c.G / 255f, c.B / 255f);
+
+    /// <summary>
+    /// How much of each colour to use for the given band energies, after weighting. Silence
+    /// (or unusable values) is all mid colour. The three weights add up to 1.
+    /// </summary>
+    public static (float Low, float Mid, float High) Weights(float low, float mid, float high)
+    {
+        var a = Usable(low) * LowWeight;
+        var b = Usable(mid) * MidWeight;
+        var c = Usable(high) * HighWeight;
+        var sum = a + b + c;
+        return sum < 1e-9f ? (0, 1, 0) : (a / sum, b / sum, c / sum);
+    }
+
+    /// <summary>The weighted mix, brightened so the strongest channel is full. The shaders do the same.</summary>
+    public WaveformRgb Mix(float lowWeight, float midWeight, float highWeight) => Brighten(new WaveformRgb(
+        Low.R * lowWeight + Mid.R * midWeight + High.R * highWeight,
+        Low.G * lowWeight + Mid.G * midWeight + High.G * highWeight,
+        Low.B * lowWeight + Mid.B * midWeight + High.B * highWeight));
+
+    public WaveformRgb Mix(WaveformBar bar) => Mix(bar.LowWeight, bar.MidWeight, bar.HighWeight);
+
+    private static float Usable(float value) => float.IsFinite(value) && value > 0 ? value : 0;
+
+    private static WaveformRgb Brighten(WaveformRgb colour)
+    {
+        var k = 1f / Math.Max(1e-3f, Math.Max(colour.R, Math.Max(colour.G, colour.B)));
+        return new(colour.R * k, colour.G * k, colour.B * k);
+    }
+}
+
+/// <summary>
+/// Turns columns into bars: smooths the band colour so it does not flicker, and (optionally)
+/// scales to the recent loudest peak.
+/// </summary>
+internal sealed class WaveformLevels
+{
+    /// <summary>Auto level falls by half every five seconds, so quiet passages stay quiet.</summary>
+    public const double HalfLifeSeconds = 5;
+    public const float Floor = 0.02f;
+    public const float Target = 0.92f;
+    /// <summary>RMS is drawn larger than its value; for music it sits well below the peak.</summary>
+    public const float RmsBoost = 1.45f;
+    private const double ColourSeconds = 0.028;
+
+    private readonly bool _autoLevel;
+    private readonly float _decay;
+    private readonly float _colourStep;
+    private float _envelope = 0.15f;
+    private float _low, _mid, _high;
+
+    public WaveformLevels(bool autoLevel)
+    {
+        _autoLevel = autoLevel;
+        _decay = (float)Math.Pow(0.5, WaveformAnalyzer.BlockSeconds / HalfLifeSeconds);
+        _colourStep = (float)(1 - Math.Exp(-WaveformAnalyzer.BlockSeconds / ColourSeconds));
+    }
+
+    public float Envelope => _envelope;
+
+    /// <summary>The gain the live views use: 0.92 of the recent loudest peak, or 1.</summary>
+    public float Gain => _autoLevel ? Target / _envelope : 1;
+
+    /// <summary>The current, smoothed colour weights.</summary>
+    public (float Low, float Mid, float High) Weights => WaveformPalette.Weights(_low, _mid, _high);
+
+    public WaveformBar Next(in WaveformColumn column)
+    {
+        _low += (column.Low - _low) * _colourStep;
+        _mid += (column.Mid - _mid) * _colourStep;
+        _high += (column.High - _high) * _colourStep;
+        if (_autoLevel) _envelope = Math.Max(column.Peak, Math.Max(_envelope * _decay, Floor));
+        var scale = Gain;
+        var (low, _, high) = Weights;
+        return new WaveformBar(
+            Math.Clamp(column.Peak * scale, 0, 1),
+            Math.Clamp(column.Rms * scale * RmsBoost, 0, 1),
+            low,
+            high);
+    }
+}
+
+/// <summary>
+/// The scrolling views' history: one entry per pixel or more, so the GPU texture always covers
+/// the full width. At high speeds an entry is one 5 ms column; at low speeds several columns
+/// are merged (loudest peak and RMS, average colour).
+/// </summary>
+internal sealed class WaveformHistory
+{
+    public const int Length = 4096;
+    private double _carry;
+    private float _peak, _rms, _low, _high;
+    private int _merged;
+
+    /// <param name="pixelsPerSecond">Physical pixels the picture moves each second.</param>
+    public WaveformHistory(double pixelsPerSecond)
+    {
+        ColumnsPerEntry = Math.Max(1, WaveformAnalyzer.ColumnsPerSecond / Math.Max(1, pixelsPerSecond));
+        PixelsPerEntry = pixelsPerSecond * ColumnsPerEntry / WaveformAnalyzer.ColumnsPerSecond;
+    }
+
+    public double ColumnsPerEntry { get; }
+    public double PixelsPerEntry { get; }
+    public long Written { get; private set; }
+
+    /// <summary>Adds one column's bar; returns true when that completed an entry.</summary>
+    public bool Add(in WaveformBar bar, out WaveformBar entry)
+    {
+        _peak = Math.Max(_peak, bar.Peak);
+        _rms = Math.Max(_rms, bar.Rms);
+        _low += bar.LowWeight;
+        _high += bar.HighWeight;
+        _merged++;
+        _carry += 1;
+        if (_carry < ColumnsPerEntry)
+        {
+            entry = default;
+            return false;
+        }
+        _carry -= ColumnsPerEntry;
+        entry = new WaveformBar(_peak, _rms, _low / _merged, _high / _merged);
+        _peak = _rms = _low = _high = 0;
+        _merged = 0;
+        Written++;
+        return true;
+    }
+}
+
+/// <summary>
+/// Where the scrolling picture's newest edge is, in columns, moving smoothly at the audio rate.
+/// Columns arrive in 10 ms packets, so the picture stays a little behind the newest one and
+/// gently speeds up or slows down to keep that distance, instead of jumping with each packet.
+/// </summary>
+internal sealed class WaveformClock
+{
+    /// <summary>How far behind the newest column the picture runs (40 ms).</summary>
+    public const double Latency = 8;
+    /// <summary>Further behind than this (a stall, a pause) and the picture jumps back in line.</summary>
+    public const double MaximumLag = 48;
+    private double _position = double.NaN;
+
+    /// <param name="seconds">Time since the last frame.</param>
+    /// <param name="received">Columns received so far.</param>
+    public double Advance(double seconds, long received)
+    {
+        var target = received - Latency;
+        if (double.IsNaN(_position) || target - _position > MaximumLag) _position = target;
+        // Up to 5% faster or slower, so packet timing and clock drift never show as jumps.
+        var error = Math.Clamp((target - _position) / Latency, -1, 1);
+        _position += Math.Max(0, seconds) * WaveformAnalyzer.ColumnsPerSecond * (1 + 0.05 * error);
+        // Never run past what has arrived; wait for the next packet instead.
+        _position = Math.Min(_position, received - 1);
+        return _position;
+    }
+}
+
+/// <summary>A radix-2 complex FFT, in place.</summary>
+internal static class WaveformFft
+{
+    public static void Forward(Span<float> real, Span<float> imaginary)
+    {
+        var n = real.Length;
+        if (n != imaginary.Length || n < 2 || (n & (n - 1)) != 0) throw new ArgumentException("Length must be a power of two.");
+        for (int i = 1, j = 0; i < n; i++)
+        {
+            var bit = n >> 1;
+            for (; (j & bit) != 0; bit >>= 1) j ^= bit;
+            j |= bit;
+            if (i < j)
+            {
+                (real[i], real[j]) = (real[j], real[i]);
+                (imaginary[i], imaginary[j]) = (imaginary[j], imaginary[i]);
+            }
+        }
+        for (var length = 2; length <= n; length <<= 1)
+        {
+            var angle = -2 * Math.PI / length;
+            var stepReal = Math.Cos(angle);
+            var stepImaginary = Math.Sin(angle);
+            for (var start = 0; start < n; start += length)
+            {
+                double wReal = 1, wImaginary = 0;
+                for (var k = 0; k < length / 2; k++)
+                {
+                    var even = start + k;
+                    var odd = even + length / 2;
+                    var tReal = (float)(wReal * real[odd] - wImaginary * imaginary[odd]);
+                    var tImaginary = (float)(wReal * imaginary[odd] + wImaginary * real[odd]);
+                    real[odd] = real[even] - tReal;
+                    imaginary[odd] = imaginary[even] - tImaginary;
+                    real[even] += tReal;
+                    imaginary[even] += tImaginary;
+                    var next = wReal * stepReal - wImaginary * stepImaginary;
+                    wImaginary = wReal * stepImaginary + wImaginary * stepReal;
+                    wReal = next;
+                }
+            }
+        }
+    }
+}
+
+/// <summary>
+/// Frequency levels for the spectrum views: a 2048-point FFT of the newest samples, grouped into
+/// log-spaced bands from 30 Hz to 16 kHz, shown over a 60 dB range. Bars rise at once and fall
+/// smoothly; each band's peak marker holds briefly, then drops.
+/// </summary>
+internal sealed class WaveformSpectrum
+{
+    public const int Size = 2048;
+    public const int Bands = 96;
+    public const double LowestHz = 30;
+    public const double HighestHz = 16000;
+    public const float RangeDb = 60;
+    /// <summary>Without auto level, 0 dB (full scale) reaches the top less this headroom.</summary>
+    public const float FixedTopDb = -6;
+    private const float FallPerSecond = 1.4f;
+    private const float PeakFallPerSecond = 0.7f;
+    private const float PeakHoldSeconds = 0.35f;
+    private const float TopFallDbPerSecond = 4;
+
+    private readonly bool _autoLevel;
+    private readonly float[] _window = new float[Size];
+    private readonly float[] _real = new float[Size];
+    private readonly float[] _imaginary = new float[Size];
+    private readonly float[] _levels = new float[Bands];
+    private readonly float[] _peaks = new float[Bands];
+    private readonly float[] _hold = new float[Bands];
+    private readonly double[] _bandLow = new double[Bands];
+    private readonly double[] _bandHigh = new double[Bands];
+    private float _topDb = -20;
+
+    public WaveformSpectrum(bool autoLevel)
+    {
+        _autoLevel = autoLevel;
+        for (var i = 0; i < Size; i++) _window[i] = (float)(0.5 - 0.5 * Math.Cos(2 * Math.PI * i / (Size - 1)));
+        for (var band = 0; band < Bands; band++)
+        {
+            _bandLow[band] = LowestHz * Math.Pow(HighestHz / LowestHz, band / (double)Bands);
+            _bandHigh[band] = LowestHz * Math.Pow(HighestHz / LowestHz, (band + 1) / (double)Bands);
+        }
+    }
+
+    public ReadOnlySpan<float> Levels => _levels;
+    public ReadOnlySpan<float> Peaks => _peaks;
+
+    /// <summary>Amplitude (0 to 1, as a sine's peak) of one band in the last analysed block.</summary>
+    public float BandAmplitude(int band) => _amplitudes[band];
+    private readonly float[] _amplitudes = new float[Bands];
+
+    public void Update(ReadOnlySpan<float> samples, int sampleRate, double seconds)
+    {
+        if (samples.Length != Size) throw new ArgumentException($"Pass exactly {Size} samples.", nameof(samples));
+        var s = (float)Math.Clamp(seconds, 0, 0.25);
+        for (var i = 0; i < Size; i++)
+        {
+            var sample = samples[i];
+            _real[i] = float.IsFinite(sample) ? sample * _window[i] : 0;
+            _imaginary[i] = 0;
+        }
+        WaveformFft.Forward(_real, _imaginary);
+
+        // A Hann-windowed sine of amplitude A peaks at A * N / 4.
+        var scale = 4f / Size;
+        var binHz = sampleRate / (double)Size;
+        var frameTop = float.MinValue;
+        Span<float> decibels = stackalloc float[Bands];
+        for (var band = 0; band < Bands; band++)
+        {
+            var first = (int)Math.Ceiling(_bandLow[band] / binHz);
+            var last = Math.Min(Size / 2 - 1, (int)Math.Floor(_bandHigh[band] / binHz));
+            float amplitude;
+            if (last >= first)
+            {
+                amplitude = 0;
+                for (var bin = first; bin <= last; bin++) amplitude = Math.Max(amplitude, Magnitude(bin));
+            }
+            else
+            {
+                // Narrower than one bin (the bass): read between the two nearest bins.
+                var position = Math.Sqrt(_bandLow[band] * _bandHigh[band]) / binHz;
+                var below = Math.Clamp((int)Math.Floor(position), 0, Size / 2 - 2);
+                var t = (float)Math.Clamp(position - below, 0, 1);
+                amplitude = Magnitude(below) + (Magnitude(below + 1) - Magnitude(below)) * t;
+            }
+            amplitude *= scale;
+            _amplitudes[band] = amplitude;
+            decibels[band] = 20 * MathF.Log10(amplitude + 1e-7f);
+            frameTop = Math.Max(frameTop, decibels[band]);
+        }
+
+        _topDb = _autoLevel ? Math.Clamp(Math.Max(frameTop, _topDb - TopFallDbPerSecond * s), -50, 0) : FixedTopDb;
+        var floor = _topDb - RangeDb;
+        for (var band = 0; band < Bands; band++)
+        {
+            var target = Math.Clamp((decibels[band] - floor) / RangeDb, 0, 1);
+            var level = _levels[band];
+            level = target >= level ? level + (target - level) * Math.Min(1, s * 40) : Math.Max(target, level - FallPerSecond * s);
+            _levels[band] = level;
+            if (level >= _peaks[band])
+            {
+                _peaks[band] = level;
+                _hold[band] = PeakHoldSeconds;
+            }
+            else if ((_hold[band] -= s) <= 0)
+            {
+                _peaks[band] = Math.Max(level, _peaks[band] - PeakFallPerSecond * s);
+            }
+        }
+    }
+
+    private float Magnitude(int bin) => MathF.Sqrt(_real[bin] * _real[bin] + _imaginary[bin] * _imaginary[bin]);
+}
+
+/// <summary>The oscilloscope's line: a steady window of the newest wave.</summary>
+internal static class WaveformScope
+{
+    public const int Points = 1024;
+
+    /// <summary>
+    /// Copies <see cref="Points"/> samples starting at the newest rising zero crossing that still
+    /// leaves a full window, so a steady note holds still instead of sliding. Gain is applied
+    /// and the result kept within -1 to 1.
+    /// </summary>
+    public static void Prepare(ReadOnlySpan<float> recent, Span<float> output, float gain)
+    {
+        var points = output.Length;
+        if (recent.Length < points * 2) throw new ArgumentException("Pass at least twice as many recent samples as points.", nameof(recent));
+        var latestStart = recent.Length - points;
+        var start = latestStart;
+        // A little hysteresis so noise around zero does not count as a crossing.
+        var threshold = 0.01f / Math.Max(1, gain);
+        for (var i = latestStart; i > latestStart - points && i > 0; i--)
+        {
+            if (recent[i - 1] < -threshold && recent[i] >= 0)
+            {
+                start = i;
+                break;
+            }
+        }
+        for (var i = 0; i < points; i++) output[i] = Math.Clamp(recent[start + i] * gain, -1, 1);
+    }
+}
+
+/// <summary>The Pulse view's bars: the loudest sample in each slice of the newest sound, falling smoothly.</summary>
+internal sealed class WaveformPulse
+{
+    public const int Bars = 64;
+    private const float FallPerSecond = 2.5f;
+    private readonly float[] _levels = new float[Bars];
+
+    public ReadOnlySpan<float> Levels => _levels;
+
+    public void Update(ReadOnlySpan<float> recent, float gain, double seconds)
+    {
+        var slice = recent.Length / Bars;
+        if (slice == 0) return;
+        var fall = (float)(FallPerSecond * Math.Clamp(seconds, 0, 0.25));
+        for (var bar = 0; bar < Bars; bar++)
+        {
+            var loudest = 0f;
+            for (var i = bar * slice; i < (bar + 1) * slice; i++) loudest = Math.Max(loudest, Math.Abs(recent[i]));
+            var target = Math.Clamp(loudest * gain, 0, 1);
+            _levels[bar] = target >= _levels[bar] ? target : Math.Max(target, _levels[bar] - fall);
+        }
+    }
+}
