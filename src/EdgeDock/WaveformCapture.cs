@@ -163,7 +163,8 @@ internal sealed class WaveformCapture : IDisposable
             // the clock: the drawing side then keeps scrolling at a steady speed.
             var clock = Stopwatch.StartNew();
             var columnsAtStart = analyzer.ColumnsWritten;
-            var nextDeviceCheck = TimeSpan.FromSeconds(1);
+            // Device checks keep their own clock: the column clock above restarts when it drifts.
+            var sinceDeviceCheck = Stopwatch.StartNew();
             WaitHandle[] waits = [_stop, _audioReady];
             while (true)
             {
@@ -205,9 +206,9 @@ internal sealed class WaveformCapture : IDisposable
                     clock.Restart();
                 }
 
-                if (clock.Elapsed >= nextDeviceCheck)
+                if (sinceDeviceCheck.Elapsed >= TimeSpan.FromSeconds(1))
                 {
-                    nextDeviceCheck = clock.Elapsed + TimeSpan.FromSeconds(1);
+                    sinceDeviceCheck.Restart();
                     if (DeviceChanged(enumerator, device, deviceId, loopback)) return;
                 }
             }

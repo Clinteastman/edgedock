@@ -233,18 +233,21 @@ internal sealed class WaveformWidget : UserControl
 
     // ---------- Choosing views (touch bar, grid, cycle) ----------
 
-    private void ChangeSettings(WaveformSettings next)
+    /// <param name="save">False for the cycle's own steps, which are not choices to keep.</param>
+    private void ChangeSettings(WaveformSettings next, bool save = true)
     {
         next = WaveformSettings.Normalize(next);
         if (next.View != _settings.View)
         {
             _fadingFrom = _settings.View;
             _fadeStarted = _time;
-            _viewSince = _time;
         }
+        // The cycle's next step is timed from now, even when the view stays the same.
+        _viewSince = _time;
+        var changed = !next.SameAs(_settings);
         _settings = next;
         UpdateBar();
-        _save?.Invoke(next);
+        if (save && changed) _save?.Invoke(next);
     }
 
     private void StepView(int direction)
@@ -558,7 +561,7 @@ internal sealed class WaveformWidget : UserControl
 
         // Cycle mode: move on once this view has had its time.
         if (_settings.CycleSeconds > 0 && _time - _viewSince >= _settings.CycleSeconds)
-            ChangeSettings(_settings with { View = _settings.NextInCycle(_settings.View) });
+            ChangeSettings(_settings with { View = _settings.NextInCycle(_settings.View) }, save: false);
 
         var fade = _fadingFrom is null ? 1 : Math.Clamp((_time - _fadeStarted) / FadeSeconds, 0, 1);
         if (fade >= 1) _fadingFrom = null;
