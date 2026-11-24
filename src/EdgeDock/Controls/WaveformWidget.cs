@@ -97,6 +97,7 @@ internal sealed class WaveformWidget : UserControl
     private double _spectrogramCarry;
     private bool _spectrogramLive;
     private float _historyScale;
+    private double _historySpeed;
     private double _time, _hue;
     // The views' own clocks: they run at each view's Speed slider.
     private double _shaderTime, _shaderTravel;
@@ -780,15 +781,26 @@ internal sealed class WaveformWidget : UserControl
         var fade = _fadingFrom is null ? 1 : Math.Clamp((_time - _fadeStarted) / _fadeLength, 0, 1);
         if (fade >= 1) _fadingFrom = null;
         var needs = NeedsOf(_settings.View) | (_fadingFrom is { } from ? NeedsOf(from) : Needs.None);
-        if (_settings.View == WaveformView.Mashup || _fadingFrom == WaveformView.Mashup)
-            needs |= NeedsOf(MashupPool[_mashBase]) | NeedsOf(MashupPool[_mashTop]);
-
-        // Read the new 5 ms columns: level, colour, beat and the scrolling history.
-        var scrolling = needs.HasFlag(Needs.History);
-        if (scrolling && (_history is null || _historyScale != scale))
+        // Mashup and Blend over layers: this frame's pair is chosen first, so their data is ready too.
+        var layered = _settings.View == WaveformView.Mashup || _fadingFrom == WaveformView.Mashup ||
+            _settings.TweaksFor(_settings.View).Blend > 0.01 || (_fadingFrom is { } faded && _settings.TweaksFor(faded).Blend > 0.01);
+        if (layered)
         {
-            _history = new WaveformHistory(_settings.Speed * scale);
+            AdvanceMashup();
+            needs |= NeedsOf(MashupPool[_mashBase]) | NeedsOf(MashupPool[_mashTop]);
+        }
+
+        // Read the new 5 ms columns: level, colour, beat and the scrolling history. The history
+        // scrolls at the speed setting times the scrolling view's own Speed slider; a new speed
+        // starts it afresh.
+        var scrolling = needs.HasFlag(Needs.History);
+        var scrollView = NeedsOf(_settings.View).HasFlag(Needs.History) || _fadingFrom is not { } previous ? _settings.View : previous;
+        var scrollSpeed = _settings.Speed * _settings.TweaksFor(scrollView).Speed;
+        if (scrolling && (_history is null || _historyScale != scale || _historySpeed != scrollSpeed))
+        {
+            _history = new WaveformHistory(scrollSpeed * scale);
             _historyScale = scale;
+            _historySpeed = scrollSpeed;
             _newEntries.Clear();
         }
         if (!scrolling) _history = null;
@@ -944,12 +956,12 @@ internal sealed class WaveformWidget : UserControl
             }
             case Renderer.Spectrogram:
                 ((PixelShaderEffect<WaveformSpectrogramShader>)effect).ConstantBuffer = new WaveformSpectrogramShader(
-                    size, low, mid, high, SpectrogramHead(), (float)(_settings.Speed * scale / SpectrogramRate), SpectrogramAvailable());
+                    size, low, mid, high, SpectrogramHead(), (float)(_settings.Speed * tweaks.Speed * scale / SpectrogramRate), SpectrogramAvailable());
                 break;
             case Renderer.Ridges:
                 // Ridges sit a fixed time apart: the faster the speed, the closer in time.
                 ((PixelShaderEffect<WaveformRidgesShader>)effect).ConstantBuffer = new WaveformRidgesShader(
-                    size, low, mid, high, SpectrogramHead(), (float)Math.Clamp(1200 / _settings.Speed, 2, 40), SpectrogramAvailable());
+                    size, low, mid, high, SpectrogramHead(), (float)Math.Clamp(1200 / (_settings.Speed * tweaks.Speed), 2, 40), SpectrogramAvailable());
                 break;
             case Renderer.Bars:
                 ((PixelShaderEffect<WaveformBarsShader>)effect).ConstantBuffer = new WaveformBarsShader(
@@ -996,7 +1008,7 @@ internal sealed class WaveformWidget : UserControl
             case Renderer.Orbs:
                 // Rows sit a fixed time apart: the faster the speed, the closer in time.
                 ((PixelShaderEffect<WaveformOrbShader>)effect).ConstantBuffer = new WaveformOrbShader(
-                    size, low, mid, high, SpectrogramHead(), (float)Math.Clamp(900 / _settings.Speed, 2, 30), SpectrogramAvailable(),
+                    size, low, mid, high, SpectrogramHead(), (float)Math.Clamp(900 / (_settings.Speed * tweaks.Speed), 2, 30), SpectrogramAvailable(),
                     energy, flash);
                 break;
             case Renderer.Wild:
