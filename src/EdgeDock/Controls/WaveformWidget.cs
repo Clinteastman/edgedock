@@ -111,6 +111,8 @@ internal sealed class WaveformWidget : UserControl
     private readonly List<(Slider Slider, TextBlock Value, Func<double, string> Format)> _sliders = [];
     private Slider _speedSlider = null!, _reactSlider = null!, _brightSlider = null!, _hueSlider = null!, _trailSlider = null!, _blendSlider = null!;
     private readonly ToggleButton _cameraButton = new();
+    private readonly List<(Grid Row, ColumnDefinition Label, ColumnDefinition Value, Slider Slider)> _sliderRows = [];
+    private bool? _tweaksNarrow;
     private WaveformView _tweakView;
     private bool _loadingTweaks;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _saveTimer;
@@ -148,6 +150,7 @@ internal sealed class WaveformWidget : UserControl
         AutomationProperties.SetHelpText(this, "A moving picture of the sound. Tap to change the view.");
         Tapped += Widget_Tapped;
         Loaded += (_, _) => Start();
+        SizeChanged += (_, _) => FitTweaks();
         Unloaded += (_, _) => Stop();
     }
 
@@ -536,28 +539,37 @@ internal sealed class WaveformWidget : UserControl
         _trailSlider = AddSlider(content, "Trails", 0, WaveformTweaks.MaximumTrails, 0.02, value => $"{value * 100:0}%");
         _blendSlider = AddSlider(content, "Blend over", 0, 1, 0.05, value => $"{value * 100:0}%");
 
-        _cameraButton.Content = new TextBlock { Text = "Camera move", FontSize = 18 };
+        _cameraButton.Content = new TextBlock { Text = "Camera", FontSize = 18 };
         _cameraButton.MinHeight = 52;
-        _cameraButton.MinWidth = 150;
+        _cameraButton.HorizontalAlignment = HorizontalAlignment.Stretch;
         _cameraButton.AllowFocusOnInteraction = false;
         _cameraButton.CornerRadius = new CornerRadius(10);
         AutomationProperties.SetName(_cameraButton, "Camera move");
         _cameraButton.Click += (_, _) => TweaksChanged();
 
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 0) };
-        buttons.Children.Add(_cameraButton);
-        buttons.Children.Add(TouchButton("Reset", "Reset this view's sliders", (_, _) =>
+        // Three equal buttons that share whatever width the panel has.
+        var buttons = new Grid { ColumnSpacing = 8, Margin = new Thickness(0, 6, 0, 0) };
+        for (var i = 0; i < 3; i++) buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var reset = TouchButton("Reset", "Reset this view's sliders", (_, _) =>
         {
             LoadTweaks(WaveformTweaks.Default);
             TweaksChanged();
-        }, 96));
-        buttons.Children.Add(TouchButton("Done", "Close the sliders", (_, _) => CloseTweaks(), 96));
+        }, 0);
+        var done = TouchButton("Done", "Close the sliders", (_, _) => CloseTweaks(), 0);
+        reset.HorizontalAlignment = done.HorizontalAlignment = HorizontalAlignment.Stretch;
+        Grid.SetColumn(reset, 1);
+        Grid.SetColumn(done, 2);
+        buttons.Children.Add(_cameraButton);
+        buttons.Children.Add(reset);
+        buttons.Children.Add(done);
         content.Children.Add(buttons);
 
         _tweakPanel.Child = new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         _tweakPanel.Background = BarBackground;
         _tweakPanel.CornerRadius = new CornerRadius(16);
         _tweakPanel.Margin = new Thickness(12);
+        // At most 520 wide; FitTweaks narrows it (and stacks each slider under its name) to fit
+        // the widget, which can be as narrow as 240 beside a web panel.
         _tweakPanel.Width = 520;
         _tweakPanel.HorizontalAlignment = HorizontalAlignment.Left;
         _tweakPanel.VerticalAlignment = VerticalAlignment.Stretch;
@@ -573,9 +585,13 @@ internal sealed class WaveformWidget : UserControl
     private Slider AddSlider(Panel parent, string label, double minimum, double maximum, double step, Func<double, string> format)
     {
         var row = new Grid { ColumnSpacing = 10 };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
+        var labelColumn = new ColumnDefinition { Width = new GridLength(110) };
+        var valueColumn = new ColumnDefinition { Width = new GridLength(70) };
+        row.ColumnDefinitions.Add(labelColumn);
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });
+        row.ColumnDefinitions.Add(valueColumn);
+        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var name = new TextBlock { Text = label, FontSize = 17, VerticalAlignment = VerticalAlignment.Center };
         var slider = new Slider
         {
@@ -599,6 +615,7 @@ internal sealed class WaveformWidget : UserControl
         row.Children.Add(value);
         parent.Children.Add(row);
         _sliders.Add((slider, value, format));
+        _sliderRows.Add((row, labelColumn, valueColumn, slider));
         slider.ValueChanged += (_, _) =>
         {
             value.Text = format(slider.Value);
@@ -607,8 +624,37 @@ internal sealed class WaveformWidget : UserControl
         return slider;
     }
 
+    /// <summary>
+    /// Fits the Tweak panel to the widget: up to 520 wide, and below 420 each slider moves onto
+    /// its own line under its name and value so it keeps a usable length.
+    /// </summary>
+    private void FitTweaks()
+    {
+        var available = ActualWidth - 24;
+        if (available <= 0) return;
+        _tweakPanel.Width = Math.Min(520, available);
+        var narrow = _tweakPanel.Width < 420;
+        if (_tweaksNarrow == narrow) return;
+        _tweaksNarrow = narrow;
+        // A narrow panel spans the widget: start it below EdgeDock's controls handle (top right).
+        _tweakPanel.Margin = new Thickness(12, narrow ? 64 : 12, 12, 12);
+        foreach (var (row, label, value, slider) in _sliderRows)
+        {
+            // Narrow: name left and value right on the first line, the slider across the second.
+            label.Width = narrow ? new GridLength(1, GridUnitType.Star) : new GridLength(110);
+            value.Width = narrow ? new GridLength(1, GridUnitType.Star) : new GridLength(70);
+            Grid.SetRow(slider, narrow ? 1 : 0);
+            Grid.SetColumn(slider, narrow ? 0 : 1);
+            Grid.SetColumnSpan(slider, narrow ? 3 : 1);
+            var number = row.Children.OfType<TextBlock>().Last();
+            Grid.SetColumn(number, narrow ? 1 : 2);
+            Grid.SetColumnSpan(number, narrow ? 2 : 1);
+        }
+    }
+
     private void OpenTweaks()
     {
+        FitTweaks();
         _tweakView = _settings.View;
         _tweakTitle.Text = "Tweak: " + WaveformNames.View(_tweakView);
         LoadTweaks(_settings.TweaksFor(_tweakView));

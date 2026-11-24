@@ -88,7 +88,7 @@ contribute. This is not a signed installer or a finished consumer release.
   view and look, cycle, all views and playlists); choices are saved. Its
   Tweak panel has sliders saved per view: speed, reactivity, brightness,
   colour shift, motion trails, a second view blended over the top, and a
-  Camera move button (3D views look around; every view drifts, zooms and
+  Camera button (3D views look around; every view drifts, zooms and
   rolls gently). Every
   view is a GPU shader; see [testing notes](docs/testing.md) for CPU figures.
   Limits: apps that use WASAPI exclusive mode (some DAWs and audiophile players)
