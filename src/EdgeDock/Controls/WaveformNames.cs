@@ -11,11 +11,11 @@ internal static class WaveformNames
         ("Oscilloscopes", [WaveformView.Oscilloscope, WaveformView.CrtScope, WaveformView.CrtVectorscope, WaveformView.StereoScope,
             WaveformView.BandScopes, WaveformView.Lissajous]),
         ("Flashy", [WaveformView.Pulse, WaveformView.Club, WaveformView.Warp, WaveformView.Aurora]),
-        ("Demo scene", [WaveformView.Plasma, WaveformView.Copper, WaveformView.Tunnel, WaveformView.Checkerboard]),
+        ("Demo scene", [WaveformView.Plasma, WaveformView.Tunnel]),
         ("Space and sky", [WaveformView.StarNest, WaveformView.Clouds, WaveformView.Cloudscape]),
         ("Crazy", [WaveformView.Kaleidoscope, WaveformView.Vortex, WaveformView.Glitch, WaveformView.Fire, WaveformView.Metaballs,
             WaveformView.Lightning, WaveformView.Fractal, WaveformView.HypnoCircles, WaveformView.HexPlasma, WaveformView.Lasers,
-            WaveformView.Voronoi, WaveformView.Blob, WaveformView.Truchet])
+            WaveformView.Voronoi, WaveformView.Blob, WaveformView.Truchet, WaveformView.Spheres])
     ];
 
     public static string View(WaveformView view) => view switch
@@ -40,9 +40,7 @@ internal static class WaveformNames
         WaveformView.Warp => "Warp",
         WaveformView.Aurora => "Aurora",
         WaveformView.Plasma => "Plasma",
-        WaveformView.Copper => "Copper bars",
         WaveformView.Tunnel => "Tunnel",
-        WaveformView.Checkerboard => "Checkerboard",
         WaveformView.Kaleidoscope => "Kaleidoscope",
         WaveformView.Vortex => "Vortex",
         WaveformView.Glitch => "Glitch",
@@ -59,6 +57,7 @@ internal static class WaveformNames
         WaveformView.Voronoi => "Voronoi cells",
         WaveformView.Blob => "Liquid blob",
         WaveformView.Truchet => "Truchet",
+        WaveformView.Spheres => "Liquid spheres",
         _ => view.ToString()
     };
 

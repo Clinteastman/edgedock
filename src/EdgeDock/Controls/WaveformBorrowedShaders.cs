@@ -36,7 +36,7 @@ internal readonly partial struct WaveformBorrowedShader(
     {
         Float2 uv = fragment / size - 0.5f;
         uv.Y *= size.Y / size.X;
-        Float3 dir = new Float3(uv * 0.8f, 1f);
+        Float3 dir = new Float3(uv * (0.8f - 0.25f * bass), 1f);
         float t = travel * 0.012f + 0.25f;
         float a1 = 0.5f + 0.3f * Hlsl.Sin(time * 0.05f);
         float a2 = 0.8f + 0.2f * Hlsl.Cos(time * 0.04f);
@@ -78,7 +78,7 @@ internal readonly partial struct WaveformBorrowedShader(
         // Tint towards the look and brighten with the music.
         float luma = Hlsl.Dot(v, new Float3(0.3f, 0.5f, 0.2f));
         Float3 tinted = Hlsl.Lerp(v, Gradient(Hlsl.Saturate(luma * 0.8f)) * luma * 1.4f, 0.55f);
-        return tinted * (0.75f + 0.7f * energy + 0.4f * flash);
+        return tinted * (0.5f + 1.0f * energy + 0.5f * flash);
     }
 
     private static Float2 Rotate(Float2 v, float a) =>
@@ -96,7 +96,7 @@ internal readonly partial struct WaveformBorrowedShader(
     {
         Float2 uv = (2f * fragment - size) / size.Y;
         float hex = HexSdf(uv);
-        float d = Hlsl.Lerp(hex * hex, Hlsl.Dot(uv, uv), Hlsl.SmoothStep(0.8f, 1.5f, Hlsl.Dot(uv, uv))) - (1f + 0.25f * bass);
+        float d = Hlsl.Lerp(hex * hex, Hlsl.Dot(uv, uv), Hlsl.SmoothStep(0.8f, 1.5f, Hlsl.Dot(uv, uv))) - (1f + 0.6f * bass);
         d = Hlsl.Sqrt(Hlsl.Abs(d));
         Float2 sample = uv * d;
         float y = 0f;
@@ -113,7 +113,7 @@ internal readonly partial struct WaveformBorrowedShader(
         float spread = Tanh(Hlsl.Dot(uv, uv));
         Float3 colour = Hlsl.Lerp(Gradient(0.25f + 0.5f * spread), new Float3(0.5f, 0.5f, 0.5f), 0.55f * spread);
         Float3 col = colour / Hlsl.Abs(y);
-        return new Float3(Tanh(0.1f * col.X), Tanh(0.1f * col.Y), Tanh(0.1f * col.Z)) * (0.7f + 0.5f * energy + 0.3f * flash);
+        return new Float3(Tanh(0.1f * col.X), Tanh(0.1f * col.Y), Tanh(0.1f * col.Z)) * (0.45f + 0.85f * energy + 0.4f * flash);
     }
 
     private static float Tanh(float x) => 1f - 2f / (Hlsl.Exp(2f * Hlsl.Min(x, 20f)) + 1f);
@@ -203,9 +203,9 @@ internal readonly partial struct WaveformBorrowedShader(
 
         // A real sky blue, nudged towards the look; louder music brings more cloud.
         Float3 sky = Hlsl.Lerp(new Float3(0.4f, 0.7f, 1f), new Float3(0.2f, 0.4f, 0.6f), p.Y);
-        sky = Hlsl.Lerp(sky, Gradient(1f - p.Y) * 0.8f, 0.25f);
+        sky = Hlsl.Lerp(sky, Gradient(1f - p.Y) * 0.8f, 0.45f);
         Float3 cloud = new Float3(1.1f, 1.1f, 0.9f) * Hlsl.Saturate(0.5f + 0.3f * c) + new Float3(flash, flash, flash) * 0.35f;
-        f = 0.2f + 0.2f * energy + 8f * f * r;
+        f = 0.12f + 0.45f * energy + 8f * f * r;
         return Hlsl.Lerp(sky, Hlsl.Saturate(0.5f * sky + cloud), Hlsl.Saturate(f + c));
     }
 
@@ -247,7 +247,7 @@ internal readonly partial struct WaveformBorrowedShader(
             Float2 p1 = new Float2(Hlsl.Cos(at), Hlsl.Sin(at)) * l0;
             p1.X -= rr;
             float a = Hlsl.Frac(0.5f * ltm + cell / 8f);
-            float pulse = radius * (1f + 0.35f * bass);
+            float pulse = radius * (1f + 0.8f * bass);
             float d1 = (Hlsl.Length(p1) - pulse * w) * zz;
             float d2 = (Hlsl.Length(p1) - pulse * w * Hlsl.SmoothStep(0f, 0.45f, a - 0.5f * Hlsl.Floor(a / 0.5f))) * zz;
             float inner = Hlsl.SmoothStep(0f, -aa, d2);

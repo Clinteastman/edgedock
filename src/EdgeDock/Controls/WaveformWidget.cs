@@ -4,7 +4,6 @@ using ComputeSharp.D2D1;
 using ComputeSharp.D2D1.Interop;
 using ComputeSharp.D2D1.WinUI;
 using Microsoft.Graphics.Canvas;
-using Microsoft.Graphics.Canvas.Text;
 using Microsoft.Graphics.Canvas.UI.Xaml;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -69,6 +68,7 @@ internal sealed class WaveformWidget : UserControl
     private readonly WaveformSpectrum _spectrum;
     private readonly WaveformPulse _pulse = new();
     private readonly WaveformBeat _beat = new();
+    private readonly WaveformDrive _drive = new();
     private readonly float[] _recent = new float[WaveformSpectrum.Size * 2];
     private readonly float[] _recentLeft = new float[DataWidth];
     private readonly float[] _recentRight = new float[DataWidth];
@@ -92,10 +92,9 @@ internal sealed class WaveformWidget : UserControl
     private double _spectrogramCarry;
     private bool _spectrogramLive;
     private float _historyScale;
-    private double _time, _travel, _hue, _scrollerOffset;
+    private double _time, _travel, _hue;
     private WaveformView? _fadingFrom;
     private double _fadeStarted, _viewSince;
-    private string _scroller = "EDGEDOCK";
 
     public WaveformWidget(Func<WaveformSettings> settings, Action<WaveformSettings>? save = null)
     {
@@ -120,9 +119,6 @@ internal sealed class WaveformWidget : UserControl
         Loaded += (_, _) => Start();
         Unloaded += (_, _) => Stop();
     }
-
-    /// <summary>Set by the panel; the demo scrollers show what is playing.</summary>
-    internal MediaSessionService? Media { get; set; }
 
     // ---------- Lifetime ----------
 
@@ -159,19 +155,13 @@ internal sealed class WaveformWidget : UserControl
         }
     }
 
-    /// <summary>Twice a second: follow visibility, hide an idle touch bar, refresh the scroller text.</summary>
+    /// <summary>Twice a second: follow visibility and hide an idle touch bar.</summary>
     private void Tick()
     {
         if (_canvas is null) return;
         if (_bar.Visibility == Visibility.Visible && _picker.Visibility != Visibility.Visible &&
             DateTime.UtcNow - _barShownAt > TimeSpan.FromSeconds(6))
             _bar.Visibility = Visibility.Collapsed;
-        var playing = Media?.CurrentSnapshot is { HasSession: true } media && !string.IsNullOrWhiteSpace(media.Title)
-            ? (string.IsNullOrWhiteSpace(media.Artist) ? media.Title : $"{media.Artist} - {media.Title}")
-            : "";
-        // The scroller's font has Latin letters and punctuation only; emoji and other scripts would show as boxes.
-        playing = new string(playing.Where(c => c is >= ' ' and <= '~' or >= ' ' and <= 'ſ').ToArray()).Trim();
-        _scroller = playing.Length > 0 ? playing : "EDGEDOCK";
 
         // Listens and draws only while seen; see WidgetVisibility.
         if (!WidgetVisibility.IsOnScreen(this))
@@ -461,9 +451,7 @@ internal sealed class WaveformWidget : UserControl
         WaveformView.Warp => (Renderer.Field, 0),
         WaveformView.Aurora => (Renderer.Field, 1),
         WaveformView.Plasma => (Renderer.Field, 2),
-        WaveformView.Copper => (Renderer.Demo, 0),
-        WaveformView.Tunnel => (Renderer.Demo, 1),
-        WaveformView.Checkerboard => (Renderer.Demo, 2),
+        WaveformView.Tunnel => (Renderer.Demo, 0),
         WaveformView.Kaleidoscope => (Renderer.Crazy, 0),
         WaveformView.Vortex => (Renderer.Crazy, 1),
         WaveformView.Glitch => (Renderer.Crazy, 2),
@@ -479,7 +467,8 @@ internal sealed class WaveformWidget : UserControl
         WaveformView.Lasers => (Renderer.Wild, 1),
         WaveformView.Voronoi => (Renderer.Wild, 2),
         WaveformView.Blob => (Renderer.Wild, 3),
-        _ => (Renderer.Wild, 4)
+        WaveformView.Truchet => (Renderer.Wild, 4),
+        _ => (Renderer.Wild, 5)
     };
 
     private static Needs NeedsOf(WaveformView view) => Map(view) switch
@@ -580,11 +569,13 @@ internal sealed class WaveformWidget : UserControl
         {
             _received++;
             var bar = _levels.Next(column);
-            _beat.Add(column.Low, bar.Peak, WaveformAnalyzer.BlockSeconds);
+            _beat.Add(column.Low, WaveformAnalyzer.BlockSeconds);
+            _drive.Add(column, WaveformAnalyzer.BlockSeconds);
             if (_history is not null && _history.Add(bar, out var entry)) _newEntries.Add(entry);
         }
         _scrollPosition = _clock.Advance(seconds, _received);
-        _travel += seconds * (0.25 + 2.2 * _beat.Energy);
+        // Motion surges with each hit: travel speeds up with the music's own dynamics.
+        _travel += seconds * (0.2 + 2.6 * _drive.Energy + 1.2 * _drive.Bass);
         _hue = (_hue + seconds * WaveformSettings.CycleDegreesPerSecond(_settings.ColourCycle)) % 360;
         var palette = WaveformPalette.For(_settings.Look);
         if (_hue != 0) palette = palette.Rotate(_hue);
@@ -610,7 +601,7 @@ internal sealed class WaveformWidget : UserControl
         var (low, mid, high) = (ToFloat3(palette.Low), ToFloat3(palette.Mid), ToFloat3(palette.High));
         var (lowWeight, midWeight, highWeight) = _levels.Weights;
         var current = ToFloat3(palette.Mix(lowWeight, midWeight, highWeight));
-        var (bass, mids, highs) = _levels.Bands;
+        var (bass, mids, highs) = (_drive.Bass, _drive.Mid, _drive.High);
         var effect = Effect(renderer);
         switch (renderer)
         {
@@ -653,57 +644,26 @@ internal sealed class WaveformWidget : UserControl
                 break;
             case Renderer.Field:
                 ((PixelShaderEffect<WaveformFieldShader>)effect).ConstantBuffer = new WaveformFieldShader(
-                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _beat.Energy, _beat.Flash, style);
+                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _drive.Energy, _beat.Flash, style);
                 break;
             case Renderer.Demo:
                 ((PixelShaderEffect<WaveformDemoShader>)effect).ConstantBuffer = new WaveformDemoShader(
-                    size, low, mid, high, (float)_time, (float)_travel, bass, _beat.Energy, _beat.Flash, style,
-                    MathF.Max(2, MathF.Round(3 * scale)));
+                    size, low, mid, high, (float)_time, (float)_travel, _drive.Energy, _beat.Flash, MathF.Max(2, MathF.Round(3 * scale)));
                 break;
             case Renderer.Borrowed:
                 ((PixelShaderEffect<WaveformBorrowedShader>)effect).ConstantBuffer = new WaveformBorrowedShader(
-                    size, low, mid, high, (float)_time, (float)_travel, bass, _beat.Energy, _beat.Flash, style);
+                    size, low, mid, high, (float)_time, (float)_travel, bass, _drive.Energy, _beat.Flash, style);
                 break;
             case Renderer.Wild:
                 ((PixelShaderEffect<WaveformWildShader>)effect).ConstantBuffer = new WaveformWildShader(
-                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _beat.Energy, _beat.Flash, style);
+                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _drive.Energy, _beat.Flash, style);
                 break;
             default:
                 ((PixelShaderEffect<WaveformCrazyShader>)effect).ConstantBuffer = new WaveformCrazyShader(
-                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _beat.Energy, _beat.Flash, style);
+                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _drive.Energy, _beat.Flash, style);
                 break;
         }
         ds.DrawImage(effect, 0, 0, area, opacity);
-        if (view is WaveformView.Copper or WaveformView.Checkerboard) DrawScroller(ds, size, palette, opacity, view == WaveformView.Copper);
-    }
-
-    /// <summary>The demo scroller: big letters riding a sine wave right to left, coloured by the look.</summary>
-    private void DrawScroller(CanvasDrawingSession ds, Float2 size, WaveformPalette palette, float opacity, bool middle)
-    {
-        var fontSize = size.Y * 0.13f;
-        using var format = new CanvasTextFormat { FontFamily = "Consolas", FontSize = fontSize, FontWeight = FontWeights.Bold };
-        var text = $"  {_scroller.ToUpperInvariant()}  •  ";
-        var advance = fontSize * 0.62f;
-        var loop = text.Length * advance;
-        _scrollerOffset = (_scrollerOffset + size.Y * 0.35 * (1 + _beat.Energy) * _frameSeconds) % loop;
-        var baseline = middle ? size.Y * 0.42f : size.Y * 0.62f;
-        var amplitude = size.Y * (0.12f + 0.06f * _beat.Energy);
-        var count = (int)(size.X / advance) + 2;
-        var first = (int)Math.Floor(_scrollerOffset / advance);
-        var shift = (float)(_scrollerOffset - first * advance);
-        for (var i = 0; i < count; i++)
-        {
-            var letter = text[(first + i) % text.Length];
-            if (letter == ' ') continue;
-            var x = i * advance - shift;
-            var y = baseline + MathF.Sin(x * 0.006f + (float)_time * 3f) * amplitude - fontSize * 0.5f;
-            var t = Math.Clamp(x / size.X, 0, 1);
-            var colour = t < 0.5f ? Lerp(palette.Low, palette.Mid, t * 2) : Lerp(palette.Mid, palette.High, t * 2 - 1);
-            ds.DrawText(letter.ToString(), x + 4, y + 4, Windows.UI.Color.FromArgb((byte)(160 * opacity), 0, 0, 0), format);
-            ds.DrawText(letter.ToString(), x, y, ToColor(colour, opacity), format);
-        }
-
-        static WaveformRgb Lerp(WaveformRgb a, WaveformRgb b, float t) => new(a.R + (b.R - a.R) * t, a.G + (b.G - a.G) * t, a.B + (b.B - a.B) * t);
     }
 
     /// <summary>Fills the live data texture with what this frame's views read.</summary>

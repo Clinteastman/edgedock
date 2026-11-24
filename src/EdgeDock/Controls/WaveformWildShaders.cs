@@ -8,6 +8,7 @@ namespace EdgeDock.Controls;
 /// by a low sun (lightning on the beat). 1: lasers, rave beams sweeping with the music. 2: Voronoi
 /// cells, each lit by its own spectrum band. 3: liquid blob, a raymarched shape that swells with
 /// the bass and ripples with the mids. 4: truchet, glowing arcs on a slowly turning grid.
+/// 5: liquid spheres, glossy balls rising out of a rippling pool in warm light, bouncing with the bass.
 /// </summary>
 [D2DInputCount(0)]
 [D2DRequiresScenePosition]
@@ -29,7 +30,8 @@ internal readonly partial struct WaveformWildShader(
         else if (style == 1) rgb = Lasers(p);
         else if (style == 2) rgb = Voronoi(p);
         else if (style == 3) rgb = Blob(p);
-        else rgb = Truchet(p);
+        else if (style == 4) rgb = Truchet(p);
+        else rgb = Spheres(p);
         rgb = Hlsl.Saturate(rgb);
         return new Float4(rgb, 1f);
     }
@@ -47,8 +49,8 @@ internal readonly partial struct WaveformWildShader(
 
         // Sky: deep above, warm towards the horizon, tinted by the look; a sun with a soft halo.
         float up = Hlsl.Saturate(dir.Y * 2.2f);
-        Float3 horizon = Hlsl.Lerp(new Float3(1f, 0.62f, 0.38f), Gradient(0.85f), 0.3f);
-        Float3 zenith = Hlsl.Lerp(new Float3(0.12f, 0.24f, 0.52f), Gradient(0.15f) * 0.5f, 0.3f);
+        Float3 horizon = Hlsl.Lerp(new Float3(1f, 0.62f, 0.38f), Gradient(0.85f), 0.45f);
+        Float3 zenith = Hlsl.Lerp(new Float3(0.12f, 0.24f, 0.52f), Gradient(0.15f) * 0.5f, 0.45f);
         Float3 sky = Hlsl.Lerp(horizon, zenith, Hlsl.Sqrt(up));
         sky += new Float3(1f, 0.8f, 0.55f) * (Hlsl.Pow(sunAmount, 900f) * 3f + Hlsl.Pow(sunAmount, 12f) * 0.35f);
         if (dir.Y < 0f)
@@ -98,7 +100,7 @@ internal readonly partial struct WaveformWildShader(
         Float3 q = position * 0.45f + new Float3(time * 0.05f, 0f, time * 0.02f);
         float n = Noise3(q) * 0.55f + Noise3(q * 2.1f) * 0.27f + Noise3(q * 4.3f) * 0.13f + Noise3(q * 8.7f) * 0.05f;
         float height = Hlsl.Saturate((position.Y - 2f) * 2f) * Hlsl.Saturate((4f - position.Y) * 1.2f);
-        float cover = 0.52f - 0.12f * energy - 0.05f * bass;
+        float cover = 0.55f - 0.18f * energy - 0.1f * bass;
         return Hlsl.Saturate((n - cover) * 3f) * height;
     }
 
@@ -148,7 +150,7 @@ internal readonly partial struct WaveformWildShader(
 
     private Float3 Voronoi(Float2 p)
     {
-        float scale = size.Y / (5f - 1.2f * bass);
+        float scale = size.Y / (5.5f - 2.5f * bass);
         Float2 q = p / scale + new Float2(travel * 0.15f, 0f);
         Float2 cell = Hlsl.Floor(q);
         float nearest = 10f;
@@ -184,7 +186,7 @@ internal readonly partial struct WaveformWildShader(
     {
         float wobble = Hlsl.Sin(q.X * 4f + time * 1.3f) * Hlsl.Sin(q.Y * 4.5f + time * 1.1f) * Hlsl.Sin(q.Z * 5f + time * 0.9f);
         float ripple = Hlsl.Sin(Hlsl.Length(q) * 14f - travel * 4f) * 0.03f * highs;
-        return Hlsl.Length(q) - (1f + 0.28f * bass + 0.12f * flash) - wobble * (0.1f + 0.25f * mids) - ripple;
+        return Hlsl.Length(q) - (1f + 0.45f * bass + 0.15f * flash) - wobble * (0.08f + 0.4f * mids) - ripple;
     }
 
     private Float3 Blob(Float2 fragment)
@@ -243,12 +245,114 @@ internal readonly partial struct WaveformWildShader(
         float a = Hlsl.Abs(Hlsl.Length(f - 0.5f) - 0.5f);
         float b = Hlsl.Abs(Hlsl.Length(f + 0.5f) - 0.5f);
         float dist = Hlsl.Min(a, b) * tile;
-        float width = tile * (0.06f + 0.06f * bass);
+        float width = tile * (0.05f + 0.12f * bass);
         float core = Hlsl.Saturate(width - dist);
         float glow = Hlsl.Exp(-dist / (tile * 0.12f)) * 0.45f;
         float hue = Hlsl.Frac((cell.X + cell.Y) * 0.07f + travel * 0.05f);
         Float3 colour = Gradient(1f - Hlsl.Abs(hue * 2f - 1f));
         return Hlsl.Lerp(colour, new Float3(1f, 1f, 1f), 0.5f) * Hlsl.Saturate(core) + colour * glow * (0.5f + energy + flash * 0.5f);
+    }
+
+    // ---------- Liquid spheres ----------
+
+    private static float SmoothMin(float a, float b, float k)
+    {
+        float h = Hlsl.Saturate(0.5f + 0.5f * (b - a) / k);
+        return Hlsl.Lerp(b, a, h) - k * h * (1f - h);
+    }
+
+    /// <summary>Ball i's spectrum level, read once per pixel (texture reads cannot sit in the march loops).</summary>
+    private static float LevelOf(int i, Float4 first, float last) =>
+        i == 0 ? first.X : (i == 1 ? first.Y : (i == 2 ? first.Z : (i == 3 ? first.W : last)));
+
+    private Float3 BallCentre(int i, Float4 levels, float lastLevel)
+    {
+        float fi = i;
+        float x = (fi - 2f) * 1.25f + 0.35f * Hlsl.Sin(time * 0.37f + fi * 2.1f);
+        float z = 0.6f * Hlsl.Cos(time * 0.29f + fi * 1.3f);
+        float level = LevelOf(i, levels, lastLevel);
+        float bounce = Hlsl.Abs(Hlsl.Sin(time * (0.9f + fi * 0.13f) + fi * 1.7f));
+        float y = -0.2f + bounce * (0.3f + 1.1f * level) + 0.45f * bass;
+        return new Float3(x, y, z);
+    }
+
+    private float Pool(Float3 q, Float4 levels, float lastLevel)
+    {
+        // The liquid surface rings outwards from each ball, harder with the bass.
+        float ripple = 0f;
+        for (int i = 0; i < 5; i++)
+        {
+            Float3 c = BallCentre(i, levels, lastLevel);
+            float d = Hlsl.Length(new Float2(q.X - c.X, q.Z - c.Z));
+            ripple += Hlsl.Sin(d * 11f - time * 4f) * Hlsl.Exp(-d * 1.6f);
+        }
+        return q.Y + ripple * (0.01f + 0.06f * bass);
+    }
+
+    private float Liquid(Float3 q, Float4 levels, float lastLevel)
+    {
+        float scene = Pool(q, levels, lastLevel);
+        for (int b = 0; b < 5; b++)
+            scene = SmoothMin(scene, Hlsl.Length(q - BallCentre(b, levels, lastLevel)) - (0.42f + 0.08f * mids), 0.35f);
+        return scene;
+    }
+
+    private Float3 Spheres(Float2 fragment)
+    {
+        Float2 uv = (fragment - size * 0.5f) / size.Y;
+        uv.Y = -uv.Y;
+        Float4 levels = new Float4(Band(0f), Band(0.25f), Band(0.5f), Band(0.75f));
+        float lastLevel = Band(1f);
+        Float3 origin = new Float3(0f, 1.15f, -4.6f);
+        Float3 dir = Hlsl.Normalize(new Float3(uv.X * 1.05f, uv.Y * 1.05f - 0.16f, 1.6f));
+        Float3 sun = Hlsl.Normalize(new Float3(-0.55f, 0.6f, -0.45f));
+        float sunAmount = Hlsl.Max(Hlsl.Dot(dir, sun), 0f);
+        Float3 warm = Hlsl.Lerp(new Float3(1f, 0.7f, 0.42f), Gradient(0.8f), 0.5f);
+        Float3 sky = Hlsl.Lerp(warm, Hlsl.Lerp(new Float3(0.25f, 0.18f, 0.22f), Gradient(0.1f) * 0.4f, 0.3f), Hlsl.Saturate(dir.Y * 3f))
+                   + new Float3(1f, 0.85f, 0.6f) * Hlsl.Pow(sunAmount, 40f) * 0.6f;
+
+        float t = 0f;
+        float hit = 0f;
+        for (int i = 0; i < 90; i++)
+        {
+            if (hit < 0.5f && t < 20f)
+            {
+                float d = Liquid(origin + dir * t, levels, lastLevel);
+                if (d < 0.0015f) hit = 1f;
+                else t += d * 0.8f;
+            }
+        }
+        if (hit < 0.5f) return sky;
+
+        Float3 position = origin + dir * t;
+        const float e = 0.002f;
+        Float3 normal = Hlsl.Normalize(new Float3(
+            Liquid(position + new Float3(e, 0f, 0f), levels, lastLevel) - Liquid(position - new Float3(e, 0f, 0f), levels, lastLevel),
+            Liquid(position + new Float3(0f, e, 0f), levels, lastLevel) - Liquid(position - new Float3(0f, e, 0f), levels, lastLevel),
+            Liquid(position + new Float3(0f, 0f, e), levels, lastLevel) - Liquid(position - new Float3(0f, 0f, e), levels, lastLevel)));
+
+        // Soft shadow towards the sun and a little ambient occlusion.
+        float shadow = 1f;
+        float s = 0.03f;
+        for (int k = 0; k < 18; k++)
+        {
+            float d = Liquid(position + sun * s, levels, lastLevel);
+            shadow = Hlsl.Min(shadow, 10f * d / s);
+            s += Hlsl.Clamp(d, 0.03f, 0.3f);
+        }
+        shadow = Hlsl.Saturate(shadow);
+        float occlusion = Hlsl.Saturate(Liquid(position + normal * 0.15f, levels, lastLevel) / 0.15f) * 0.5f + 0.5f;
+
+        float diffuse = Hlsl.Max(Hlsl.Dot(normal, sun), 0f) * shadow;
+        Float3 reflected = Hlsl.Reflect(dir, normal);
+        float specular = Hlsl.Pow(Hlsl.Max(Hlsl.Dot(reflected, sun), 0f), 60f) * shadow;
+        float fresnel = 0.04f + 0.96f * Hlsl.Pow(1f - Hlsl.Max(Hlsl.Dot(normal, -dir), 0f), 5f);
+        Float3 metal = Hlsl.Lerp(Gradient(0.6f + 0.3f * Hlsl.Saturate(normal.Y)), new Float3(1f, 0.85f, 0.6f), 0.15f);
+        Float3 reflection = Hlsl.Lerp(warm, new Float3(0.3f, 0.22f, 0.2f), Hlsl.Saturate(reflected.Y * 2f));
+        Float3 colour = metal * (0.12f * occlusion + 0.9f * diffuse) + reflection * metal * fresnel * 0.9f
+                      + new Float3(1f, 0.95f, 0.85f) * specular * (1.2f + flash);
+        float haze = Hlsl.Saturate((t - 6f) * 0.08f);
+        return Hlsl.Lerp(colour * (0.9f + 0.3f * energy), sky, haze);
     }
 
     /// <summary>A spectrum level at 0 (bass) to 1 (highs).</summary>

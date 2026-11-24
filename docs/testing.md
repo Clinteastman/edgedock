@@ -15,20 +15,23 @@
   views, Spectrogram, Oscilloscope and Pulse were captured live with music. A
   later tour of the first 30 views in cycle mode ran while the sound was paused:
   every view rendered (silent states), including the CRT bezel, graticule and
-  afterglow, the demo scroller (showing the current track title from the media
-  session) and the fractal. The last 9 views (Star nest, Clouds, Cloudscape, Hypno
-  circles, Hex plasma, Lasers, Voronoi, Liquid blob, Truchet) were built and
-  their shaders compiled but have not yet been seen on the Edge.
+  afterglow and the fractal. A full 39-view tour then ran with music, and the
+  liquid spheres view (added after it) was captured live. After the owner's
+  feedback, the two demo views with a text scroller (copper bars, checkerboard)
+  were removed (38 views now), and the flashy views were changed to follow each
+  band against its own recent range (`WaveformDrive`), because the auto-levelled
+  loudness sat near full the whole time and the scenes only pulsed slightly.
 - CPU: the first build (Win2D `CanvasAnimatedControl`) used about 85% of one
   core. Per-thread timing showed its frame loop spinning after a pause (a known
   Win2D bug); drawing itself took 0.2-0.4 ms a frame at 60 fps. The shader build
   invalidates a `CanvasControl` from `CompositionTarget.Rendering` instead.
-  Measured with music, Debug: Scroll 4.8% of one core over 10 s. Release, the
-  30-view tour with the sound paused, per 10 s view: 1.1% to 21.9% of one core
-  (most 6-15%), that is under 0.7% of this PC's 32 threads. Split for Scroll
-  while silent: compositor thread 4.7%, UI thread 3.1%, capture 1.9%. GPU load
-  on the RTX 4090 stayed around 1%. Not yet measured: all 39 views in Release
-  with music playing.
+  Release with music, 15 s per view, measured one at a time: Scroll 5.1%, Centre
+  out 6.6%, Liquid blob 6.9%, Cloudscape 13.2%, Star nest 14.0%, Checkerboard
+  17.6% of one core. The 39-view cycle tour with music (10 s windows, noisier):
+  1.7% to 19.8% of one core per view. Everything is under 0.7% of this PC's 32
+  threads. Split for Scroll while silent: compositor thread 4.7%, UI thread
+  3.1%, capture 1.9%. GPU load on the RTX 4090 stayed around 1% for the simple
+  views.
 - Stops when not seen: capture and drawing follow `WidgetVisibility` (minimised,
   scrolled away, collapsed while the screen schedule has blanked the display).
   Code path shared with PC activity; not re-measured for this widget.

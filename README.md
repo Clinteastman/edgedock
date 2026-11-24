@@ -65,15 +65,16 @@ contribute. This is not a signed installer or a finished consumer release.
   needs a kernel driver.
 - **Waveform** turns the panel (or the whole Edge, with web hidden and one
   widget panel) into a music visualiser driven by what the PC is playing, or by
-  an input such as an audio interface or mixer. 39 views in seven groups:
+  an input such as an audio interface or mixer. 38 views in seven groups:
   waves (scrolling, centre out), spectrum (bars, mirror, line, LED, spectrogram,
   ridges, ring), oscilloscopes (plain, a curved-glass CRT scope and vectorscope
   with phosphor afterglow, stereo, band scopes, Lissajous), flashy (pulse, club
-  flashes on the beat, warp, aurora), demo scene (plasma, copper bars and
-  checkerboard with a sine scroller showing the current track, tunnel), space
-  and sky (star nest, clouds, a raymarched cloudscape) and crazy (kaleidoscope,
+  flashes on the beat, warp, aurora), demo scene (plasma, tunnel), space and
+  sky (star nest, clouds, a raymarched cloudscape) and crazy (kaleidoscope,
   vortex, glitch, fire, metaballs, lightning, fractal, hypno circles, hex
-  plasma, lasers, Voronoi cells, liquid blob, truchet). 16 colour looks, an
+  plasma, lasers, Voronoi cells, liquid blob, truchet, liquid spheres). The
+  flashy views follow each band against its own recent range, so every kick,
+  snare and hi-hat moves them, even in loud tracks. 16 colour looks, an
   optional colour cycle, and a cycle mode that crossfades through a chosen set
   of views every 10 seconds to 5 minutes. Tap the widget for a touch bar
   (previous/next view and look, cycle, all views); choices are saved. Every
@@ -151,9 +152,7 @@ metres) are sent, while the clock is on screen, and forecasts are reused for 15
 minutes. Nothing is sent before you search.
 
 The Waveform widget listens to the PC's sound (or the input you chose) only while
-it is on screen, and only to draw it: nothing is recorded, stored or sent. Its
-demo-scene scrollers show the current track's title from Windows' media session,
-on screen only.
+it is on screen, and only to draw it: nothing is recorded, stored or sent.
 
 No EdgeDock account, telemetry or cloud backend. Your chosen web page still
 connects to its own server as it would in a browser. Settings and browser data

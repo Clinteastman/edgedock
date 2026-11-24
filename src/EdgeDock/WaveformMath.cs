@@ -12,13 +12,13 @@ internal enum WaveformView
     // Flashy
     Pulse, Club, Warp, Aurora,
     // Demo scene
-    Plasma, Copper, Tunnel, Checkerboard,
+    Plasma, Tunnel,
     // Crazy
     Kaleidoscope, Vortex, Glitch, Fire, Metaballs, Lightning, Fractal,
     // Space and sky
     StarNest, Clouds, Cloudscape,
     // More crazy
-    HypnoCircles, HexPlasma, Lasers, Voronoi, Blob, Truchet
+    HypnoCircles, HexPlasma, Lasers, Voronoi, Blob, Truchet, Spheres
 }
 
 /// <summary>The three-colour palettes every view draws with. Saved by name.</summary>
@@ -471,10 +471,6 @@ internal sealed class WaveformLevels
     /// <summary>The current, smoothed colour weights.</summary>
     public (float Low, float Mid, float High) Weights => WaveformPalette.Weights(_low, _mid, _high);
 
-    /// <summary>The smoothed band levels with the gain applied (0 to 1), for the flashy views.</summary>
-    public (float Low, float Mid, float High) Bands => (
-        Math.Clamp(_low * Gain * 2, 0, 1), Math.Clamp(_mid * Gain * 3, 0, 1), Math.Clamp(_high * Gain * 6, 0, 1));
-
     public WaveformBar Next(in WaveformColumn column)
     {
         _low += (column.Low - _low) * _colourStep;
@@ -778,29 +774,25 @@ internal static class WaveformScope
 }
 
 /// <summary>
-/// Beat flash and loudness for the flashy views. A beat is the bass jumping well above its
-/// recent average; the flash then fades over about a quarter of a second. Energy follows the
-/// loudness at once on the way up and eases down.
+/// Beat flash for the flashy views. A beat is the bass jumping well above its recent average;
+/// the flash then fades over about a quarter of a second.
 /// </summary>
 internal sealed class WaveformBeat
 {
     public const float Threshold = 1.45f;
     private const float FlashSeconds = 0.25f;
     private const float AverageSeconds = 0.6f;
-    private const float EnergyFallSeconds = 0.4f;
     private const double GapSeconds = 0.12;
     private float _average;
     private double _sinceBeat = double.MaxValue;
     private bool _started;
 
     public float Flash { get; private set; }
-    public float Energy { get; private set; }
     public int Beats { get; private set; }
 
     /// <param name="bass">This moment's bass level (any scale; compared with its own average).</param>
-    /// <param name="loudness">This moment's level with gain applied, 0 to 1.</param>
     /// <param name="seconds">How long this moment lasts.</param>
-    public void Add(float bass, float loudness, double seconds)
+    public void Add(float bass, double seconds)
     {
         var s = (float)Math.Max(0, seconds);
         if (!float.IsFinite(bass) || bass < 0) bass = 0;
@@ -819,8 +811,6 @@ internal sealed class WaveformBeat
         }
         else Flash *= MathF.Exp(-s * 3 / FlashSeconds);
         _average += (bass - _average) * (1 - MathF.Exp(-s / AverageSeconds));
-        loudness = float.IsFinite(loudness) ? Math.Clamp(loudness, 0, 1) : 0;
-        Energy = loudness >= Energy ? loudness : Energy + (loudness - Energy) * (1 - MathF.Exp(-s / EnergyFallSeconds));
     }
 }
 
@@ -844,6 +834,55 @@ internal sealed class WaveformPulse
             for (var i = bar * slice; i < (bar + 1) * slice; i++) loudest = Math.Max(loudest, Math.Abs(recent[i]));
             var target = Math.Clamp(loudest * gain, 0, 1);
             _levels[bar] = target >= _levels[bar] ? target : Math.Max(target, _levels[bar] - fall);
+        }
+    }
+}
+
+/// <summary>
+/// What makes the flashy views move. Each band (and the overall level) is followed quickly,
+/// then placed within its own recent range: the quiet between hits reads near 0, a kick, snare
+/// or hi-hat near 1. Without this, a loud track reads "loud" all the time and nothing moves.
+/// </summary>
+internal sealed class WaveformDrive
+{
+    private const float AttackSeconds = 0.01f;
+    private const float ReleaseSeconds = 0.12f;
+    private const float AverageSeconds = 1.5f;
+    private const float PeakHalfLifeSeconds = 1.5f;
+    private readonly Follower _low = new(), _mid = new(), _high = new(), _level = new();
+
+    public float Bass => _low.Value;
+    public float Mid => _mid.Value;
+    public float High => _high.Value;
+    public float Energy => _level.Value;
+
+    public void Add(in WaveformColumn column, double seconds)
+    {
+        var s = (float)Math.Max(0, seconds);
+        _low.Add(column.Low, s);
+        _mid.Add(column.Mid, s);
+        _high.Add(column.High, s);
+        _level.Add(column.Rms, s);
+    }
+
+    private sealed class Follower
+    {
+        private float _envelope, _average, _peak;
+
+        public float Value { get; private set; }
+
+        public void Add(float input, float seconds)
+        {
+            if (!float.IsFinite(input) || input < 0) input = 0;
+            var rate = input > _envelope ? AttackSeconds : ReleaseSeconds;
+            _envelope += (input - _envelope) * (1 - MathF.Exp(-seconds / rate));
+            _average += (_envelope - _average) * (1 - MathF.Exp(-seconds / AverageSeconds));
+            _peak = Math.Max(_envelope, _peak * MathF.Pow(0.5f, seconds / PeakHalfLifeSeconds));
+            // Half the average is the floor; the ceiling is the recent peak, but at least 1.6 times
+            // the average, so a steady sound sits near the middle and only real hits reach the top.
+            var floor = _average * 0.5f;
+            var span = Math.Max(_peak, _average * 1.6f) - floor;
+            Value = span < 1e-4f ? 0 : Math.Clamp((_envelope - floor) / span, 0, 1);
         }
     }
 }

@@ -418,7 +418,7 @@ internal readonly partial struct WaveformRingShader(
         float r = Hlsl.Length(d);
         float angle = Hlsl.Atan2(d.X, -d.Y);
         float t = Hlsl.Abs(angle) / 3.14159265f;
-        float radius = size.Y * (0.2f + 0.05f * bass + 0.02f * flash);
+        float radius = size.Y * (0.17f + 0.11f * bass + 0.04f * flash);
         const float count = 72f;
         float slot = Hlsl.Min(t * count, count - 0.001f);
         float index = Hlsl.Floor(slot);
@@ -519,7 +519,7 @@ internal readonly partial struct WaveformFieldShader(
             float fi = i;
             float edge = 0.5f + fi * 0.08f
                 + 0.07f * Hlsl.Sin(x * (1.1f + fi * 0.6f) + time * (0.22f + fi * 0.1f) + fi)
-                + 0.05f * Hlsl.Sin(x * 3.3f - time * 0.37f + fi * 2f) * (0.4f + bass);
+                + 0.06f * Hlsl.Sin(x * 3.3f - time * 0.37f + fi * 2f) * (0.3f + 1.6f * bass);
             float above = Hlsl.Max(edge - y, 0f);
             float below = Hlsl.Max(y - edge, 0f);
             float curtain = Hlsl.Exp(-above / (0.12f + 0.25f * (mids * 0.6f + energy * 0.4f))) * Hlsl.Exp(-below * 45f);
@@ -538,7 +538,7 @@ internal readonly partial struct WaveformFieldShader(
         float v = Hlsl.Sin(q.X * 3.1f + time * 0.7f)
             + Hlsl.Sin(q.Y * 4.3f + time * 0.9f)
             + Hlsl.Sin((q.X + q.Y) * 2.6f + travel * 0.6f)
-            + Hlsl.Sin(Hlsl.Length(q - orbit) * 6.5f - travel * 1.2f);
+            + Hlsl.Sin(Hlsl.Length(q - orbit) * (6.5f + 5f * energy) - travel * 1.2f);
         float t = Hlsl.Frac(v * 0.125f + 0.5f + travel * 0.04f);
         float brightness = 0.22f + 0.6f * energy + 0.25f * flash;
         Float3 rgb = Gradient(1f - Hlsl.Abs(t * 2f - 1f)) * brightness;
@@ -681,9 +681,8 @@ internal readonly partial struct WaveformCrtShader(Float2 size, Float3 phosphor,
 }
 
 /// <summary>
-/// Demo-scene classics in chunky pixels and stepped colours. Style 0: copper bars over a parallax
-/// starfield. 1: a checker tunnel. 2: a checkerboard floor under a raster sky and striped sun.
-/// The widget draws a sine scroller on top of styles 0 and 2.
+/// Demo-scene tunnel: a checker tunnel in chunky pixels and stepped colours, flying faster
+/// with the music and flashing on the beat.
 /// </summary>
 [D2DInputCount(0)]
 [D2DRequiresScenePosition]
@@ -691,42 +690,16 @@ internal readonly partial struct WaveformCrtShader(Float2 size, Float3 phosphor,
 [D2DGeneratedPixelShaderDescriptor]
 internal readonly partial struct WaveformDemoShader(
     Float2 size, Float3 low, Float3 mid, Float3 high,
-    float time, float travel, float bass, float energy, float flash, int style, float pixel) : ID2D1PixelShader
+    float time, float travel, float energy, float flash, float pixel) : ID2D1PixelShader
 {
     public Float4 Execute()
     {
         Float2 p = D2D.GetScenePosition().XY;
         Float2 q = Hlsl.Floor(p / pixel) * pixel + pixel * 0.5f;
-        Float3 rgb = style == 0 ? Copper(q) : (style == 1 ? Tunnel(q) : Floor(q));
+        Float3 rgb = Tunnel(q);
         // A limited palette: colours come in steps, as on old hardware.
         rgb = Hlsl.Floor(Hlsl.Saturate(rgb) * 10f + 0.5f) / 10f;
         return new Float4(rgb, 1f);
-    }
-
-    private Float3 Copper(Float2 q)
-    {
-        Float3 rgb = new Float3(0.01f, 0.005f, 0.04f) * (1.5f - q.Y / size.Y);
-        // Three layers of stars drifting left at different speeds.
-        for (int layer = 0; layer < 3; layer++)
-        {
-            float row = Hlsl.Floor(q.Y / (pixel * 3f));
-            float h = Hash(row * 7.13f + layer * 131f);
-            float x = Hlsl.Frac(h * 13.7f - travel * (0.04f + 0.06f * layer)) * size.X;
-            float star = Hlsl.Step(Hlsl.Abs(q.X - x), pixel * (1f + layer)) * Hlsl.Step(0.55f, Hash(row * 3.1f + layer));
-            rgb += new Float3(1f, 1f, 1f) * star * (0.3f + 0.3f * layer);
-        }
-        // Copper bars bouncing on sine waves; later bars pass in front.
-        for (int i = 0; i < 7; i++)
-        {
-            float fi = i;
-            float centre = size.Y * (0.5f + 0.36f * Hlsl.Sin(time * 1.15f + fi * 0.55f) * (0.8f + 0.3f * bass));
-            float half = size.Y * (0.045f + 0.02f * energy);
-            float d = Hlsl.Abs(q.Y - centre) / half;
-            float shade = Hlsl.Floor((1f - Hlsl.Saturate(d) * Hlsl.Saturate(d)) * 7f) / 7f;
-            Float3 bar = Gradient(fi / 6f) * (0.3f + 0.7f * shade) + new Float3(1f, 1f, 1f) * Hlsl.Pow(shade, 6f) * 0.5f;
-            rgb = Hlsl.Lerp(rgb, bar, Hlsl.Step(d, 1f));
-        }
-        return rgb + Gradient(0.2f) * flash * 0.15f;
     }
 
     private Float3 Tunnel(Float2 q)
@@ -742,53 +715,10 @@ internal readonly partial struct WaveformDemoShader(
         Float3 tint = ring < 0.3f ? Brighten(low) : (ring < 0.6f ? Brighten(mid) : Brighten(high));
         Float3 colour = tint * (0.2f + 0.8f * check);
         float fog = Hlsl.Saturate(r * 2.4f);
-        return colour * fog * (0.6f + 0.6f * energy) + new Float3(1f, 1f, 1f) * flash * 0.25f * fog;
+        return colour * fog * (0.4f + 0.9f * energy) + new Float3(1f, 1f, 1f) * flash * 0.35f * fog;
     }
-
-    private Float3 Floor(Float2 q)
-    {
-        float horizon = size.Y * 0.45f;
-        Float3 rgb = new Float3(0f, 0f, 0f);
-        if (q.Y > horizon)
-        {
-            float dy = (q.Y - horizon) / size.Y;
-            float z = 0.12f / dy;
-            float u = (q.X - size.X * 0.5f) / size.Y * z + Hlsl.Sin(time * 0.5f) * 1.5f;
-            float v = z + travel * 1.5f;
-            float check = Hlsl.Frac((Hlsl.Floor(u) + Hlsl.Floor(v)) * 0.5f) * 2f;
-            rgb = Hlsl.Lerp(Gradient(0.9f) * 0.3f, Gradient(0.1f), check) * Hlsl.Saturate(dy * 5f);
-        }
-        else
-        {
-            float up = (horizon - q.Y) / horizon;
-            rgb = Hlsl.Lerp(Gradient(0.55f) * 0.45f, new Float3(0.02f, 0.01f, 0.05f), Hlsl.Saturate(up * 1.6f));
-            // A striped sun that swells with the bass.
-            Float2 sunCentre = new Float2(size.X * 0.5f, horizon - size.Y * 0.05f);
-            float sunRadius = size.Y * (0.26f + 0.04f * bass);
-            float inSun = Hlsl.Step(Hlsl.Length(q - sunCentre), sunRadius);
-            float stripe = Hlsl.Step(0.35f * up, Hlsl.Frac(q.Y / (size.Y * 0.04f) + time * 0.5f));
-            rgb = Hlsl.Lerp(rgb, Gradient(0.2f + 0.6f * up), inSun * stripe);
-            // Two copper bars in the sky.
-            for (int i = 0; i < 2; i++)
-            {
-                float centre = horizon * (0.35f + 0.25f * Hlsl.Sin(time * 1.3f + i * 2.1f));
-                float d = Hlsl.Abs(q.Y - centre) / (size.Y * 0.035f);
-                float shade = Hlsl.Floor((1f - Hlsl.Saturate(d)) * 6f) / 6f;
-                rgb = Hlsl.Lerp(rgb, Gradient(i == 0 ? 0f : 1f) * (0.3f + 0.7f * shade), Hlsl.Step(d, 1f));
-            }
-        }
-        return rgb + Gradient(0.2f) * flash * 0.12f;
-    }
-
-    private static float Hash(float n) => Hlsl.Frac(Hlsl.Sin(n * 12.9898f) * 43758.5453f);
 
     private static Float3 Brighten(Float3 c) => c / Hlsl.Max(Hlsl.Max(c.X, c.Y), Hlsl.Max(c.Z, 0.001f));
-
-    private Float3 Gradient(float t)
-    {
-        Float3 c = t < 0.5f ? Hlsl.Lerp(low, mid, t * 2f) : Hlsl.Lerp(mid, high, t * 2f - 1f);
-        return c / Hlsl.Max(Hlsl.Max(c.X, c.Y), Hlsl.Max(c.Z, 0.001f));
-    }
 }
 
 /// <summary>
@@ -824,7 +754,7 @@ internal readonly partial struct WaveformCrazyShader(
 
     private Float3 Kaleidoscope(Float2 p)
     {
-        Float2 d = (p - size * 0.5f) / size.Y;
+        Float2 d = (p - size * 0.5f) / (size.Y * (1f + 0.35f * bass));
         float r = Hlsl.Length(d);
         float slices = 6f + Hlsl.Floor(bass * 4f) * 2f;
         float wedge = 6.2831853f / slices;
@@ -834,7 +764,7 @@ internal readonly partial struct WaveformCrazyShader(
         float level = Band(Hlsl.Saturate(r * 1.2f));
         float v = Hlsl.Sin(f.X * 14f - travel * 2.5f) + Hlsl.Sin(f.Y * 22f + time) + Hlsl.Sin((f.X + f.Y) * 9f + travel);
         float t = Hlsl.Frac(v * 0.17f + r * 0.6f - travel * 0.05f);
-        float brightness = Hlsl.Saturate(0.25f + level * 1.1f + energy * 0.3f) * Hlsl.Saturate(1.6f - r);
+        float brightness = Hlsl.Saturate(0.12f + level * 1.1f + energy * 0.6f) * Hlsl.Saturate(1.6f - r);
         return Gradient(1f - Hlsl.Abs(t * 2f - 1f)) * brightness + new Float3(1f, 1f, 1f) * flash * 0.2f * Hlsl.Exp(-r * 3f);
     }
 
@@ -842,7 +772,7 @@ internal readonly partial struct WaveformCrazyShader(
     {
         Float2 d = (p - size * 0.5f) / size.Y;
         float r = Hlsl.Length(d) + 0.0001f;
-        float a = Hlsl.Atan2(d.Y, d.X) + (1f / (r + 0.15f)) * (0.6f + bass * 0.8f) + time * 0.4f;
+        float a = Hlsl.Atan2(d.Y, d.X) + (1f / (r + 0.15f)) * (0.4f + bass * 2f) + time * 0.4f;
         float stripes = Hlsl.Sin(a * (10f + Hlsl.Floor(highs * 4f) * 2f) + Hlsl.Log(r) * 9f - travel * 4f);
         float glow = Hlsl.Pow(Hlsl.Saturate(stripes * 0.5f + 0.5f), 3f) * (0.35f + energy * 0.9f);
         return Gradient(Hlsl.Frac(r * 0.8f + travel * 0.03f)) * glow * Hlsl.Saturate(r * 6f) + Gradient(0f) * Hlsl.Exp(-r * 8f) * (0.3f + flash);
@@ -880,7 +810,7 @@ internal readonly partial struct WaveformCrazyShader(
                 + Noise(uv * new Float2(9f, 7f) + new Float2(0f, time * 2.7f)) * 0.3f
                 + Noise(uv * new Float2(19f, 15f) + new Float2(0f, time * 4.1f)) * 0.15f;
         float column = Band(Hlsl.Saturate(Hlsl.Abs(p.X / size.X - 0.5f) * 2f));
-        float heat = Hlsl.Saturate(n * 1.5f - height * (1.6f - column * 0.9f - bass * 0.4f) + 0.15f);
+        float heat = Hlsl.Saturate(n * 1.5f - height * (1.6f - column * 0.9f - bass * 0.9f) + 0.15f);
         Float3 rgb = heat < 0.5f ? Hlsl.Lerp(new Float3(0f, 0f, 0f), Gradient(0f), heat * 2f)
                                  : Hlsl.Lerp(Gradient(0f), Hlsl.Lerp(Gradient(1f), new Float3(1f, 1f, 1f), 0.5f), heat * 2f - 1f);
         return rgb * Hlsl.Saturate(heat * 3f);
@@ -896,7 +826,7 @@ internal readonly partial struct WaveformCrazyShader(
             Float2 centre = size * 0.5f + new Float2(
                 Hlsl.Sin(time * (0.31f + fi * 0.07f) + fi * 1.7f) * size.X * 0.4f,
                 Hlsl.Cos(time * (0.43f + fi * 0.05f) + fi * 2.3f) * size.Y * 0.33f);
-            float radius = size.Y * (0.07f + 0.13f * Band(fi / 6f) + 0.04f * bass);
+            float radius = size.Y * (0.06f + 0.13f * Band(fi / 6f) + 0.1f * bass);
             Float2 d = p - centre;
             float contribution = radius * radius / Hlsl.Max(Hlsl.Dot(d, d), 1f);
             field += contribution;
@@ -916,7 +846,7 @@ internal readonly partial struct WaveformCrazyShader(
         for (int i = 0; i < 3; i++)
         {
             float fi = i;
-            float jitter = (Noise(new Float2(p.X / 38f + fi * 17f, time * 14f + fi * 5f)) - 0.5f) * size.Y * (0.12f + 0.25f * energy)
+            float jitter = (Noise(new Float2(p.X / 38f + fi * 17f, time * 14f + fi * 5f)) - 0.5f) * size.Y * (0.08f + 0.4f * energy)
                          + (Noise(new Float2(p.X / 9f + fi * 3f, time * 30f)) - 0.5f) * size.Y * 0.04f;
             float y = size.Y * (0.5f + (fi - 1f) * 0.12f) - wave * size.Y * 0.32f + jitter;
             float d = Hlsl.Abs(p.Y - y);
@@ -929,7 +859,7 @@ internal readonly partial struct WaveformCrazyShader(
     private Float3 Julia(Float2 p)
     {
         Float2 z = (p - size * 0.5f) / (size.Y * 0.42f);
-        Float2 c = new Float2(-0.75f + 0.12f * Hlsl.Sin(travel * 0.23f) + 0.05f * bass, 0.18f + 0.08f * Hlsl.Cos(time * 0.17f) + 0.04f * mids);
+        Float2 c = new Float2(-0.75f + 0.12f * Hlsl.Sin(travel * 0.23f) + 0.16f * bass, 0.18f + 0.08f * Hlsl.Cos(time * 0.17f) + 0.12f * mids);
         float steps = 0f;
         for (int i = 0; i < 48; i++)
         {

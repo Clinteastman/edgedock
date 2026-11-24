@@ -754,15 +754,30 @@ try
           "Colour cycle turns a look around the colour wheel (red turns blue at 120 degrees) and back at 360");
 
     var beat = new WaveformBeat();
-    for (var i = 0; i < 400; i++) beat.Add(0.05f, 0.2f, WaveformAnalyzer.BlockSeconds);
+    for (var i = 0; i < 400; i++) beat.Add(0.05f, WaveformAnalyzer.BlockSeconds);
     var steadyBeats = beat.Beats;
-    beat.Add(0.4f, 0.9f, WaveformAnalyzer.BlockSeconds);
+    beat.Add(0.4f, WaveformAnalyzer.BlockSeconds);
     var kicked = beat.Flash;
-    for (var i = 0; i < 10; i++) beat.Add(0.4f, 0.9f, WaveformAnalyzer.BlockSeconds);
+    for (var i = 0; i < 10; i++) beat.Add(0.4f, WaveformAnalyzer.BlockSeconds);
     var heldOff = beat.Beats;
-    for (var i = 0; i < 60; i++) beat.Add(0.05f, 0.1f, WaveformAnalyzer.BlockSeconds);
-    Check(steadyBeats == 0 && kicked == 1 && heldOff == steadyBeats + 1 && beat.Flash < 0.05f && beat.Energy is > 0.1f and < 0.9f,
-          "A bass kick well above its average flashes once, then fades; loudness eases down");
+    for (var i = 0; i < 60; i++) beat.Add(0.05f, WaveformAnalyzer.BlockSeconds);
+    Check(steadyBeats == 0 && kicked == 1 && heldOff == steadyBeats + 1 && beat.Flash < 0.05f,
+          "A bass kick well above its average flashes once, then fades");
+
+    // A loud four-on-the-floor track: 100 ms kicks twice a second over a steady bed.
+    var drive = new WaveformDrive();
+    float highest = 0, lowest = 1;
+    for (var i = 0; i < 2000; i++)
+    {
+        var kick = i % 100 < 20;
+        drive.Add(new WaveformColumn(0.9f, kick ? 0.5f : 0.3f, kick ? 0.6f : 0.08f, 0.1f, 0.05f), WaveformAnalyzer.BlockSeconds);
+        if (i >= 1600 && i % 100 == 19) highest = Math.Max(highest, drive.Bass);
+        if (i >= 1600 && i % 100 == 95) lowest = Math.Min(lowest, drive.Bass);
+    }
+    var silentDrive = new WaveformDrive();
+    for (var i = 0; i < 200; i++) silentDrive.Add(default, WaveformAnalyzer.BlockSeconds);
+    Check(highest > 0.85f && lowest < 0.2f && drive.Mid is > 0.3f and < 0.6f && silentDrive.Bass == 0 && silentDrive.Energy == 0,
+          "The drive signal swings from near 0 between kicks to near 1 on them, even in a loud track; a steady sound sits near the middle; silence stays still");
 
     var everyView = WaveformSettings.Default with { CycleSeconds = 30 };
     var chosen = WaveformSettings.Default with { CycleViews = [WaveformView.Fire, WaveformView.CrtScope], CycleSeconds = 10 };
@@ -795,7 +810,7 @@ try
           "Waveform settings recover from bad values; speed is 30 to 600 in steps of 10; cycle times snap to the offered ones");
     store = new SettingsStore();
     var waveformChoice = new WaveformSettings(@"{0.0.1.00000000}.{abc}", WaveformView.CrtScope, WaveformLook.Vapor, 320, false,
-        WaveformColourCycle.Slow, [WaveformView.Fractal, WaveformView.Copper], 60);
+        WaveformColourCycle.Slow, [WaveformView.Fractal, WaveformView.Tunnel], 60);
     await store.SaveAsync(weatherSaved with { Waveform = waveformChoice });
     var waveformSaved = await new SettingsStore().LoadAsync();
     Check(waveformChoice.SameAs(waveformSaved.Waveform) && WaveformSettings.Default.SameAs(weatherSaved.Waveform),
