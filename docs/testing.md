@@ -1,5 +1,43 @@
 # Testing
 
+## Waveform widget (24 November 2026)
+
+- Debug and Release x64 builds: zero warnings/errors. 118 console checks pass,
+  all on synthetic sample buffers (nothing is played): 5 ms columns (peak, RMS,
+  bass/mid/high biquads at 44.1 and 48 kHz, mono and stereo), carry-over between
+  packets, the lock-free ring across threads (200,000 columns), the stereo sample
+  tap, colour weights and mixing for all 16 looks, hue rotation, auto level, the
+  scroll history and its clock, the FFT and spectrum bands (a 1 kHz tone fills its
+  band; fall and peak hold), the oscilloscope trigger, band split, pulse bars, beat
+  flashes, cycle order, and saving every choice.
+- Real Edge (2560x720 at 150%, isolated profile, full screen, sound the user was
+  already playing; no test audio was played): Scroll, Centre out, the spectrum
+  views, Spectrogram, Oscilloscope and Pulse were captured live with music. A
+  later tour of the first 30 views in cycle mode ran while the sound was paused:
+  every view rendered (silent states), including the CRT bezel, graticule and
+  afterglow, the demo scroller (showing the current track title from the media
+  session) and the fractal. The last 9 views (Star nest, Clouds, Cloudscape, Hypno
+  circles, Hex plasma, Lasers, Voronoi, Liquid blob, Truchet) were built and
+  their shaders compiled but have not yet been seen on the Edge.
+- CPU: the first build (Win2D `CanvasAnimatedControl`) used about 85% of one
+  core. Per-thread timing showed its frame loop spinning after a pause (a known
+  Win2D bug); drawing itself took 0.2-0.4 ms a frame at 60 fps. The shader build
+  invalidates a `CanvasControl` from `CompositionTarget.Rendering` instead.
+  Measured with music, Debug: Scroll 4.8% of one core over 10 s. Release, the
+  30-view tour with the sound paused, per 10 s view: 1.1% to 21.9% of one core
+  (most 6-15%), that is under 0.7% of this PC's 32 threads. Split for Scroll
+  while silent: compositor thread 4.7%, UI thread 3.1%, capture 1.9%. GPU load
+  on the RTX 4090 stayed around 1%. Not yet measured: all 39 views in Release
+  with music playing.
+- Stops when not seen: capture and drawing follow `WidgetVisibility` (minimised,
+  scrolled away, collapsed while the screen schedule has blanked the display).
+  Code path shared with PC activity; not re-measured for this widget.
+- Not tested yet: the touch bar and the All views grid with real taps (they
+  use `AllowFocusOnInteraction = false` so they never take keyboard focus), an
+  input device as the source, default-device changes and unplugging while
+  running, and exclusive-mode apps (expected: a status line saying the device
+  is in use).
+
 ## Layout profiles (10 October 2026)
 
 - Debug x64 build: zero warnings/errors. 55 console checks pass, including
