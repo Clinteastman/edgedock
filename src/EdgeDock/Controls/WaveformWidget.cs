@@ -568,10 +568,16 @@ internal sealed class WaveformWidget : UserControl
         content.Children.Add(looks);
 
         content.Children.Add(Heading("Colour cycle"));
-        var cycles = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        // Wraps like the looks, so every choice stays reachable in a narrow widget.
+        var cycles = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, ItemWidth = 128, ItemHeight = 64 };
         foreach (var cycle in Enum.GetValues<WaveformColourCycle>())
-            cycles.Children.Add(TouchButton(WaveformNames.ColourCycle(cycle), "Colour cycle: " + WaveformNames.ColourCycle(cycle),
-                (_, _) => ChangeSettings(_settings with { ColourCycle = cycle }), 120));
+        {
+            var choice = TouchButton(WaveformNames.ColourCycle(cycle), "Colour cycle: " + WaveformNames.ColourCycle(cycle),
+                (_, _) => ChangeSettings(_settings with { ColourCycle = cycle }), 0);
+            choice.HorizontalAlignment = HorizontalAlignment.Stretch;
+            choice.Margin = new Thickness(0, 0, 8, 8);
+            cycles.Children.Add(choice);
+        }
         content.Children.Add(cycles);
 
         _picker.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(238, 12, 11, 20));
