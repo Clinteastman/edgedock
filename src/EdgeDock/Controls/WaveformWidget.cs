@@ -602,9 +602,9 @@ internal sealed class WaveformWidget : UserControl
             MinHeight = 44,
             VerticalAlignment = VerticalAlignment.Center,
             IsThumbToolTipEnabled = false,
-            // Dragging must not move keyboard focus away from whatever the user is typing into.
-            AllowFocusOnInteraction = false,
-            IsTabStop = false
+            // Dragging must not move keyboard focus away from whatever the user is typing into;
+            // the sliders stay in the Tab order so they can still be set from the keyboard.
+            AllowFocusOnInteraction = false
         };
         AutomationProperties.SetName(slider, label);
         var value = new TextBlock { FontSize = 16, VerticalAlignment = VerticalAlignment.Center, TextAlignment = TextAlignment.Right };
