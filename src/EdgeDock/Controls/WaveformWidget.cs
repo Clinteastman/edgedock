@@ -361,6 +361,8 @@ internal sealed class WaveformWidget : UserControl
         header.Children.Add(new TextBlock { Text = "Choose a view", FontSize = 22, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
         var close = TouchButton("✕", "Close", (_, _) => _picker.Visibility = Visibility.Collapsed);
         close.HorizontalAlignment = HorizontalAlignment.Right;
+        // Clear of EdgeDock's own controls handle in the top-right corner.
+        close.Margin = new Thickness(0, 0, 72, 0);
         header.Children.Add(close);
         content.Children.Add(header);
         foreach (var (group, views) in WaveformNames.Groups)
