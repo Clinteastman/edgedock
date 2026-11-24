@@ -12,6 +12,18 @@
   focus changes inside the widgets are cancelled, because focusing a slider or
   button would otherwise give the window focus anyway. Tab focus is unchanged.
   The pending runtime test must include tapping a slider and a button.
+- 24 November 2026, after merging main (build only): Debug x64 build, zero
+  warnings/errors; 84 console checks pass. The focus guard now uses the
+  thread-wide focus event, so it also refuses focus moving into popups a
+  widget opened (media source menu, audio output list), and taps inside such a
+  popup do not activate EdgeDock. Popups from Settings or the controls drawer
+  are not affected. The blank screen activates normally, like the other
+  overlays. New widgets since 10 October (launcher, PC activity, clock and
+  weather, audio sliders) sit in the widget panel and are covered; layout
+  buttons are in the controls drawer and activate normally. Runtime check
+  still pending, and must also open the media source menu and the audio output
+  list with Notepad active. Not known yet: whether WinUI draws these popups in
+  their own window, which the activation guard (main window only) would not see.
 
 ## Layout profiles (10 October 2026)
 

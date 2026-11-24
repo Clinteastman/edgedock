@@ -148,7 +148,9 @@ public sealed partial class MainWindow : Window
         InstallMessageHook();
         _activationGuard = new ActivationGuard(_windowHandle, ShouldSkipActivation);
         Activated += (_, args) => _windowActive = args.WindowActivationState != WindowActivationState.Deactivated;
-        Root.GettingFocus += Root_GettingFocus;
+        // The thread-wide event also sees focus moving into popups (menus, ComboBox lists),
+        // whose visual trees sit outside Root.
+        FocusManager.GettingFocus += FocusManager_GettingFocus;
         PowerManager.SystemSuspendStatusChanged += PowerManager_SystemSuspendStatusChanged;
         Closed += MainWindow_Closed;
         Activated += MainWindow_Activated;
@@ -434,13 +436,17 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private bool ShouldSkipActivation(ActivationGuard.NativePoint screenPoint)
     {
-        // The controls drawer has a full-window scrim; Settings is a side panel, so only taps
-        // that land on it need focus (it has text boxes). Widgets beside it still do not.
-        if (_closing || ControlsOverlay.Visibility == Visibility.Visible) return false;
+        // The controls drawer and the blank screen cover the whole window; Settings is a side
+        // panel, so only taps that land on it need focus (it has text boxes). Widgets beside
+        // it still do not.
+        if (_closing || ControlsOverlay.Visibility == Visibility.Visible ||
+            ScreenBlankOverlay.Visibility == Visibility.Visible) return false;
         var clientPoint = screenPoint;
         if (!ScreenToClient(_windowHandle, ref clientPoint)) return false;
         var scale = Root.XamlRoot?.RasterizationScale ?? 1;
         var position = new Windows.Foundation.Point(clientPoint.X / scale, clientPoint.Y / scale);
+        // An open popup draws above everything, so it decides first.
+        if (PopupAt(position) is { } popup) return IsWidgetPopup(popup);
         if (Contains(ControlHandle, position) || Contains(SettingsPanel, position)) return false;
         return Contains(WidgetHost, position) || Contains(WidgetGallery, position);
     }
@@ -448,21 +454,70 @@ public sealed partial class MainWindow : Window
     /// <summary>
     /// Skipping activation is not enough on its own: tapping a slider or button would move
     /// XAML focus to it, and that gives the window Win32 focus anyway. While EdgeDock is
-    /// inactive, refuse pointer-driven focus changes inside the widgets. Keyboard focus
-    /// (Tab) is unaffected, and the tap itself still reaches the control.
+    /// inactive, refuse focus changes into the widgets and into popups they opened (the
+    /// media source menu, the audio output list). Keyboard focus (Tab) is unaffected, and
+    /// the tap itself still reaches the control.
     /// </summary>
-    private void Root_GettingFocus(UIElement sender, GettingFocusEventArgs args)
+    private void FocusManager_GettingFocus(object? sender, GettingFocusEventArgs args)
     {
-        if (_windowActive || args.InputDevice is not (FocusInputDeviceKind.Mouse or FocusInputDeviceKind.Touch or FocusInputDeviceKind.Pen))
+        if (_closing || _windowActive || args.InputDevice is FocusInputDeviceKind.Keyboard or FocusInputDeviceKind.GameController)
             return;
-        for (var element = args.NewFocusedElement; element is not null; element = VisualTreeHelper.GetParent(element))
+        if (IsWidgetFocusTarget(args.NewFocusedElement)) args.TryCancel();
+    }
+
+    private bool IsWidgetFocusTarget(DependencyObject? target)
+    {
+        if (target is null) return false;
+        for (var element = target; element is not null; element = VisualTreeHelper.GetParent(element))
         {
-            if (element == WidgetHost || element == WidgetGallery)
-            {
-                args.TryCancel();
-                return;
-            }
+            if (element == WidgetHost || element == WidgetGallery) return true;
+            if (element == Root) return false;
         }
+        // Not in the main tree, so it is inside a popup (or already detached).
+        foreach (var popup in OpenPopups())
+        {
+            if (IsAncestorOrSelf(popup, target) || (popup.Child is { } child && IsAncestorOrSelf(child, target)))
+                return IsWidgetPopup(popup);
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// A popup belongs to a widget unless Settings or the controls drawer opened it. While
+    /// EdgeDock is inactive those two have already closed their popups (they dismiss when
+    /// focus leaves), so anything still open was opened by a widget tap. ComboBox lists sit
+    /// in their control's tree; flyout menus have no parent and count as widget popups.
+    /// </summary>
+    private bool IsWidgetPopup(Popup popup)
+    {
+        for (DependencyObject? element = popup; element is not null; element = VisualTreeHelper.GetParent(element))
+        {
+            if (element == SettingsPanel || element == ControlsOverlay) return false;
+            if (element == WidgetHost || element == WidgetGallery) return true;
+        }
+        return true;
+    }
+
+    private Popup? PopupAt(Windows.Foundation.Point position)
+    {
+        foreach (var popup in OpenPopups())
+        {
+            // Tooltips do not take input; the tap goes to whatever is underneath.
+            if (popup.Child is FrameworkElement child and not ToolTip && Contains(child, position)) return popup;
+        }
+        return null;
+    }
+
+    private IReadOnlyList<Popup> OpenPopups() =>
+        Root.XamlRoot is { } root ? VisualTreeHelper.GetOpenPopupsForXamlRoot(root) : [];
+
+    private static bool IsAncestorOrSelf(DependencyObject ancestor, DependencyObject element)
+    {
+        for (DependencyObject? current = element; current is not null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (current == ancestor) return true;
+        }
+        return false;
     }
 
     private static bool Contains(FrameworkElement element, Windows.Foundation.Point position)
@@ -2338,6 +2393,7 @@ public sealed partial class MainWindow : Window
         _closing = true;
         _activationGuard?.Dispose();
         _activationGuard = null;
+        FocusManager.GettingFocus -= FocusManager_GettingFocus;
         _displayChangeTimer?.Stop();
         _windowMoveTimer?.Stop();
         AppWindow.Changed -= AppWindow_Changed;

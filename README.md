@@ -29,7 +29,6 @@ contribute. This is not a signed installer or a finished consumer release.
 - Tapping a native widget does not take keyboard focus from the app you are
   typing in on another screen. Web cards and settings still take focus, since
   they may need typing.
-
 - Shows which app it is controlling. When two or more apps have media, tap
   "Now playing" to choose one, or Automatic to follow what Windows is playing.
 - Switches between windowed and full-screen modes using F11 or the controls drawer.
