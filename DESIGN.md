@@ -13,6 +13,14 @@ content row, including in web-only mode. The drawer contains Settings, full
 screen, widget visibility, panel count and per-panel page selection. Configuration appears
 over content only when requested.
 F11 toggles full screen; Escape is left to active content.
+Screen schedule (Settings, Screen; off by default): day and night brightness,
+night start/end (may cross midnight) and blank-after-idle (never, 5, 10, 15,
+30 or 60 minutes of no input anywhere on the PC). It only acts while full
+screen. Brightness is set over DDC/CI (VCP 0x10) when the monitor supports
+it, otherwise by a dark layer over EdgeDock (up to 85%). Scheduled brightness
+is applied only when the period changes, so the monitor's own buttons are not
+overridden. Blanking shows a black layer and sets brightness to 0; input or a
+tap (which does not reach the widget beneath) restores the previous level.
 EdgeDock remembers the monitor it was last on (its device path, then its model
 code, then a unique resolution; never a guess between equal candidates) and
 whether it was full screen. Dragging the window to another screen updates the
@@ -69,6 +77,19 @@ Only the selected widget view is
 created; switching pages unloads the previous view. Empty and missing widgets
 show an explanation directing the user to Settings.
 
+## Layouts
+
+Up to 12 named layouts capture panel placement and width, web visibility, web
+panel count, cards and split, and every widget slot. EdgeDock controls lists
+them (the active one highlighted) with "Save this layout as"; saving an
+existing name replaces it. Settings renames or removes them and sets an
+optional program (a process name only, no paths or options) that switches the
+layout on while it runs. Running programs are read every 5 seconds off the UI
+thread, only when a layout has a program. When the program exits, the layout
+from before returns. Choosing a layout by hand while a program's layout is on
+leaves it alone until that program starts again. Applying a layout normalises
+it, so a layout naming a deleted web card still opens usably.
+
 ## Widgets
 
 Widget view is a temporary alternative to the dashboard. All installed widgets
@@ -93,6 +114,13 @@ Dashboard-only layout controls are unavailable while this mode is active.
   with several sessions or processes (browsers) get one row that sets all of them. Playing
   apps come first, System sounds last. It refreshes once a second only while
   visible. Loading or refreshing never changes system audio.
+- Launcher shows up to 24 tiles in as many equal columns as fit (minimum
+  104px wide), each with the item's shell icon (globe for web pages, warning
+  for a missing item) and a two-line name. A tap opens the item through the
+  shell, as a double-click would. Targets must be an existing file or folder
+  by full path, or an http/https address: no arguments, relative paths or other
+  schemes. They are checked when saved and again when tapped; a missing item
+  explains itself instead of failing silently.
 - Clock and weather: 64px time in the Windows short-time format and the date;
   with a place set, an emoji condition, current temperature, today's high and
   low, the next six hours and "place · updated hh:mm". Without a place it

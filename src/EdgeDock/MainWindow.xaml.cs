@@ -54,6 +54,15 @@ public sealed partial class MainWindow : Window
     private double _backdropTransparency = 50;
     private IReadOnlyList<WidgetSlotSettings> _widgetSlots = [new(["media"], "media")];
     private readonly WidgetRegistry _registry;
+    private IReadOnlyList<LauncherItem> _launchers = [];
+    // Bumped by each Save and by closing Settings; a save still checking launcher targets
+    // when it changes is stale (cancelled, or overtaken by a newer save) and is dropped.
+    private int _settingsSaveVersion;
+    private bool _checkingSave;
+    // Cancels waiting on a save's target checks when the save is abandoned.
+    private CancellationTokenSource? _saveCancellation;
+    // Writing a checked save to disk: it is committed, so Cancel waits for it to finish.
+    private bool _persistingSave;
     private WeatherLocation? _weatherLocation;
     private bool _fahrenheit;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
@@ -69,6 +78,43 @@ public sealed partial class MainWindow : Window
     private double _resizeStartWebSplitRatio;
     private double _resizeStartPanelWidth;
     private DisplayPreference? _displayPreference;
+    private IReadOnlyList<LayoutProfile> _profiles = [];
+    // Automatic switching: the layout to return to, the profile switched on for a running
+    // program, and one the user overrode by hand (left alone until its program restarts).
+    private ProfileLayout? _layoutBeforeAuto;
+    private string? _autoProfileId;
+    private IReadOnlyList<string> _suppressedProfileIds = [];
+    // When each override was made (UTC), so a program restarted while EdgeDock was closed counts
+    // as a new start.
+    private IReadOnlyDictionary<string, DateTime> _suppressedSince = new Dictionary<string, DateTime>();
+    // One layout change at a time, from start to finish: a hand choice, an automatic switch and
+    // a Settings save each read the current layout and must not interleave.
+    private readonly SemaphoreSlim _profileGate = new(1, 1);
+    // Bumped whenever a saved layout is applied. A tap queued behind a switch was aimed at the
+    // layout that was showing then, so it is dropped if the layout changed while it waited.
+    private int _layoutGeneration;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _profileTimer;
+    private bool _checkingPrograms;
+    private ScreenScheduleSettings _screenSettings = ScreenScheduleSettings.Default;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _screenTimer;
+    private bool _screenBlank;
+    // Level in use just before blanking, and the monitor it belongs to.
+    private int? _brightnessBeforeBlank;
+    private DisplayPreference? _blankedMonitor;
+    // Brightness from before EdgeDock first changed a monitor; saved with the layout.
+    private BrightnessRestore? _brightnessRestore;
+    // The scheduled brightness last applied; re-applied only when it changes, so EdgeDock
+    // never fights adjustments made with the monitor's own buttons in between.
+    private int? _appliedScheduleBrightness;
+    private bool _screenBusy;
+    // The screen update in progress, awaited in full before closing restores brightness.
+    private Task _screenWork = Task.CompletedTask;
+    // Where the scheduled level was last applied: full screen on which monitor. A change (such
+    // as leaving full screen, moving and returning before the next tick) means it must be
+    // applied again, to the monitor EdgeDock is on now.
+    private (bool FullScreen, IntPtr Monitor) _scheduleTarget;
+    // A restore that reached the monitor but whose removal from settings.json is not yet saved.
+    private bool _restoreClearUnsaved;
     // The settings as last written (or loaded) successfully. Display-only saves merge onto
     // this rather than re-reading settings.json, which yields defaults if the file is locked
     // or damaged and would then overwrite the whole layout.
@@ -93,7 +139,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         _messageHookCallback = MessageHookCallback;
-        _registry = WidgetRegistry.CreateBuiltIns(() => new ClockOptions(_weatherLocation, _fahrenheit));
+        _registry = WidgetRegistry.CreateBuiltIns(() => _launchers, () => new ClockOptions(_weatherLocation, _fahrenheit));
         InitializeComponent();
         RegisterDividerHandlers(WebDivider);
         RegisterDividerHandlers(GroupDivider);
@@ -154,14 +200,27 @@ public sealed partial class MainWindow : Window
         _webPanelCount = settings.WebPanelCount;
         _webPanelCardIds = settings.WebPanelCardIds!;
         _configuredWebSplitRatio = settings.WebSplitRatio;
+        _launchers = settings.Launchers!;
         _displayPreference = settings.Display;
         _openFullScreen = settings.OpenFullScreen;
+        _profiles = settings.Profiles ?? [];
+        _autoProfileId = settings.AutoSwitch?.ProfileId;
+        _layoutBeforeAuto = settings.AutoSwitch?.Before;
+        _suppressedProfileIds = settings.SuppressedProfileIds ?? [];
+        _suppressedSince = settings.SuppressedSince ?? new Dictionary<string, DateTime>();
+        _screenSettings = settings.Screen ?? ScreenScheduleSettings.Default;
+        _brightnessRestore = settings.PendingBrightness;
         _weatherLocation = settings.Weather;
         _fahrenheit = settings.Fahrenheit;
+        // Settings opened before loading finished shows empty lists: fill them now, at once,
+        // or a Save would delete the saved ones. Edits made after this point are kept.
+        if (SettingsPanel.Visibility == Visibility.Visible) UpdateSettingsControls(reloadDrafts: true);
         // Move to the saved screen before WebView2 creates its child HWNDs, so pages
         // render once at the right size and scale.
         RestorePreferredDisplay();
         StartDisplayTracking();
+        StartProfileWatch();
+        StartScreenSchedule();
         BuildWidgetSlots();
         // Establish the final native/web bounds before WebView2 creates its child HWNDs.
         ApplyMediaLayout();
@@ -441,22 +500,69 @@ public sealed partial class MainWindow : Window
         CloseControlsDrawer(restoreFocus: false);
         if (SettingsPanel.Visibility == Visibility.Visible)
         {
+            if (_persistingSave) return;
+            AbandonSettingsSave();
             SettingsPanel.Visibility = Visibility.Collapsed;
             return;
         }
 
         UrlErrorText.Visibility = Visibility.Collapsed;
-        UpdateSettingsControls();
+        UpdateSettingsControls(reloadDrafts: true);
         SettingsPanel.Visibility = Visibility.Visible;
     }
 
     private void CancelSettings_Click(object sender, RoutedEventArgs args)
     {
+        // A save already being written is committed and closes Settings itself in a moment.
+        if (_persistingSave) return;
+        AbandonSettingsSave();
         SettingsPanel.Visibility = Visibility.Collapsed;
         UrlErrorText.Visibility = Visibility.Collapsed;
     }
 
-    private async void SaveSettings_Click(object sender, RoutedEventArgs args) => await SaveAndNavigateAsync();
+    private async void SaveSettings_Click(object sender, RoutedEventArgs args)
+    {
+        // A second tap while a save runs is ignored, and must not replace the tracked save.
+        if (_checkingSave || _persistingSave) return;
+        var save = SaveAndNavigateAsync();
+        _settingsSave = save;
+        await save;
+    }
+
+    // The Settings save in progress, if any; closing waits for it so a pressed Save is not lost.
+    private Task _settingsSave = Task.CompletedTask;
+
+    /// <summary>
+    /// Drops a save still checking launcher targets (Settings closed or cancelled) and unlocks
+    /// the editors straight away; a check stuck on an offline drive cannot keep them locked.
+    /// </summary>
+    private void AbandonSettingsSave()
+    {
+        _settingsSaveVersion++;
+        _saveCancellation?.Cancel();
+        UnlockSettingsEditors();
+    }
+
+    // Hit testing does not stop the keyboard, so while a save runs focus may not enter the
+    // dashboard and keys aimed at it are dropped; a page or panel change made now would be
+    // overwritten by the layout the save applies.
+    private void Workspace_GettingFocus(UIElement sender, GettingFocusEventArgs args)
+    {
+        if (_checkingSave) args.TryCancel();
+    }
+
+    private void Workspace_PreviewKeyDown(object sender, KeyRoutedEventArgs args)
+    {
+        if (_checkingSave) args.Handled = true;
+    }
+
+    private void UnlockSettingsEditors()
+    {
+        _checkingSave = false;
+        SettingsForm.IsEnabled = true;
+        Workspace.IsHitTestVisible = true;
+        ControlHandle.IsEnabled = true;
+    }
 
     private async Task SaveAndNavigateAsync()
     {
@@ -466,6 +572,79 @@ public sealed partial class MainWindow : Window
             UrlErrorText.Visibility = Visibility.Visible;
             return;
         }
+        if (!ProfileEditor.TryGetProfiles(out var profiles, out var profileError))
+        {
+            UrlErrorText.Text = profileError;
+            UrlErrorText.Visibility = Visibility.Visible;
+            return;
+        }
+        // One check at a time: a second Save while targets are being checked is ignored, so
+        // only the save that locked the drafts can unlock them.
+        if (_checkingSave) return;
+        var saveVersion = ++_settingsSaveVersion;
+        // Lock the drafts while targets are checked: an edit made during a slow check would
+        // otherwise be silently replaced by the values being validated.
+        _checkingSave = true;
+        // The whole form is locked, not just the lists: any edit made while the save runs would
+        // otherwise be left out of it and then lost when Settings closes.
+        SettingsForm.IsEnabled = false;
+        // The dashboard beside Settings is locked too: a panel swipe or drawer change made now
+        // would be overwritten by the layout this save is about to apply.
+        Workspace.IsHitTestVisible = false;
+        ControlHandle.IsEnabled = false;
+        _saveCancellation?.Dispose();
+        _saveCancellation = new CancellationTokenSource();
+        // The drafts stay locked until the save is written, not just checked.
+        try { await SaveCheckedAsync(cards, profiles, saveVersion, _saveCancellation.Token); }
+        catch (OperationCanceledException) { } // Abandoned while checking targets.
+        finally
+        {
+            // An abandoned save was unlocked when it was abandoned; it must not unlock, or end
+            // the writing state of, a newer save.
+            if (saveVersion == _settingsSaveVersion)
+            {
+                _persistingSave = false;
+                UnlockSettingsEditors();
+            }
+        }
+    }
+
+    private async Task SaveCheckedAsync(IReadOnlyList<WebCardSettings> cards, IReadOnlyList<LayoutProfile> profiles, int saveVersion, CancellationToken cancellation)
+    {
+        var (launchersValid, launchers, launcherError) = await LauncherEditor.TryGetItemsAsync(cancellation);
+        if (saveVersion != _settingsSaveVersion) return;
+        if (!launchersValid)
+        {
+            UrlErrorText.Text = launcherError;
+            UrlErrorText.Visibility = Visibility.Visible;
+            UnlockSettingsEditors();
+            // Announced now, and given to the field as its help text so a screen reader also
+            // says why when the field takes focus.
+            (Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer.FromElement(UrlErrorText) ??
+             Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer.CreatePeerForElement(UrlErrorText))
+                ?.RaiseAutomationEvent(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.LiveRegionChanged);
+            LauncherEditor.FocusInvalidRow(launcherError);
+            return;
+        }
+        // Layout changes run one at a time (see _profileGate). Waiting here can be
+        // abandoned like the target checks, and a save abandoned meanwhile is dropped.
+        await _profileGate.WaitAsync(cancellation);
+        try { await SaveSettingsLockedAsync(cards, profiles, launchers, saveVersion); }
+        finally { _profileGate.Release(); }
+    }
+
+    private async Task SaveSettingsLockedAsync(IReadOnlyList<WebCardSettings> cards, IReadOnlyList<LayoutProfile> profiles,
+        IReadOnlyList<LauncherItem> launchers, int saveVersion)
+    {
+        if (saveVersion != _settingsSaveVersion) return;
+        // Saving Settings while a program's layout is on is a hand choice: keep what was saved,
+        // and keep that program's layout off until it next starts. An override was for the
+        // program that was running; a new or removed trigger ends it.
+        var suppressedIds = SuppressActive()
+            .Where(id => _profiles.FirstOrDefault(profile => profile.Id == id)?.WhenRunning is { } oldTrigger &&
+                profiles.FirstOrDefault(profile => profile.Id == id)?.WhenRunning is { } newTrigger &&
+                string.Equals(oldTrigger, newTrigger, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
         // Saving with the toggle on also repairs an entry left pointing at a moved or older copy.
         var startupNeedsChange = StartupToggle.IsOn ? !StartupRegistration.PointsHere() : StartupRegistration.IsEnabled();
         if (StartupToggle.IsEnabled && startupNeedsChange && !StartupRegistration.SetEnabled(StartupToggle.IsOn))
@@ -485,9 +664,17 @@ public sealed partial class MainWindow : Window
             PanelWidthSlider.Value, ArtworkToggle.IsOn, WebVisibleToggle.IsOn, LibraryEditor.GetSlots(),
             MaterialSelector.SelectedIndex == 1 ? BackdropMaterial.Acrylic : BackdropMaterial.Mica,
             BackdropTransparencySlider.Value, cards, _webPanelCount, _webPanelCardIds,
-            _configuredWebSplitRatio, _displayPreference, _openFullScreen,
+            _configuredWebSplitRatio, _displayPreference, _openFullScreen, Launchers: launchers,
+            Screen: ReadScreenSettings(),
+            PendingBrightness: _brightnessRestore,
+            Profiles: profiles,
+            AutoSwitch: null,
+            SuppressedProfileIds: suppressedIds,
+            SuppressedSince: SinceFor(suppressedIds),
             Weather: WeatherPlaceSelector.SelectedItem is ComboBoxItem { Tag: WeatherLocation place } ? place : null,
             Fahrenheit: FahrenheitToggle.IsOn));
+        // From here the save is committed: Cancel and closing Settings wait for it.
+        _persistingSave = true;
         if (!await PersistAsync(settings)) return;
         _material = settings.Material;
         _backdropTransparency = settings.BackdropTransparency;
@@ -502,6 +689,24 @@ public sealed partial class MainWindow : Window
         _webPanelCount = settings.WebPanelCount;
         _webPanelCardIds = settings.WebPanelCardIds!;
         _configuredWebSplitRatio = settings.WebSplitRatio;
+        _profiles = settings.Profiles ?? [];
+        _suppressedProfileIds = settings.SuppressedProfileIds ?? [];
+        _suppressedSince = settings.SuppressedSince ?? new Dictionary<string, DateTime>();
+        _autoProfileId = null;
+        _layoutBeforeAuto = null;
+        _launchers = settings.Launchers!;
+        var newSchedule = settings.Screen ?? ScreenScheduleSettings.Default;
+        if (newSchedule != _screenSettings)
+        {
+            // Rewrite the level only when the level wanted right now changed: saving anything
+            // else (the idle timeout, or the other period's level) must not undo a change made on
+            // the monitor's own buttons.
+            var now = DateTime.Now;
+            if (ScreenSchedule.Evaluate(newSchedule, now, TimeSpan.Zero).Brightness != ScreenSchedule.Evaluate(_screenSettings, now, TimeSpan.Zero).Brightness)
+                _appliedScheduleBrightness = null;
+            _screenSettings = newSchedule;
+            _ = UpdateScreenAsync();
+        }
         _weatherLocation = settings.Weather;
         _fahrenheit = settings.Fahrenheit;
         BuildWidgetSlots();
@@ -541,12 +746,20 @@ public sealed partial class MainWindow : Window
 
     private async void ToggleMediaPanel_Click(object sender, RoutedEventArgs args)
     {
-        if (!_isWebVisible) return;
-        if (_mediaPlacement == MediaPanelPlacement.Hidden) _mediaPlacement = _lastVisiblePlacement;
-        else { _lastVisiblePlacement = _mediaPlacement; _mediaPlacement = MediaPanelPlacement.Hidden; }
-        ApplyMediaLayout();
-        await PersistAsync(CurrentSettings(), alreadyApplied: true);
-        CloseControlsDrawer();
+        // Layout changes run one at a time with automatic switches (see _profileGate).
+        var generation = _layoutGeneration;
+        await _profileGate.WaitAsync();
+        try
+        {
+            if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
+            if (!_isWebVisible) return;
+            if (_mediaPlacement == MediaPanelPlacement.Hidden) _mediaPlacement = _lastVisiblePlacement;
+            else { _lastVisiblePlacement = _mediaPlacement; _mediaPlacement = MediaPanelPlacement.Hidden; }
+            ApplyMediaLayout();
+            await PersistAsync(CurrentSettings(), alreadyApplied: true);
+            CloseControlsDrawer();
+        }
+        finally { _profileGate.Release(); }
     }
 
     private EdgeDockSettings CurrentSettings() => new(
@@ -565,6 +778,13 @@ public sealed partial class MainWindow : Window
         _configuredWebSplitRatio,
         _displayPreference,
         _openFullScreen,
+        Profiles: _profiles,
+        AutoSwitch: _autoProfileId is { } autoId && _layoutBeforeAuto is { } before ? new AutoLayoutSwitch(autoId, before) : null,
+        SuppressedProfileIds: _suppressedProfileIds,
+        SuppressedSince: _suppressedSince,
+        Screen: _screenSettings,
+        PendingBrightness: _brightnessRestore,
+        Launchers: _launchers,
         Weather: _weatherLocation,
         Fahrenheit: _fahrenheit);
 
@@ -577,7 +797,8 @@ public sealed partial class MainWindow : Window
                 : new MicaBackdrop();
     }
 
-    private void UpdateSettingsControls()
+    /// <param name="reloadDrafts">Also reload the editable lists, even with Settings open.</param>
+    private void UpdateSettingsControls(bool reloadDrafts = false)
     {
         MaterialSelector.SelectedIndex = _material == BackdropMaterial.Acrylic ? 1 : 0;
         BackdropTransparencySlider.Value = _backdropTransparency;
@@ -592,11 +813,28 @@ public sealed partial class MainWindow : Window
         PanelWidthText.Text = $"{_configuredPanelWidth:0} px";
         ArtworkToggle.IsOn = _showArtwork;
         WebVisibleToggle.IsOn = _isWebVisible;
-        WebCardEditor.LoadCards(_webCards);
         LibraryEditor.LoadSlots(_widgetSlots, _registry);
+        LauncherEditor.WindowHandle = _windowHandle;
+        // Not while Settings is open: a divider drag refreshes these controls on every move
+        // and would wipe unsaved card and launcher edits. Settings loads them as it opens.
+        var reloadLists = reloadDrafts || SettingsPanel.Visibility != Visibility.Visible;
+        if (reloadLists)
+        {
+            WebCardEditor.LoadCards(_webCards);
+            LauncherEditor.LoadItems(_launchers);
+        }
         // An isolated test profile must not rewrite the real sign-in entry.
         StartupToggle.IsEnabled = !SettingsStore.IsIsolatedProfile;
         StartupToggle.IsOn = StartupRegistration.IsEnabled();
+        // Never while Settings is open: a divider drag or similar refresh would otherwise wipe
+        // unsaved name and program edits. Settings loads them as it opens.
+        if (reloadLists) ProfileEditor.LoadProfiles(_profiles);
+        DimAtNightToggle.IsOn = _screenSettings.DimAtNight;
+        DayBrightnessSlider.Value = _screenSettings.DayBrightness;
+        NightBrightnessSlider.Value = _screenSettings.NightBrightness;
+        NightStartPicker.Time = _screenSettings.NightStart;
+        NightEndPicker.Time = _screenSettings.NightEnd;
+        BlankAfterSelector.SelectedIndex = Math.Max(0, Array.IndexOf(ScreenSchedule.BlankChoices, _screenSettings.BlankAfterMinutes));
         LoadWeatherPlaces(_weatherLocation, []);
         FahrenheitToggle.IsOn = _fahrenheit;
         WeatherSearchStatus.Visibility = Visibility.Collapsed;
@@ -655,10 +893,19 @@ public sealed partial class MainWindow : Window
             slot.SetEdgeToEdge(_isFullScreen);
             slot.SelectionChanged += async (_, selectedId) =>
             {
-                var updated = _widgetSlots.ToArray();
-                updated[slotIndex] = updated[slotIndex] with { SelectedWidgetId = selectedId };
-                _widgetSlots = updated;
-                await PersistAsync(CurrentSettings(), alreadyApplied: true);
+                var generation = _layoutGeneration;
+                await _profileGate.WaitAsync();
+                try
+                {
+                    if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
+                    // The panel may have been replaced in a layout switch while waiting.
+                    if (slotIndex >= _widgetSlots.Count || !WidgetHost.Children.Contains(slot)) return;
+                    var updated = _widgetSlots.ToArray();
+                    updated[slotIndex] = updated[slotIndex] with { SelectedWidgetId = selectedId };
+                    _widgetSlots = updated;
+                    await PersistAsync(CurrentSettings(), alreadyApplied: true);
+                }
+                finally { _profileGate.Release(); }
             };
             Grid.SetColumn(slot, index);
             WidgetHost.Children.Add(slot);
@@ -739,10 +986,21 @@ public sealed partial class MainWindow : Window
     private async void Divider_PointerReleased(object sender, PointerRoutedEventArgs args)
     {
         if (sender is not PanelDivider divider || divider != _activeDivider || args.Pointer.PointerId != _activePointerId) return;
-        ApplyResizeDelta(divider, args.GetCurrentPoint(Root).Position.X - _resizeStartX);
-        CompleteResize(divider);
+        var delta = args.GetCurrentPoint(Root).Position.X - _resizeStartX;
         args.Handled = true;
-        await PersistAsync(CurrentSettings(), alreadyApplied: true);
+        var generation = _layoutGeneration;
+        // The final size, and its save, wait their turn with automatic layout switches.
+        await _profileGate.WaitAsync();
+        try
+        {
+            // A layout switch while waiting has already cancelled this drag and undone its
+            // preview; its old size must not land on the new layout.
+            if (generation != _layoutGeneration) return;
+            ApplyResizeDelta(divider, delta);
+            CompleteResize(divider);
+            await PersistAsync(CurrentSettings(), alreadyApplied: true);
+        }
+        finally { _profileGate.Release(); }
     }
 
     private void Divider_PointerCanceled(object sender, PointerRoutedEventArgs args)
@@ -772,22 +1030,30 @@ public sealed partial class MainWindow : Window
             args.Key is not (VirtualKey.Left or VirtualKey.Right)) return;
 
         var delta = args.Key == VirtualKey.Right ? 10 : -10;
-        if (divider == WebDivider)
-        {
-            var available = Math.Max(1, WebHost.ActualWidth - 10);
-            _configuredWebSplitRatio = PanelLayout.NormalizeWebSplitRatio(_configuredWebSplitRatio + delta / available);
-            ApplyWebSplitLayout();
-        }
-        else
-        {
-            _configuredPanelWidth = PanelLayout.ResizeSharedWidgetWidth(
-                _configuredPanelWidth, delta, _widgetSlots.Count, _mediaPlacement);
-            ApplyMediaLayout();
-            UpdateSettingsControls();
-        }
-
         args.Handled = true;
-        await PersistAsync(CurrentSettings(), alreadyApplied: true);
+        var generation = _layoutGeneration;
+        // The change and its save wait their turn with automatic layout switches.
+        await _profileGate.WaitAsync();
+        try
+        {
+            if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
+            if (!CanResize(divider)) return; // A layout switch may have removed it meanwhile.
+            if (divider == WebDivider)
+            {
+                var available = Math.Max(1, WebHost.ActualWidth - 10);
+                _configuredWebSplitRatio = PanelLayout.NormalizeWebSplitRatio(_configuredWebSplitRatio + delta / available);
+                ApplyWebSplitLayout();
+            }
+            else
+            {
+                _configuredPanelWidth = PanelLayout.ResizeSharedWidgetWidth(
+                    _configuredPanelWidth, delta, _widgetSlots.Count, _mediaPlacement);
+                ApplyMediaLayout();
+                UpdateSettingsControls();
+            }
+            await PersistAsync(CurrentSettings(), alreadyApplied: true);
+        }
+        finally { _profileGate.Release(); }
     }
 
     private void ApplyResizeDelta(PanelDivider divider, double delta)
@@ -859,6 +1125,251 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>One button per saved layout; the active one is highlighted.</summary>
+    private void BuildProfileButtons()
+    {
+        ProfileButtons.Children.Clear();
+        var current = LayoutProfiles.Capture(CurrentSettings());
+        foreach (var profile in _profiles)
+        {
+            // Highlighted only while the dashboard still matches it, so later quick changes or
+            // a restart never leave a stale "current layout".
+            var active = LayoutProfiles.Matches(current, profile.Layout);
+            var button = new Button
+            {
+                Content = profile.WhenRunning is { } app ? $"{profile.Name}  ·  with {app}" : profile.Name,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                MinHeight = 52
+            };
+            if (active) button.Background = (Brush)Application.Current.Resources["AccentBrush"];
+            AutomationProperties.SetName(button, active ? $"{profile.Name}, current layout" : $"Switch to the {profile.Name} layout");
+            button.Click += async (_, _) =>
+            {
+                await _profileGate.WaitAsync();
+                try
+                {
+                    // Choosing by hand while a program's layout is on keeps that layout off until
+                    // the program next starts, along with any already kept off.
+                    await ApplyProfileAsync(profile.Layout, profile.Id, manual: true,
+                        new AutoState(null, null, SuppressActive()));
+                }
+                finally { _profileGate.Release(); }
+                CloseControlsDrawer();
+            };
+            ProfileButtons.Children.Add(button);
+        }
+        ProfileButtons.Visibility = _profiles.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        ProfileStatus.Visibility = Visibility.Collapsed;
+    }
+
+    private async void SaveProfile_Click(object sender, RoutedEventArgs args)
+    {
+        var name = ProfileNameBox.Text.Trim();
+        if (name.Length == 0)
+        {
+            ProfileNameBox.Focus(FocusState.Programmatic);
+            return;
+        }
+        // The layout on screen when Save is tapped, even if an automatic switch is finishing.
+        var shown = LayoutProfiles.Capture(CurrentSettings());
+        // Merged and saved under the layout gate, so an automatic switch cannot interleave.
+        await _profileGate.WaitAsync();
+        try
+        {
+            // Saving under an existing name replaces that layout and keeps its program trigger.
+            var existing = _profiles.FirstOrDefault(profile => string.Equals(profile.Name, name, StringComparison.CurrentCultureIgnoreCase));
+            if (existing is null && _profiles.Count >= LayoutProfiles.Maximum)
+            {
+                ProfileStatus.Text = $"You have {LayoutProfiles.Maximum} layouts. Reuse a name to replace one, or remove one in Settings.";
+                ProfileStatus.Visibility = Visibility.Visible;
+                return;
+            }
+            var saved = new LayoutProfile(existing?.Id ?? Guid.NewGuid().ToString("N"), name, existing?.WhenRunning, shown);
+            var updated = existing is null ? _profiles.Append(saved).ToArray() : _profiles.Select(profile => profile.Id == existing.Id ? saved : profile).ToArray();
+            var candidate = SettingsStore.Normalize(CurrentSettings() with { Profiles = updated });
+            if (!await PersistAsync(candidate)) return;
+            _profiles = candidate.Profiles!;
+        }
+        finally { _profileGate.Release(); }
+        ProfileNameBox.Text = string.Empty;
+        BuildProfileButtons();
+    }
+
+    /// <summary>
+    /// The layouts to keep off after a hand choice: those already kept off, plus every layout
+    /// triggered by the active layout's program, since that program has not stopped.
+    /// </summary>
+    private IReadOnlyList<string> SuppressActive()
+    {
+        var program = _profiles.FirstOrDefault(profile => profile.Id == _autoProfileId)?.WhenRunning;
+        var sameProgram = program is null ? [] : _profiles
+            .Where(profile => string.Equals(profile.WhenRunning, program, StringComparison.OrdinalIgnoreCase))
+            .Select(profile => profile.Id);
+        return _suppressedProfileIds.Concat(sameProgram).Append(_autoProfileId).OfType<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    /// <summary>Override times for these IDs: kept for existing overrides, now for new ones.</summary>
+    private IReadOnlyDictionary<string, DateTime> SinceFor(IReadOnlyList<string> ids)
+    {
+        var now = DateTime.UtcNow;
+        return ids.Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(id => id, id => _suppressedSince.TryGetValue(id, out var since) ? since : now);
+    }
+
+    /// <summary>The automatic-switch bookkeeping that goes with a layout change.</summary>
+    private sealed record AutoState(string? AutoProfileId, ProfileLayout? Before, IReadOnlyList<string> SuppressedIds);
+
+    /// <summary>
+    /// Switches the dashboard to a saved layout and saves it as the current one, together with
+    /// <paramref name="auto"/>. The in-memory state changes only once the save succeeds, so a
+    /// failed save is retried by the next check instead of being forgotten.
+    /// </summary>
+    private async Task<bool> ApplyProfileAsync(ProfileLayout layout, string? profileId, bool manual, AutoState auto)
+    {
+        var settings = LayoutProfiles.Apply(CurrentSettings(), layout) with
+        {
+            AutoSwitch = auto is { AutoProfileId: { } autoId, Before: { } before } ? new AutoLayoutSwitch(autoId, before) : null,
+            SuppressedProfileIds = auto.SuppressedIds,
+            SuppressedSince = SinceFor(auto.SuppressedIds)
+        };
+        if (!await PersistAsync(settings, alreadyApplied: false)) return false;
+        _layoutGeneration++;
+        // A drag started while the switch was saving belongs to the old layout: cancel it, so
+        // its release cannot resize the new one.
+        if (_activeDivider is { } dragging)
+        {
+            RestoreResize(dragging);
+            CompleteResize(dragging);
+        }
+        _autoProfileId = auto.AutoProfileId;
+        _layoutBeforeAuto = auto.Before;
+        _suppressedProfileIds = auto.SuppressedIds;
+        _suppressedSince = settings.SuppressedSince!;
+        _mediaPlacement = settings.MediaPanelPlacement;
+        _lastVisiblePlacement = settings.LastVisibleMediaPanelPlacement;
+        _configuredPanelWidth = settings.MediaPanelWidth;
+        _isWebVisible = settings.IsWebVisible;
+        _widgetSlots = settings.WidgetSlots;
+        _webPanelCount = settings.WebPanelCount;
+        _webPanelCardIds = settings.WebPanelCardIds!;
+        _configuredWebSplitRatio = settings.WebSplitRatio;
+        BuildWidgetSlots();
+        ApplyMediaLayout();
+        await BuildWebPanelsAsync();
+        ApplyMediaLayout();
+        if (ControlsOverlay.Visibility == Visibility.Visible && !_isWidgetView)
+        {
+            // The drawer's selectors belong to the panels just replaced; rebuild them.
+            BuildWebPanelSelectors();
+            BuildPanelSelectors();
+            BuildProfileButtons();
+        }
+        // An automatic switch must not discard edits in an open Settings panel; Settings
+        // reloads from the current layout when it is next opened.
+        if (manual || SettingsPanel.Visibility != Visibility.Visible) UpdateSettingsControls();
+        return true;
+    }
+
+    private void StartProfileWatch()
+    {
+        _profileTimer = DispatcherQueue.CreateTimer();
+        _profileTimer.Interval = TimeSpan.FromSeconds(5);
+        _profileTimer.Tick += async (_, _) => await CheckProgramsAsync();
+        _profileTimer.Start();
+    }
+
+    /// <summary>
+    /// Switches to a layout while its program runs and back afterwards. Only process names are
+    /// read, on the thread pool, and only when some layout has a program set.
+    /// </summary>
+    private async Task CheckProgramsAsync()
+    {
+        if (_closing || _checkingPrograms) return;
+        // Nothing to watch, and no automatic layout to undo.
+        if (!_profiles.Any(profile => profile.WhenRunning is not null) && _autoProfileId is null) return;
+        _checkingPrograms = true;
+        try
+        {
+            // Start times are read only for programs with an override, to see a restart.
+            var watched = new HashSet<string>(_profiles
+                .Where(profile => _suppressedProfileIds.Contains(profile.Id) && profile.WhenRunning is not null)
+                .Select(profile => profile.WhenRunning!), StringComparer.OrdinalIgnoreCase);
+            var scan = await Task.Run(() => ScanProcesses(watched));
+            // Windows could not list processes this time: try again on the next tick.
+            if (scan is not { } found) return;
+            // Decide and switch under the gate, so the layout to return to is read only after any
+            // hand choice or Settings save in progress has finished.
+            await _profileGate.WaitAsync();
+            try { await SwitchForRunningProgramsAsync(found.Names, found.EarliestStart); }
+            finally { _profileGate.Release(); }
+        }
+        finally { _checkingPrograms = false; }
+    }
+
+    /// <summary>Running process names, and for watched names when the oldest copy started (UTC).</summary>
+    private static (HashSet<string> Names, Dictionary<string, DateTime> EarliestStart)? ScanProcesses(IReadOnlySet<string> watched)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var earliest = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        System.Diagnostics.Process[] processes;
+        try { processes = System.Diagnostics.Process.GetProcesses(); }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException) { return null; }
+        var unknown = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var process in processes)
+        {
+            // A process can exit while the list is read; skip it.
+            using (process)
+            {
+                string name;
+                try { name = process.ProcessName; }
+                catch (InvalidOperationException) { continue; }
+                names.Add(name);
+                if (!watched.Contains(name)) continue;
+                try
+                {
+                    var started = process.StartTime.ToUniversalTime();
+                    if (!earliest.TryGetValue(name, out var known) || started < known) earliest[name] = started;
+                }
+                // Not readable (for example an elevated program): its age is unknown.
+                catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException)
+                {
+                    unknown.Add(name);
+                }
+            }
+        }
+        // One copy of unknown age could be the original: do not treat that program as restarted.
+        foreach (var name in unknown) earliest.Remove(name);
+        return (names, earliest);
+    }
+
+    private async Task SwitchForRunningProgramsAsync(IReadOnlySet<string> running, IReadOnlyDictionary<string, DateTime> earliestStart)
+    {
+        // Mid-drag the layout is an unsaved preview: wait for the next check rather than capture
+        // it or switch under the user's finger.
+        if (_closing || _activeDivider is not null) return;
+        // Hand-chosen overrides end once their own program stops, whatever else is running.
+        var suppressed = LayoutProfiles.StillSuppressed(_suppressedProfileIds, _profiles, running, _suppressedSince, earliestStart);
+        if (!suppressed.SequenceEqual(_suppressedProfileIds))
+        {
+            var since = SinceFor(suppressed);
+            if (!await PersistAsync(CurrentSettings() with { SuppressedProfileIds = suppressed, SuppressedSince = since }, alreadyApplied: false)) return;
+            _suppressedProfileIds = suppressed;
+            _suppressedSince = since;
+        }
+        var target = LayoutProfiles.Automatic(_profiles, running, suppressed);
+        if (target is null)
+        {
+            if (_autoProfileId is not null && _layoutBeforeAuto is { } previous)
+                await ApplyProfileAsync(previous, null, manual: false, new AutoState(null, null, suppressed));
+            return;
+        }
+        if (target.Id == _autoProfileId) return;
+        await ApplyProfileAsync(target.Layout, target.Id, manual: false,
+            new AutoState(target.Id, _layoutBeforeAuto ?? LayoutProfiles.Capture(CurrentSettings()), suppressed));
+    }
+
     private void OpenControlsDrawer()
     {
         if (ControlsOverlay.Visibility == Visibility.Visible) return;
@@ -867,6 +1378,7 @@ public sealed partial class MainWindow : Window
         {
             BuildWebPanelSelectors();
             BuildPanelSelectors();
+            BuildProfileButtons();
         }
         DashboardControls.Visibility = _isWidgetView ? Visibility.Collapsed : Visibility.Visible;
         WidgetViewText.Text = _isWidgetView ? "Back to dashboard" : "Widget view";
@@ -907,39 +1419,58 @@ public sealed partial class MainWindow : Window
 
     private async void WebPanelSelector_SelectionChanged(object sender, SelectionChangedEventArgs args)
     {
-        if (sender is not ComboBox { SelectedItem: ComboBoxItem item, Tag: int index } || item.Tag is not string id) return;
-        var selections = _webPanelCardIds.ToList();
-        while (selections.Count < 2) selections.Add(_webCards.ElementAtOrDefault(selections.Count)?.Id ?? id);
-        if (string.Equals(selections[index], id, StringComparison.OrdinalIgnoreCase)) return;
-        selections[index] = id;
-        var candidate = SettingsStore.Normalize(CurrentSettings() with { WebPanelCardIds = selections });
-        if (!await PersistAsync(candidate))
+        // Layout changes run one at a time with automatic switches (see _profileGate).
+        var generation = _layoutGeneration;
+        await _profileGate.WaitAsync();
+        try
         {
-            BuildWebPanelSelectors();
-            CloseControlsDrawer(restoreFocus: false);
-            return;
+            if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
+            if (sender is not ComboBox { SelectedItem: ComboBoxItem item, Tag: int index } || item.Tag is not string id) return;
+            // A selector replaced by a layout switch while waiting belongs to the old layout.
+            if (!WebPanelSelectors.Children.Contains((ComboBox)sender)) return;
+            var selections = _webPanelCardIds.ToList();
+            while (selections.Count < 2) selections.Add(_webCards.ElementAtOrDefault(selections.Count)?.Id ?? id);
+            if (string.Equals(selections[index], id, StringComparison.OrdinalIgnoreCase)) return;
+            selections[index] = id;
+            var candidate = SettingsStore.Normalize(CurrentSettings() with { WebPanelCardIds = selections });
+            if (!await PersistAsync(candidate))
+            {
+                BuildWebPanelSelectors();
+                CloseControlsDrawer(restoreFocus: false);
+                return;
+            }
+            _webPanelCardIds = candidate.WebPanelCardIds!;
+            await BuildWebPanelsAsync();
         }
-        _webPanelCardIds = candidate.WebPanelCardIds!;
-        await BuildWebPanelsAsync();
+        finally { _profileGate.Release(); }
     }
 
     private async void WebPanelCountSelector_SelectionChanged(object sender, SelectionChangedEventArgs args)
     {
+        // Programmatic changes (rebuilding the selectors) are ignored before waiting.
         if (_updatingWebPanelCount || WebPanelCountSelector.SelectedIndex < 0) return;
-        var count = WebPanelCountSelector.SelectedIndex + 1;
-        if (count == _webPanelCount || count > _webCards.Count) return;
-        var candidate = SettingsStore.Normalize(CurrentSettings() with { WebPanelCount = count });
-        if (!await PersistAsync(candidate))
+        // Layout changes run one at a time with automatic switches (see _profileGate).
+        var generation = _layoutGeneration;
+        await _profileGate.WaitAsync();
+        try
         {
+            if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
+            var count = WebPanelCountSelector.SelectedIndex + 1;
+            if (count == _webPanelCount || count > _webCards.Count) return;
+            var candidate = SettingsStore.Normalize(CurrentSettings() with { WebPanelCount = count });
+            if (!await PersistAsync(candidate))
+            {
+                BuildWebPanelSelectors();
+                CloseControlsDrawer(restoreFocus: false);
+                return;
+            }
+            _webPanelCount = candidate.WebPanelCount;
+            _webPanelCardIds = candidate.WebPanelCardIds!;
+            await BuildWebPanelsAsync();
             BuildWebPanelSelectors();
-            CloseControlsDrawer(restoreFocus: false);
-            return;
+            ApplyMediaLayout();
         }
-        _webPanelCount = candidate.WebPanelCount;
-        _webPanelCardIds = candidate.WebPanelCardIds!;
-        await BuildWebPanelsAsync();
-        BuildWebPanelSelectors();
-        ApplyMediaLayout();
+        finally { _profileGate.Release(); }
     }
 
     private void BuildPanelSelectors()
@@ -981,19 +1512,28 @@ public sealed partial class MainWindow : Window
 
     private async void PanelCountSelector_SelectionChanged(object sender, SelectionChangedEventArgs args)
     {
+        // Programmatic changes (rebuilding the selectors) are ignored before waiting.
         if (_updatingPanelCount || PanelCountSelector.SelectedIndex < 0) return;
-        var count = PanelCountSelector.SelectedIndex + 1;
-        if (count == _widgetSlots.Count) return;
-        var slots = _widgetSlots.Take(count).ToList();
-        while (slots.Count < count)
-            slots.Add(new WidgetSlotSettings(["media", "clock", "audio", "stats", "pc"], "media"));
-        _widgetSlots = slots;
-        BuildWidgetSlots();
-        ApplyMediaLayout();
-        BuildPanelSelectors();
-        UpdateSettingsControls();
-        if (!await PersistAsync(CurrentSettings(), alreadyApplied: true))
-            CloseControlsDrawer(restoreFocus: false);
+        // Layout changes run one at a time with automatic switches (see _profileGate).
+        var generation = _layoutGeneration;
+        await _profileGate.WaitAsync();
+        try
+        {
+            if (generation != _layoutGeneration) return; // Aimed at a layout no longer shown.
+            var count = PanelCountSelector.SelectedIndex + 1;
+            if (count == _widgetSlots.Count) return;
+            var slots = _widgetSlots.Take(count).ToList();
+            while (slots.Count < count)
+                slots.Add(new WidgetSlotSettings(["media", "clock", "audio", "stats", "launcher", "pc"], "media"));
+            _widgetSlots = slots;
+            BuildWidgetSlots();
+            ApplyMediaLayout();
+            BuildPanelSelectors();
+            UpdateSettingsControls();
+            if (!await PersistAsync(CurrentSettings(), alreadyApplied: true))
+                CloseControlsDrawer(restoreFocus: false);
+        }
+        finally { _profileGate.Release(); }
     }
 
     private void CloseControls_Click(object sender, RoutedEventArgs args) => CloseControlsDrawer();
@@ -1023,7 +1563,8 @@ public sealed partial class MainWindow : Window
 
     private void EnterWidgetView()
     {
-        if (_isWidgetView) return;
+        if (_isWidgetView || _persistingSave) return;
+        AbandonSettingsSave();
         SettingsPanel.Visibility = Visibility.Collapsed;
         WidgetHost.Children.Clear();
         WidgetHost.ColumnDefinitions.Clear();
@@ -1110,6 +1651,368 @@ public sealed partial class MainWindow : Window
         _savedSettings = SettingsStore.Normalize(merged);
     }
 
+    private ScreenScheduleSettings ReadScreenSettings() => ScreenSchedule.Normalize(new ScreenScheduleSettings(
+        DimAtNightToggle.IsOn,
+        (int)DayBrightnessSlider.Value,
+        (int)NightBrightnessSlider.Value,
+        NightStartPicker.Time,
+        NightEndPicker.Time,
+        ScreenSchedule.BlankChoices[Math.Max(0, BlankAfterSelector.SelectedIndex)]));
+
+    private void StartScreenSchedule()
+    {
+        _screenTimer = DispatcherQueue.CreateTimer();
+        _screenTimer.Interval = TimeSpan.FromSeconds(5);
+        _screenTimer.Tick += async (_, _) => await UpdateScreenAsync();
+        _screenTimer.Start();
+    }
+
+    /// <summary>
+    /// Applies night dimming and idle blanking. Only while full screen: then EdgeDock owns the
+    /// screen; a windowed EdgeDock may be on the main monitor, which it must never dim.
+    /// Brightness uses the monitor's own control (DDC/CI) where available, otherwise a dark
+    /// layer over EdgeDock.
+    /// </summary>
+    private Task UpdateScreenAsync()
+    {
+        if (_closing || _closeAfterPendingSave || _screenBusy) return Task.CompletedTask;
+        _screenBusy = true;
+        return _screenWork = RunScreenUpdateAsync();
+    }
+
+    private async Task RunScreenUpdateAsync()
+    {
+        try
+        {
+            if (!_screenBlank && _brightnessBeforeBlank is not null) await RestoreBlankedBrightnessAsync();
+            if (_restoreClearUnsaved && _brightnessRestore is null && await PersistBrightnessRestoreAsync()) _restoreClearUnsaved = false;
+            var target = (_isFullScreen, MonitorBrightness.MonitorOf(_windowHandle));
+            if (target != _scheduleTarget)
+            {
+                _scheduleTarget = target;
+                _appliedScheduleBrightness = null;
+            }
+            var state = _isFullScreen
+                ? ScreenSchedule.Evaluate(_screenSettings, DateTime.Now, IdleTime())
+                : new ScreenState(null, false);
+            if (state.Blank && !_screenBlank) await BlankScreenAsync();
+            else if (!state.Blank && _screenBlank) await WakeScreenAsync(state.Brightness);
+            else if (_screenBlank && _blankWritePending) await RetryBlankWriteAsync();
+            else if (!_screenBlank && state.Brightness != _appliedScheduleBrightness)
+            {
+                // A refused write is retried on the next tick rather than marked as applied.
+                var applied = true;
+                if (state.Brightness is { } brightness) applied = (await ApplyBrightnessAsync(brightness)).Done;
+                else ScreenDimLayer.Opacity = 0; // Schedule off or windowed: remove any software dimming.
+                if (applied) _appliedScheduleBrightness = state.Brightness;
+            }
+            // Nothing scheduled: never leave software dimming behind, whatever the marker says.
+            if (!_screenBlank && state.Brightness is null) ScreenDimLayer.Opacity = 0;
+            // Nothing scheduled any more (turned off, or not full screen): put the monitor back
+            // to how it was before EdgeDock changed it. Retried each tick if it is unplugged.
+            if (!_screenBlank && state.Brightness is null && _brightnessRestore is not null) await RestoreOriginalBrightnessAsync();
+        }
+        finally
+        {
+            _screenBusy = false;
+            // A tap or key during this work (even during the final write) is handled at once,
+            // not on a later tick.
+            // Likewise if full screen ended or the window moved during the work (say, during its
+            // final write): put things right now rather than on the next tick.
+            var moved = (_isFullScreen, MonitorBrightness.MonitorOf(_windowHandle)) != _scheduleTarget;
+            if ((_wakeDropped || moved) && !_closing)
+            {
+                _wakeDropped = false;
+                DispatcherQueue.TryEnqueue(() => _ = UpdateScreenAsync());
+            }
+        }
+    }
+
+    private async Task BlankScreenAsync()
+    {
+        _screenBlank = true;
+        _wakeRequested = false;
+        ScreenBlankOverlay.Visibility = Visibility.Visible;
+        // Take keyboard focus (from XAML controls and web pages alike) so wake keys land here.
+        _focusBeforeBlank = FocusManager.GetFocusedElement(Root.XamlRoot) as Control;
+        ScreenWakeButton.Focus(FocusState.Programmatic);
+        // Hide everything under the black overlay, so neither keys nor a screen reader can reach
+        // it; only the wake button remains. It is shown again exactly as it was on wake.
+        _hiddenWhileBlank.Clear();
+        foreach (var child in Root.Children)
+        {
+            if (child == ScreenBlankOverlay || child == ScreenDimLayer || child.Visibility != Visibility.Visible) continue;
+            _hiddenWhileBlank.Add(child);
+            child.Visibility = Visibility.Collapsed;
+        }
+        // Check every second while blank so a touch or key wakes it promptly.
+        if (_screenTimer is not null) _screenTimer.Interval = TimeSpan.FromSeconds(1);
+        // An earlier blank's monitor (say, unplugged while dark) is still waiting for its level:
+        // keep that until it is put back, and use only the overlay this time.
+        if (_brightnessBeforeBlank is not null) return;
+        var monitor = MonitorBrightness.MonitorOf(_windowHandle);
+        var identity = DisplayPlacement.PreferenceFor(CurrentDisplay());
+        // The black overlay always shows; the backlight is turned down only when its original
+        // level is safely saved, so a crash can never leave it dark with nothing to restore.
+        var before = await MonitorBrightness.GetAsync(monitor);
+        // Moved to another monitor during the read: that reading is not this monitor's. The saved
+        // identity must also find exactly this monitor again, or it could never be put back.
+        if (MonitorBrightness.MonitorOf(_windowHandle) != monitor || !IdentifiesMonitor(identity, monitor)) before = null;
+        if (before is not null && await RememberOriginalBrightnessAsync(identity, before.Value) &&
+            // Still blank and full screen after the waits (F11, a touch or a key may have come in).
+            _screenBlank && !_wakeRequested && StillIdle() && _isFullScreen && MonitorBrightness.MonitorOf(_windowHandle) == monitor)
+        {
+            _brightnessBeforeBlank = before;
+            _blankedMonitor = identity;
+            _blankHandle = monitor;
+            // A refused write is retried each tick while blank, so the backlight still goes off.
+            _blankWritePending = !await MonitorBrightness.SetAsync(monitor, 0);
+        }
+    }
+
+    /// <summary>
+    /// Whether the idle timeout still holds right now. Input anywhere on the PC (another app or
+    /// monitor) resets it without passing through EdgeDock, so it is checked just before writing.
+    /// </summary>
+    private bool StillIdle() => ScreenSchedule.Evaluate(_screenSettings, DateTime.Now, IdleTime()).Blank;
+
+    private readonly List<UIElement> _hiddenWhileBlank = [];
+    // A wake gesture that arrived while screen work was busy, handled as soon as it finishes.
+    private bool _wakeDropped;
+
+    // Set by any wake gesture straight away, even while a blank is still talking to the monitor,
+    // so a blank in progress never turns the backlight off after the user asked to wake.
+    private bool _wakeRequested;
+    private bool _blankWritePending;
+    private IntPtr _blankHandle;
+
+    private async Task RetryBlankWriteAsync()
+    {
+        if (_wakeRequested || !StillIdle() || !_isFullScreen || MonitorBrightness.MonitorOf(_windowHandle) != _blankHandle) return;
+        _blankWritePending = !await MonitorBrightness.SetAsync(_blankHandle, 0) && !_wakeRequested;
+    }
+
+    private async Task WakeScreenAsync(int? scheduled)
+    {
+        _screenBlank = false;
+        _blankWritePending = false;
+        foreach (var child in _hiddenWhileBlank) child.Visibility = Visibility.Visible;
+        _hiddenWhileBlank.Clear();
+        ScreenBlankOverlay.Visibility = Visibility.Collapsed;
+        if (_focusBeforeBlank is { } previous && previous != ScreenWakeButton) previous.Focus(FocusState.Programmatic);
+        _focusBeforeBlank = null;
+        if (_screenTimer is not null) _screenTimer.Interval = TimeSpan.FromSeconds(5);
+        var applied = true;
+        if (scheduled is not null && scheduled != _appliedScheduleBrightness)
+        {
+            // Day turned to night (or back) while blank: the schedule's new level wins, but the
+            // pre-blank level is dropped only once the new one is written; if the write fails it
+            // is restored instead (and retried every tick), so the screen never stays at zero.
+            var (done, onMonitor) = await ApplyBrightnessAsync(scheduled.Value);
+            applied = done;
+            if (onMonitor)
+            {
+                _brightnessBeforeBlank = null;
+                _blankedMonitor = null;
+            }
+            else await RestoreBlankedBrightnessAsync();
+        }
+        else
+        {
+            // Otherwise back to the level in use just before blanking, which may be a
+            // monitor-button change made since the schedule last applied.
+            await RestoreBlankedBrightnessAsync();
+        }
+        if (applied) _appliedScheduleBrightness = scheduled;
+        else _appliedScheduleBrightness = null;
+        // Waking outside full screen, or with the schedule off: no software dimming either.
+        if (scheduled is null) ScreenDimLayer.Opacity = 0;
+    }
+
+    /// <summary>Restores the pre-blank level, only to the blanked monitor (retried if it is away).</summary>
+    private async Task RestoreBlankedBrightnessAsync()
+    {
+        if (_brightnessBeforeBlank is not { } before) return;
+        if (await SetOnMonitorAsync(_blankedMonitor, before))
+        {
+            _brightnessBeforeBlank = null;
+            _blankedMonitor = null;
+        }
+    }
+
+    /// <summary>Puts the monitor back to its level from before EdgeDock first changed it.</summary>
+    private async Task<bool> RestoreOriginalBrightnessAsync()
+    {
+        if (_brightnessRestore is not { } restore) return true;
+        if (!await SetOnMonitorAsync(restore.Monitor, restore.Brightness)) return false;
+        _brightnessRestore = null;
+        // If the removal is not saved, keep trying: a stale restore point on disk would
+        // otherwise overwrite a later change made on the monitor's buttons at next launch.
+        _restoreClearUnsaved = !await PersistBrightnessRestoreAsync();
+        return true;
+    }
+
+    /// <summary>
+    /// Saves the monitor's level the first time EdgeDock changes it. True only when it is safe to
+    /// change <paramref name="monitor"/>: its restore point is saved on disk. One restore point
+    /// at a time: another monitor still waiting to be put back must be restored first, so its
+    /// original level is never lost.
+    /// </summary>
+    private async Task<bool> RememberOriginalBrightnessAsync(DisplayPreference? monitor, int brightness)
+    {
+        if (monitor is null) return false;
+        if (_brightnessRestore is { } pending)
+        {
+            if (SameMonitor(pending.Monitor, monitor)) return true;
+            if (!await RestoreOriginalBrightnessAsync() || _brightnessRestore is not null) return false;
+        }
+        _brightnessRestore = new BrightnessRestore(monitor, brightness);
+        if (await PersistBrightnessRestoreAsync())
+        {
+            _restoreClearUnsaved = false;
+            return true;
+        }
+        _brightnessRestore = null; // Not saved: leave the monitor alone and try again later.
+        return false;
+    }
+
+    /// <summary>
+    /// Writes brightness to one specific monitor, found by the same matcher used for the saved
+    /// screen (device path, then model, then a unique resolution, never a guess). False if that
+    /// monitor is not connected or refuses.
+    /// </summary>
+    private static async Task<bool> SetOnMonitorAsync(DisplayPreference? monitor, int brightness)
+    {
+        if (monitor is null) return false;
+        var displays = ConnectedDisplays();
+        var index = DisplayPlacement.FindPreferred(displays.Select(display => display.Info).ToArray(), monitor);
+        if (index < 0) return false;
+        return await MonitorBrightness.SetAsync(Win32Interop.GetMonitorFromDisplayId(displays[index].Area.DisplayId), brightness);
+    }
+
+    /// <summary>
+    /// Sets the scheduled level. OnMonitor when the monitor itself now has it. Done is false when the monitor answered but the change could not be
+    /// made safely (restore point not saved, or the write refused), so the caller retries; a
+    /// monitor without DDC/CI gets software dimming and counts as done.
+    /// </summary>
+    /// <summary>
+    /// Whether a saved identity leads back to exactly this monitor, using the same matcher as a
+    /// restore. An ambiguous identity (for example two same-size screens without device paths)
+    /// could never be restored, so such a monitor is left alone.
+    /// </summary>
+    private static bool IdentifiesMonitor(DisplayPreference? identity, IntPtr monitor) =>
+        monitor != IntPtr.Zero && ResolveMonitor(identity) == monitor;
+
+    /// <summary>The connected monitor a saved identity leads to, or zero if none or ambiguous.</summary>
+    private static IntPtr ResolveMonitor(DisplayPreference? identity)
+    {
+        if (identity is null) return IntPtr.Zero;
+        var displays = ConnectedDisplays();
+        var index = DisplayPlacement.FindPreferred(displays.Select(display => display.Info).ToArray(), identity);
+        return index < 0 ? IntPtr.Zero : Win32Interop.GetMonitorFromDisplayId(displays[index].Area.DisplayId);
+    }
+
+    /// <summary>
+    /// Whether two saved identities are the same physical monitor, by the restore matcher rather
+    /// than exact equality (resolution and orientation can change while it stays the same screen).
+    /// </summary>
+    private static bool SameMonitor(DisplayPreference? first, DisplayPreference? second)
+    {
+        if (first is null || second is null) return false;
+        if (first == second) return true;
+        var resolved = ResolveMonitor(first);
+        return resolved != IntPtr.Zero && resolved == ResolveMonitor(second);
+    }
+
+    private async Task<(bool Done, bool OnMonitor)> ApplyBrightnessAsync(int brightness)
+    {
+        // Take the monitor's handle and identity together, before the slow read; if the window
+        // moved to another monitor meanwhile, the reading belongs to the old one and is not used.
+        var monitor = MonitorBrightness.MonitorOf(_windowHandle);
+        var identity = DisplayPlacement.PreferenceFor(CurrentDisplay());
+        // This monitor answered DDC/CI moments ago (before blanking), so a failed read now is a
+        // hiccup to retry, not a monitor without DDC/CI.
+        // Likewise when EdgeDock has already changed this monitor (its restore point is pending).
+        var done = _brightnessBeforeBlank is null && !SameMonitor(_brightnessRestore?.Monitor, identity);
+        // A different monitor EdgeDock changed earlier goes back first, whether or not this one
+        // answers DDC/CI; if it cannot yet (unplugged), try again next tick.
+        if (_brightnessRestore is { } pending && !SameMonitor(pending.Monitor, identity) &&
+            (!await RestoreOriginalBrightnessAsync() || _brightnessRestore is not null))
+            done = false;
+        var current = await MonitorBrightness.GetAsync(monitor);
+        if (current is not null && MonitorBrightness.MonitorOf(_windowHandle) != monitor)
+        {
+            current = null;
+            done = false; // Moved mid-read: try again on the new monitor.
+        }
+        else if (current is not null && !IdentifiesMonitor(identity, monitor))
+            current = null; // Could never be put back: software dimming only, for good.
+        if (current is not null)
+        {
+            if (await RememberOriginalBrightnessAsync(identity, current.Value) &&
+                // Still full screen on the same monitor after the waits.
+                _isFullScreen && MonitorBrightness.MonitorOf(_windowHandle) == monitor &&
+                await MonitorBrightness.SetAsync(monitor, brightness))
+            {
+                ScreenDimLayer.Opacity = 0;
+                return (true, true);
+            }
+            done = false;
+        }
+        // No DDC/CI on this monitor or cable (or not safe to change it yet): darken EdgeDock itself.
+        ScreenDimLayer.Opacity = Math.Clamp((100 - brightness) / 100.0, 0, 0.85);
+        return (done, false);
+    }
+
+    /// <summary>Saves only the restore point, merged onto the last saved settings. False if not saved.</summary>
+    private async Task<bool> PersistBrightnessRestoreAsync()
+    {
+        await _saveGate.WaitAsync();
+        try
+        {
+            var merged = (_savedSettings ?? CurrentSettings()) with { PendingBrightness = _brightnessRestore };
+            await _settings.SaveAsync(merged);
+            _savedSettings = SettingsStore.Normalize(merged);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return false; }
+        finally { _saveGate.Release(); }
+    }
+
+    private Control? _focusBeforeBlank;
+
+    private async void ScreenBlankOverlay_PreviewKeyDown(object sender, KeyRoutedEventArgs args)
+    {
+        // Any key only wakes the screen; nothing underneath sees it.
+        args.Handled = true;
+        _wakeRequested = true;
+        if (_screenBusy) _wakeDropped = true;
+        await UpdateScreenAsync();
+    }
+
+    private async void ScreenWakeButton_Click(object sender, RoutedEventArgs args)
+    {
+        _wakeRequested = true;
+        if (_screenBusy) _wakeDropped = true;
+        await UpdateScreenAsync();
+    }
+
+    private async void ScreenBlankOverlay_PointerPressed(object sender, PointerRoutedEventArgs args)
+    {
+        // The tap only wakes the screen; it does not reach the widget underneath. It also
+        // resets Windows' idle time, so the normal update path wakes the screen.
+        args.Handled = true;
+        _wakeRequested = true;
+        if (_screenBusy) _wakeDropped = true;
+        await UpdateScreenAsync();
+    }
+
+    private static TimeSpan IdleTime()
+    {
+        var info = new LastInputInfo { Size = (uint)Marshal.SizeOf<LastInputInfo>() };
+        return GetLastInputInfo(ref info) ? TimeSpan.FromMilliseconds(unchecked((uint)Environment.TickCount - info.Time)) : TimeSpan.Zero;
+    }
+
     private void SetFullScreen(bool fullScreen)
     {
         CloseControlsDrawer();
@@ -1133,6 +2036,9 @@ public sealed partial class MainWindow : Window
             AutomationProperties.SetName(FullScreenButton, "Exit full screen");
         }
         ApplyFullscreenLayout();
+        // Apply or undo the schedule now, not on the next tick: leaving full screen puts the
+        // monitor back at once. (Work already running rechecks this itself when it finishes.)
+        _ = UpdateScreenAsync();
     }
 
     /// <summary>Brings the window forward when EdgeDock is launched again while running.</summary>
@@ -1297,11 +2203,14 @@ public sealed partial class MainWindow : Window
     {
         if (_closeReady) return;
         var movePending = _windowMoveTimer?.IsRunning == true;
-        if (!_closeAfterPendingSave && !movePending && _displaySaves.IsCompleted) return;
+        var screenPending = _screenBlank || _screenBusy || _brightnessBeforeBlank is not null || _brightnessRestore is not null || _restoreClearUnsaved;
+        if (!_closeAfterPendingSave && !movePending && _displaySaves.IsCompleted && !screenPending && _settingsSave.IsCompleted) return;
         args.Cancel = true;
         // Already waiting: further close clicks must not end the process mid-save.
         if (_closeAfterPendingSave) return;
         _closeAfterPendingSave = true;
+        // Noted now: the Settings save may finish (or fail) while display saves are awaited.
+        var settingsWasSaving = !_settingsSave.IsCompleted;
         if (movePending)
         {
             _windowMoveTimer!.Stop();
@@ -1317,8 +2226,44 @@ public sealed partial class MainWindow : Window
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
         }
         while (!ReferenceEquals(pending, _displaySaves));
+        if (settingsWasSaving || !_settingsSave.IsCompleted)
+        {
+            // Save was pressed: finish it (checking launcher targets can wait on a slow drive)
+            // rather than lose it, and say why the window is still open.
+            if (!_settingsSave.IsCompleted)
+            {
+                UrlErrorText.Text = "Finishing your save, then EdgeDock will close.";
+                UrlErrorText.Visibility = Visibility.Visible;
+                await _settingsSave;
+            }
+            // A successful save closes Settings. If it is still open, the save failed or was
+            // refused (its message is showing): stay open so the draft can be fixed, not lost.
+            if (SettingsPanel.Visibility == Visibility.Visible)
+            {
+                _closeAfterPendingSave = false;
+                return;
+            }
+        }
+        await RestoreScreenBeforeCloseAsync();
         _closeReady = true;
         Close();
+    }
+
+    /// <summary>
+    /// Never leave a monitor dark or dimmed behind a closed EdgeDock. If the monitor is not
+    /// connected, its restore point stays saved and the next launch restores it.
+    /// </summary>
+    private async Task RestoreScreenBeforeCloseAsync()
+    {
+        _screenTimer?.Stop();
+        // Let a blank or wake that is already talking to the monitor finish completely first;
+        // no new one starts once closing has begun.
+        await _screenWork;
+        _screenBlank = false;
+        _brightnessBeforeBlank = null;
+        _blankedMonitor = null;
+        await RestoreOriginalBrightnessAsync();
+        if (_restoreClearUnsaved && _brightnessRestore is null) await PersistBrightnessRestoreAsync();
     }
 
     private DisplayInfo? CurrentDisplay()
@@ -1389,6 +2334,7 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
+        _screenTimer?.Stop();
         _closing = true;
         _activationGuard?.Dispose();
         _activationGuard = null;
@@ -1465,6 +2411,17 @@ public sealed partial class MainWindow : Window
 
     [DllImport("user32.dll")]
     private static extern bool ScreenToClient(IntPtr window, ref ActivationGuard.NativePoint point);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LastInputInfo
+    {
+        public uint Size;
+        public uint Time;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetLastInputInfo(ref LastInputInfo info);
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct MonitorInfoEx
     {

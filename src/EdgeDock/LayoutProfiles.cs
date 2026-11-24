@@ -1,0 +1,138 @@
+namespace EdgeDock;
+
+/// <summary>The parts of the dashboard a layout profile restores: panels, widgets and web cards.</summary>
+internal sealed record ProfileLayout(
+    MediaPanelPlacement Placement,
+    MediaPanelPlacement LastVisiblePlacement,
+    double PanelWidth,
+    bool IsWebVisible,
+    IReadOnlyList<WidgetSlotSettings> WidgetSlots,
+    int WebPanelCount,
+    IReadOnlyList<string> WebPanelCardIds,
+    double WebSplitRatio);
+
+/// <summary>
+/// A layout switched on because its program is running, and the layout to return to.
+/// Saved with the settings so a restart mid-game still returns to the right layout.
+/// </summary>
+internal sealed record AutoLayoutSwitch(string ProfileId, ProfileLayout Before);
+
+/// <summary>A named layout; optionally used automatically while a given app is running.</summary>
+internal sealed record LayoutProfile(string Id, string Name, string? WhenRunning, ProfileLayout Layout);
+
+/// <summary>Capturing, applying and choosing layout profiles; free of WinUI for testing.</summary>
+internal static class LayoutProfiles
+{
+    public const int Maximum = 12;
+
+    public static ProfileLayout Capture(EdgeDockSettings settings) => new(
+        settings.MediaPanelPlacement,
+        settings.LastVisibleMediaPanelPlacement,
+        settings.MediaPanelWidth,
+        settings.IsWebVisible,
+        settings.WidgetSlots,
+        settings.WebPanelCount,
+        settings.WebPanelCardIds ?? [],
+        settings.WebSplitRatio);
+
+    /// <summary>
+    /// The settings with a profile's layout applied, then normalised, so a profile naming a
+    /// web card that was since deleted still produces a usable dashboard.
+    /// </summary>
+    public static EdgeDockSettings Apply(EdgeDockSettings settings, ProfileLayout layout)
+    {
+        // Profiles are set aside while normalising: normalising settings normalises their
+        // profiles, which applies layouts, which would recurse.
+        var applied = SettingsStore.Normalize(settings with
+        {
+            MediaPanelPlacement = layout.Placement,
+            LastVisibleMediaPanelPlacement = layout.LastVisiblePlacement,
+            MediaPanelWidth = layout.PanelWidth,
+            IsWebVisible = layout.IsWebVisible,
+            WidgetSlots = layout.WidgetSlots,
+            WebPanelCount = layout.WebPanelCount,
+            WebPanelCardIds = layout.WebPanelCardIds,
+            WebSplitRatio = layout.WebSplitRatio,
+            Profiles = []
+        });
+        return applied with { Profiles = settings.Profiles };
+    }
+
+    /// <summary>
+    /// A process name as Task Manager's Details tab shows it, without ".exe". Any character
+    /// legal in a file name is accepted (such as notepad++); folders, drive letters, quotes and
+    /// command-line options are rejected so a trigger only ever names one program.
+    /// </summary>
+    public static string? NormalizeProcessName(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var name = value.Trim();
+        if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name = name[..^4].TrimEnd();
+        // 255 is the longest file name Windows allows.
+        return name.Length is > 0 and <= 255 &&
+               name.IndexOfAny(InvalidNameCharacters) < 0 &&
+               !name.Contains(" -", StringComparison.Ordinal) &&
+               !name.EndsWith('.')
+            ? name
+            : null;
+    }
+
+    private static readonly char[] InvalidNameCharacters = Path.GetInvalidFileNameChars();
+
+    /// <summary>Whether the dashboard currently shows exactly this saved layout.</summary>
+    public static bool Matches(ProfileLayout current, ProfileLayout saved) =>
+        current.Placement == saved.Placement &&
+        (current.Placement != MediaPanelPlacement.Hidden || current.LastVisiblePlacement == saved.LastVisiblePlacement) &&
+        Math.Abs(current.PanelWidth - saved.PanelWidth) < 0.5 &&
+        current.IsWebVisible == saved.IsWebVisible &&
+        current.WidgetSlots.Count == saved.WidgetSlots.Count &&
+        current.WidgetSlots.Zip(saved.WidgetSlots).All(pair =>
+            pair.First.SelectedWidgetId == pair.Second.SelectedWidgetId &&
+            pair.First.EnabledWidgetIds.SequenceEqual(pair.Second.EnabledWidgetIds)) &&
+        current.WebPanelCount == saved.WebPanelCount &&
+        current.WebPanelCardIds.SequenceEqual(saved.WebPanelCardIds) &&
+        Math.Abs(current.WebSplitRatio - saved.WebSplitRatio) < 0.005;
+
+    public static IReadOnlyList<LayoutProfile> Normalize(IReadOnlyList<LayoutProfile>? source, EdgeDockSettings baseline)
+    {
+        var profiles = new List<LayoutProfile>();
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var profile in (source ?? []).Where(profile => profile is not null && profile.Layout is not null))
+        {
+            if (profiles.Count == Maximum) break;
+            if (string.IsNullOrWhiteSpace(profile.Name)) continue;
+            var baseId = string.IsNullOrWhiteSpace(profile.Id) ? $"layout-{profiles.Count + 1}" : profile.Id.Trim();
+            var id = baseId;
+            for (var suffix = 2; !ids.Add(id); suffix++) id = $"{baseId}-{suffix}";
+            var layout = Capture(Apply(baseline, profile.Layout));
+            profiles.Add(new LayoutProfile(id, profile.Name.Trim(), NormalizeProcessName(profile.WhenRunning), layout));
+        }
+        return profiles;
+    }
+
+    /// <summary>The first profile whose app is running, or null.</summary>
+    public static LayoutProfile? Automatic(IReadOnlyList<LayoutProfile> profiles, IReadOnlySet<string> runningProcesses, IReadOnlyCollection<string>? suppressedIds = null) =>
+        profiles.FirstOrDefault(profile => suppressedIds?.Contains(profile.Id) != true &&
+            profile.WhenRunning is { } app && runningProcesses.Contains(app));
+
+    /// <summary>
+    /// Layouts the user switched away from by hand stay off until their own program stops or
+    /// starts again; then the next start switches again. A restart is seen even if it happened
+    /// while EdgeDock was closed: every running copy then started after the override was made.
+    /// Every overridden layout is kept, so turning off one does not bring back another that is
+    /// still running. Returns those still to keep off.
+    /// </summary>
+    /// <param name="sinceUtc">When each layout was overridden; unknown means no restart check.</param>
+    /// <param name="earliestStartUtc">Per running program, when its oldest copy started; missing means unknown.</param>
+    public static IReadOnlyList<string> StillSuppressed(
+        IReadOnlyList<string> suppressedIds,
+        IReadOnlyList<LayoutProfile> profiles,
+        IReadOnlySet<string> runningProcesses,
+        IReadOnlyDictionary<string, DateTime>? sinceUtc = null,
+        IReadOnlyDictionary<string, DateTime>? earliestStartUtc = null) =>
+        suppressedIds.Where(id => profiles.FirstOrDefault(profile => profile.Id == id)?.WhenRunning is { } app &&
+            runningProcesses.Contains(app) &&
+            !(sinceUtc?.TryGetValue(id, out var since) == true &&
+              earliestStartUtc?.TryGetValue(app, out var started) == true &&
+              started > since)).ToArray();
+}
