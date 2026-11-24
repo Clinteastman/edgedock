@@ -32,6 +32,17 @@
   threads. Split for Scroll while silent: compositor thread 4.7%, UI thread
   3.1%, capture 1.9%. GPU load on the RTX 4090 stayed around 1% for the simple
   views.
+- Later the same day, after the owner's feedback: 3D scenes, space and sky,
+  mania and more crazy views (59 views in all), playlists, a mashup that
+  layers two views, music-led colours and per-band parts throughout. Each new
+  view was captured on the Edge in Release with music (10 s each): CPU 2-18%
+  of one core per view, GPU low. Fixed from those captures: Mandelbulb seams
+  (rays now stop at each bulb's zone edge), the Mandelbox camera (was inside the
+  solid), spectrum city (camera inside a tower), crystal shards and fractal land
+  (wrong scale). Codex findings fixed with checks: device polling on its own
+  clock, one-view cycle saving every frame, the scope trigger on slow notes, LED
+  bars covering the whole spectrum, and bands above a low-rate input's Nyquist
+  frequency. 121 console checks pass.
 - Stops when not seen: capture and drawing follow `WidgetVisibility` (minimised,
   scrolled away, collapsed while the screen schedule has blanked the display).
   Code path shared with PC activity; not re-measured for this widget.

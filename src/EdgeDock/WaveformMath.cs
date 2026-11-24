@@ -762,7 +762,8 @@ internal static class WaveformScope
         // Hysteresis: a rising zero crossing counts only if the negative swing just before it went
         // below the threshold, so noise wobbling around zero is ignored but slow bass notes are not.
         var threshold = 0.01f / Math.Max(1, gain);
-        for (var i = latestStart; i > latestStart - points && i > 0; i--)
+        // Search all the way back: a 30 Hz note repeats only every 1,600 samples at 48 kHz.
+        for (var i = latestStart; i > 0; i--)
         {
             if (!(recent[i - 1] < 0 && recent[i] >= 0)) continue;
             for (var j = i - 1; j >= 0 && recent[j] < 0; j--)

@@ -501,7 +501,8 @@ internal readonly partial struct WaveformFieldShader(
             float onStreak = Hlsl.Step(r, tip) * Hlsl.Saturate(1f - (tip - r) / length);
             float sideways = Hlsl.Abs(Hlsl.Frac(lane) - 0.5f) * 2f;
             float width = Hlsl.Exp(-sideways * sideways * 18f);
-            float brightness = onStreak * width * (0.25f + 0.9f * energy) * Hlsl.Saturate(r * 12f);
+            float bandLevel = layer == 0 ? bass : highs;
+            float brightness = onStreak * width * (0.15f + 0.5f * energy + 1.1f * bandLevel) * Hlsl.Saturate(r * 12f);
             rgb += Gradient(h) * brightness;
             alpha += brightness;
         }
@@ -526,7 +527,8 @@ internal readonly partial struct WaveformFieldShader(
             float below = Hlsl.Max(y - edge, 0f);
             float curtain = Hlsl.Exp(-above / (0.12f + 0.25f * (mids * 0.6f + energy * 0.4f))) * Hlsl.Exp(-below * 45f);
             float rays = 0.55f + 0.45f * Hlsl.Sin(x * (38f + fi * 11f) + time * (1.3f + fi * 0.4f) + highs * 3f);
-            rgb += Gradient(fi / 3f) * curtain * rays * (0.3f + 0.7f * energy);
+            float bandLevel = i == 0 ? bass : (i == 3 ? highs : mids);
+            rgb += Gradient(fi / 3f) * curtain * rays * (0.2f + 0.35f * energy + 0.9f * bandLevel);
         }
         rgb += Gradient(0.2f) * flash * 0.15f;
         float alpha = Hlsl.Saturate(Hlsl.Max(rgb.X, Hlsl.Max(rgb.Y, rgb.Z)));
@@ -537,9 +539,9 @@ internal readonly partial struct WaveformFieldShader(
     {
         Float2 q = p / size.Y;
         Float2 orbit = new Float2(size.X / size.Y * 0.5f + 0.5f * Hlsl.Sin(time * 0.31f), 0.5f + 0.3f * Hlsl.Cos(time * 0.43f));
-        float v = Hlsl.Sin(q.X * 3.1f + time * 0.7f)
-            + Hlsl.Sin(q.Y * 4.3f + time * 0.9f)
-            + Hlsl.Sin((q.X + q.Y) * 2.6f + travel * 0.6f)
+        float v = Hlsl.Sin(q.X * (3.1f + 2f * bass) + time * 0.7f) * (0.6f + 0.8f * bass)
+            + Hlsl.Sin(q.Y * (4.3f + 2f * mids) + time * 0.9f) * (0.6f + 0.8f * mids)
+            + Hlsl.Sin((q.X + q.Y) * (2.6f + 2f * highs) + travel * 0.6f) * (0.6f + 0.8f * highs)
             + Hlsl.Sin(Hlsl.Length(q - orbit) * (6.5f + 5f * energy) - travel * 1.2f);
         float t = Hlsl.Frac(v * 0.125f + 0.5f + travel * 0.04f);
         float brightness = 0.22f + 0.6f * energy + 0.25f * flash;
@@ -692,7 +694,7 @@ internal readonly partial struct WaveformCrtShader(Float2 size, Float3 phosphor,
 [D2DGeneratedPixelShaderDescriptor]
 internal readonly partial struct WaveformDemoShader(
     Float2 size, Float3 low, Float3 mid, Float3 high,
-    float time, float travel, float energy, float flash, float pixel) : ID2D1PixelShader
+    float time, float travel, float bass, float mids, float highs, float energy, float flash, float pixel) : ID2D1PixelShader
 {
     public Float4 Execute()
     {
@@ -715,7 +717,8 @@ internal readonly partial struct WaveformDemoShader(
         // Rings step along the look's three colours; checks alternate bright and dark.
         float ring = Hlsl.Frac(Hlsl.Floor(v) / 3f);
         Float3 tint = ring < 0.3f ? Brighten(low) : (ring < 0.6f ? Brighten(mid) : Brighten(high));
-        Float3 colour = tint * (0.2f + 0.8f * check);
+        float ringLevel = ring < 0.3f ? bass : (ring < 0.6f ? mids : highs);
+        Float3 colour = tint * (0.2f + 0.8f * check) * (0.45f + 1.1f * ringLevel);
         float fog = Hlsl.Saturate(r * 2.4f);
         return colour * fog * (0.4f + 0.9f * energy) + new Float3(1f, 1f, 1f) * flash * 0.35f * fog;
     }
@@ -852,7 +855,8 @@ internal readonly partial struct WaveformCrazyShader(
                          + (Noise(new Float2(p.X / 9f + fi * 3f, time * 30f)) - 0.5f) * size.Y * 0.04f;
             float y = size.Y * (0.5f + (fi - 1f) * 0.12f) - wave * size.Y * 0.32f + jitter;
             float d = Hlsl.Abs(p.Y - y);
-            float strength = (i == 1 ? 1f : 0.55f) * (0.4f + 0.6f * energy + flash * 0.5f);
+            float bandLevel = i == 0 ? bass : (i == 1 ? mids : highs);
+            float strength = (0.2f + 0.3f * energy + 1.1f * bandLevel + flash * 0.4f);
             rgb += (new Float3(1f, 1f, 1f) * Hlsl.Saturate(1.6f - d) + Gradient(fi / 2f) * (0.6f * Hlsl.Exp(-d / 8f) + 0.2f * Hlsl.Exp(-d / 40f))) * strength;
         }
         return rgb + Gradient(0.5f) * flash * 0.1f;

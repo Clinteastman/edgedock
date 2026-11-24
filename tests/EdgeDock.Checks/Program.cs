@@ -740,6 +740,13 @@ try
     Check(bassStart != 4096 - WaveformScope.Points && Near(bassScope[0], 0, 0.005) && bassScope[10] > bassScope[0] &&
           bassScope.Zip(bassShifted).All(pair => Near(pair.First, pair.Second, 0.01)) && noiseStart == 4096 - WaveformScope.Points,
           "The scope locks onto a slow 60 Hz bass note, but not onto faint noise around zero");
+    // 30 Hz repeats every 1,600 samples, longer than the window: the trigger must look further back.
+    var deepBass = Sine(30, 0.5, 48000, 1, 0.2);
+    var deepScope = new float[WaveformScope.Points];
+    WaveformScope.Prepare(deepBass.AsSpan(0, 4096).ToArray(), deepScope, 1);
+    var deepStart = WaveformScope.FindStart(deepBass.AsSpan(0, 4096).ToArray(), WaveformScope.Points, 1);
+    Check(deepStart != 4096 - WaveformScope.Points && Near(deepScope[0], 0, 0.005) && deepScope[20] > deepScope[0],
+          "The scope finds a rising crossing for a 30 Hz note even when it lies further back than one window");
 
     var pulse = new WaveformPulse();
     var burst = new float[WaveformSpectrum.Size];

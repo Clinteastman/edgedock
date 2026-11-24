@@ -251,8 +251,11 @@ internal readonly partial struct WaveformWildShader(
         float core = Hlsl.Saturate(width - dist);
         float glow = Hlsl.Exp(-dist / (tile * 0.12f)) * 0.45f;
         float hue = Hlsl.Frac((cell.X + cell.Y) * 0.07f + travel * 0.05f);
-        Float3 colour = Gradient(1f - Hlsl.Abs(hue * 2f - 1f));
-        return Hlsl.Lerp(colour, new Float3(1f, 1f, 1f), 0.5f) * Hlsl.Saturate(core) + colour * glow * (0.5f + energy + flash * 0.5f);
+        float tileBand = 1f - Hlsl.Abs(hue * 2f - 1f);
+        float level = Band(tileBand);
+        Float3 colour = Gradient(tileBand);
+        return (Hlsl.Lerp(colour, new Float3(1f, 1f, 1f), 0.5f) * Hlsl.Saturate(core) + colour * glow * (0.3f + 0.5f * energy + flash * 0.5f))
+             * (0.35f + 1.2f * level);
     }
 
     // ---------- Liquid spheres ----------

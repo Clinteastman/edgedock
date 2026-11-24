@@ -710,7 +710,7 @@ internal sealed class WaveformWidget : UserControl
                 break;
             case Renderer.Demo:
                 ((PixelShaderEffect<WaveformDemoShader>)effect).ConstantBuffer = new WaveformDemoShader(
-                    size, low, mid, high, (float)_time, (float)_travel, _drive.Energy, _beat.Flash, MathF.Max(2, MathF.Round(3 * scale)));
+                    size, low, mid, high, (float)_time, (float)_travel, bass, mids, highs, _drive.Energy, _beat.Flash, MathF.Max(2, MathF.Round(3 * scale)));
                 break;
             case Renderer.Borrowed:
                 ((PixelShaderEffect<WaveformBorrowedShader>)effect).ConstantBuffer = new WaveformBorrowedShader(
