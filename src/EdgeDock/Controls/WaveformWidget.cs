@@ -42,6 +42,7 @@ internal sealed class WaveformWidget : UserControl
     [Flags]
     private enum Needs { None = 0, History = 1, SpectrogramRows = 2, Spectrum = 4, Scope = 8, Trails = 16, Stereo = 32, Bands = 64, Pulse = 128 }
 
+    private readonly Func<WaveformSettings> _source;
     private readonly Action<WaveformSettings>? _save;
     private WaveformSettings _settings;
     private readonly Grid _root = new() { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
@@ -126,6 +127,7 @@ internal sealed class WaveformWidget : UserControl
 
     public WaveformWidget(Func<WaveformSettings> settings, Action<WaveformSettings>? save = null)
     {
+        _source = settings;
         _settings = WaveformSettings.Normalize(settings());
         _save = save;
         _levels = new WaveformLevels(_settings.AutoLevel);
@@ -183,17 +185,14 @@ internal sealed class WaveformWidget : UserControl
             _canvas = null;
         }
         DropTrails();
-        if (_saveTimer is { IsRunning: true })
-        {
-            _saveTimer.Stop();
-            _save?.Invoke(_settings);
-        }
+        if (_saveTimer is { IsRunning: true }) SaveTweaks();
     }
 
     /// <summary>Twice a second: follow visibility and hide an idle touch bar.</summary>
     private void Tick()
     {
         if (_canvas is null) return;
+        FollowSaved();
         if (_bar.Visibility == Visibility.Visible && _picker.Visibility != Visibility.Visible && _tweakPanel.Visibility != Visibility.Visible &&
             DateTime.UtcNow - _barShownAt > TimeSpan.FromSeconds(6))
             _bar.Visibility = Visibility.Collapsed;
@@ -272,9 +271,40 @@ internal sealed class WaveformWidget : UserControl
         // The cycle's next step is timed from now, even when the view stays the same.
         _viewSince = _time;
         var changed = !next.SameAs(_settings);
+        if (save && changed)
+        {
+            // Saves only what changed here onto the latest saved settings (another Waveform
+            // widget may have saved meanwhile); this widget keeps showing its own view.
+            var merged = WaveformSettings.Merge(_settings, next, WaveformSettings.Normalize(_source()));
+            _settings = merged with { View = next.View };
+            UpdateBar();
+            _save?.Invoke(merged);
+            return;
+        }
         _settings = next;
         UpdateBar();
-        if (save && changed) _save?.Invoke(next);
+    }
+
+    /// <summary>
+    /// Takes up what another Waveform widget (or the Settings page) saved, keeping this widget's
+    /// own view. Not while this widget has slider changes still waiting to be saved.
+    /// </summary>
+    private void FollowSaved()
+    {
+        if (_saveTimer is { IsRunning: true }) return;
+        var latest = WaveformSettings.Normalize(_source()) with { View = _settings.View };
+        if (latest.SameAs(_settings)) return;
+        _settings = latest;
+        UpdateBar();
+    }
+
+    /// <summary>Saves the slider changes for the view being tweaked onto the latest saved settings.</summary>
+    private void SaveTweaks()
+    {
+        _saveTimer?.Stop();
+        var latest = WaveformSettings.Normalize(_source());
+        var merged = WaveformSettings.Normalize(latest.WithTweaks(_tweakView, _settings.TweaksFor(_tweakView)));
+        if (!merged.SameAs(latest)) _save?.Invoke(merged);
     }
 
     private void StepView(int direction)
@@ -537,7 +567,7 @@ internal sealed class WaveformWidget : UserControl
         _saveTimer = DispatcherQueue.CreateTimer();
         _saveTimer.Interval = TimeSpan.FromMilliseconds(700);
         _saveTimer.IsRepeating = false;
-        _saveTimer.Tick += (_, _) => _save?.Invoke(_settings);
+        _saveTimer.Tick += (_, _) => SaveTweaks();
     }
 
     private Slider AddSlider(Panel parent, string label, double minimum, double maximum, double step, Func<double, string> format)
@@ -590,11 +620,7 @@ internal sealed class WaveformWidget : UserControl
     {
         _tweakPanel.Visibility = Visibility.Collapsed;
         // Saves straight away rather than waiting for the pause after the last move.
-        if (_saveTimer is { IsRunning: true })
-        {
-            _saveTimer.Stop();
-            _save?.Invoke(_settings);
-        }
+        if (_saveTimer is { IsRunning: true }) SaveTweaks();
         // The cycle's next step is timed from now.
         _viewSince = _time;
     }

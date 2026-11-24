@@ -856,6 +856,19 @@ try
     var tweakedSaved = await new SettingsStore().LoadAsync();
     Check(tweakedChoice.SameAs(tweakedSaved.Waveform) && !waveformChoice.SameAs(tweakedSaved.Waveform),
           "Each view's sliders survive restart");
+
+    // Two Waveform widgets: the first saved a Fire slider; the second, still holding the older
+    // settings, changes its look and its own Plasma slider.
+    var shared = WaveformSettings.Default.WithTweaks(WaveformView.Fire, new WaveformTweaks(Speed: 2));
+    var secondBefore = WaveformSettings.Default.WithTweaks(WaveformView.Plasma, new WaveformTweaks(Hue: 90));
+    var secondAfter = secondBefore with { Look = WaveformLook.Ocean };
+    secondAfter = secondAfter.WithTweaks(WaveformView.Plasma, new WaveformTweaks(Hue: 120));
+    var mergedShared = WaveformSettings.Merge(secondBefore, secondAfter, shared);
+    Check(mergedShared.Look == WaveformLook.Ocean && mergedShared.TweaksFor(WaveformView.Fire).Speed == 2 &&
+          mergedShared.TweaksFor(WaveformView.Plasma).Hue == 120 && mergedShared.View == shared.View &&
+          WaveformSettings.Merge(secondBefore, secondBefore, shared).SameAs(shared) &&
+          WaveformSettings.Merge(shared, shared.WithTweaks(WaveformView.Fire, WaveformTweaks.Default), shared).Tweaks!.Count == 0,
+          "A widget saves only what it changed, keeping what another Waveform widget saved meanwhile");
     Console.WriteLine($"{passed} checks passed.");
 }
 finally

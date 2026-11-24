@@ -70,6 +70,29 @@ internal sealed record WaveformSettings(string? InputDeviceId, WaveformView View
         (Tweaks ?? new Dictionary<WaveformView, WaveformTweaks>()).Count == (other.Tweaks ?? new Dictionary<WaveformView, WaveformTweaks>()).Count &&
         (Tweaks ?? new Dictionary<WaveformView, WaveformTweaks>()).All(entry => other.TweaksFor(entry.Key) == entry.Value);
 
+    /// <summary>
+    /// Applies the changes made from <paramref name="before"/> to <paramref name="after"/> onto
+    /// <paramref name="latest"/>, field by field and view by view for the sliders. Two Waveform
+    /// widgets share one settings object: each saves only what it changed, so it never wipes
+    /// what the other saved meanwhile.
+    /// </summary>
+    public static WaveformSettings Merge(WaveformSettings before, WaveformSettings after, WaveformSettings latest)
+    {
+        var result = latest;
+        if (!string.Equals(after.InputDeviceId, before.InputDeviceId, StringComparison.Ordinal)) result = result with { InputDeviceId = after.InputDeviceId };
+        if (after.View != before.View) result = result with { View = after.View };
+        if (after.Look != before.Look) result = result with { Look = after.Look };
+        if (after.Speed != before.Speed) result = result with { Speed = after.Speed };
+        if (after.AutoLevel != before.AutoLevel) result = result with { AutoLevel = after.AutoLevel };
+        if (after.ColourCycle != before.ColourCycle) result = result with { ColourCycle = after.ColourCycle };
+        if (after.CycleSeconds != before.CycleSeconds) result = result with { CycleSeconds = after.CycleSeconds };
+        if (!(after.CycleViews ?? []).SequenceEqual(before.CycleViews ?? [])) result = result with { CycleViews = after.CycleViews };
+        var views = (before.Tweaks?.Keys ?? []).Concat(after.Tweaks?.Keys ?? []).Distinct();
+        foreach (var view in views)
+            if (after.TweaksFor(view) != before.TweaksFor(view)) result = result.WithTweaks(view, after.TweaksFor(view));
+        return Normalize(result);
+    }
+
     /// <summary>The slider settings for one view (the defaults if it has none).</summary>
     public WaveformTweaks TweaksFor(WaveformView view) =>
         Tweaks is not null && Tweaks.TryGetValue(view, out var tweaks) ? tweaks : WaveformTweaks.Default;
