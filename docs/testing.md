@@ -1,5 +1,66 @@
 # Testing
 
+## Waveform widget (24 November 2026)
+
+- Debug and Release x64 builds: zero warnings/errors. 118 console checks pass,
+  all on synthetic sample buffers (nothing is played): 5 ms columns (peak, RMS,
+  bass/mid/high biquads at 44.1 and 48 kHz, mono and stereo), carry-over between
+  packets, the lock-free ring across threads (200,000 columns), the stereo sample
+  tap, colour weights and mixing for all 16 looks, hue rotation, auto level, the
+  scroll history and its clock, the FFT and spectrum bands (a 1 kHz tone fills its
+  band; fall and peak hold), the oscilloscope trigger, band split, pulse bars, beat
+  flashes, cycle order, and saving every choice.
+- Real Edge (2560x720 at 150%, isolated profile, full screen, sound the user was
+  already playing; no test audio was played): Scroll, Centre out, the spectrum
+  views, Spectrogram, Oscilloscope and Pulse were captured live with music. A
+  later tour of the first 30 views in cycle mode ran while the sound was paused:
+  every view rendered (silent states), including the CRT bezel, graticule and
+  afterglow and the fractal. A full 39-view tour then ran with music, and the
+  liquid spheres view (added after it) was captured live. After the owner's
+  feedback, the two demo views with a text scroller (copper bars, checkerboard)
+  were removed (38 views now), and the flashy views were changed to follow each
+  band against its own recent range (`WaveformDrive`), because the auto-levelled
+  loudness sat near full the whole time and the scenes only pulsed slightly.
+- CPU: the first build (Win2D `CanvasAnimatedControl`) used about 85% of one
+  core. Per-thread timing showed its frame loop spinning after a pause (a known
+  Win2D bug); drawing itself took 0.2-0.4 ms a frame at 60 fps. The shader build
+  invalidates a `CanvasControl` from `CompositionTarget.Rendering` instead.
+  Release with music, 15 s per view, measured one at a time: Scroll 5.1%, Centre
+  out 6.6%, Liquid blob 6.9%, Cloudscape 13.2%, Star nest 14.0%, Checkerboard
+  17.6% of one core. The 39-view cycle tour with music (10 s windows, noisier):
+  1.7% to 19.8% of one core per view. Everything is under 0.7% of this PC's 32
+  threads. Split for Scroll while silent: compositor thread 4.7%, UI thread
+  3.1%, capture 1.9%. GPU load on the RTX 4090 stayed around 1% for the simple
+  views.
+- Later the same day, after the owner's feedback: 3D scenes, space and sky,
+  mania and more crazy views (59 views in all), playlists, a mashup that
+  layers two views, music-led colours and per-band parts throughout. Each new
+  view was captured on the Edge in Release with music (10 s each): CPU 2-18%
+  of one core per view, GPU low. Fixed from those captures: Mandelbulb seams
+  (rays now stop at each bulb's zone edge), the Mandelbox camera (was inside the
+  solid), spectrum city (camera inside a tower), crystal shards and fractal land
+  (wrong scale). Codex findings fixed with checks: device polling on its own
+  clock, one-view cycle saving every frame, the scope trigger on slow notes, LED
+  bars covering the whole spectrum, and bands above a low-rate input's Nyquist
+  frequency. 121 console checks pass.
+- Tweak panel (24 November 2026), Release on the Edge with music: the panel
+  opened from a real click on the touch bar; slider changes showed at once
+  (trails, blend over, brightness on the CRT vectorscope; camera move on the
+  Mandelbulb, which now looks around) and were saved under that view in
+  settings.json; Reset put the view back and removed its entry. CPU stayed
+  6-17% of one core. Also in this round: scopes scale their trace to fill the
+  height, more detailed fire, livelier fractal land. 124 console checks pass.
+  Known: with Camera move on, the Mandelbulb can show a straight seam where
+  rays cross from one bulb's zone into the next.
+- Stops when not seen: capture and drawing follow `WidgetVisibility` (minimised,
+  scrolled away, collapsed while the screen schedule has blanked the display).
+  Code path shared with PC activity; not re-measured for this widget.
+- Not tested yet: the touch bar and the All views grid with real taps (they
+  use `AllowFocusOnInteraction = false` so they never take keyboard focus), an
+  input device as the source, default-device changes and unplugging while
+  running, and exclusive-mode apps (expected: a status line saying the device
+  is in use).
+
 ## Keep focus on the main screen (10 October 2026)
 
 - Debug x64 build: zero warnings/errors.

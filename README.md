@@ -48,7 +48,7 @@ contribute. This is not a signed installer or a finished consumer release.
 - Supports one to three native widget panels, with an optional web area.
 - Lets each panel switch between its chosen widgets independently.
 - Includes a local library of media, clock and weather, PC audio, PC
-  activity, launcher and Windows Settings shortcuts.
+  activity, launcher, waveform and Windows Settings shortcuts.
 - **PC audio** switches the Windows output device, sets master volume and mute,
   mutes the microphone with an unmistakable red state, and gives every app
   making sound its own volume slider and mute, with its icon.
@@ -66,6 +66,40 @@ contribute. This is not a signed installer or a finished consumer release.
   with a one-minute graph. It reads Windows' own counters: no admin rights,
   drivers or extra software. Temperatures are not shown, because reading them
   needs a kernel driver.
+- **Waveform** turns the panel (or the whole Edge, with web hidden and one
+  widget panel) into a music visualiser driven by what the PC is playing, or by
+  an input such as an audio interface or mixer. 59 views in ten groups:
+  waves (scrolling, centre out); spectrum (bars, mirror, line, LED, spectrogram,
+  ridges, ring); oscilloscopes (plain, a curved-glass CRT scope and vectorscope
+  with phosphor afterglow, stereo, band scopes, Lissajous); flashy (pulse, club,
+  warp, aurora); demo scene (plasma, tunnel); 3D scenes (liquid spheres with one
+  ball per band, three Mandelbulbs, Escher lattice, three fractal cubes,
+  Mandelbox, orb field, fractal forest); space and sky (star nest, black hole,
+  clouds, cloudscape, ocean, spectrum mountains); mania (mashup, which blends
+  two views at once, hyperspace, synth grid, kaleido tunnel, Mandelbrot zoom,
+  spectrum city, DNA helix, liquid colour, crystal shards, glass cubes, fractal
+  land); and crazy
+  (kaleidoscope, vortex, glitch, fire, metaballs, lightning, fractal, hypno
+  circles, hex plasma, lasers, Voronoi cells, liquid blob, truchet, neon rings).
+  Each view gives its parts to different frequency bands (bass, mids, highs),
+  measured against their own recent range so every kick, snare and hi-hat
+  moves them, and every look's colours swing with the music. 16 colour looks,
+  an optional colour cycle, ready-made playlists (Chill, 3D trip, Rave, Retro,
+  Space, Classic meters, Everything), and a cycle mode that melts from view to
+  view through a chosen set
+  every 10 seconds to 5 minutes. Tap the widget for a touch bar (previous/next
+  view and look, cycle, all views and playlists); choices are saved. Its
+  Tweak panel has sliders saved per view: speed, reactivity, brightness,
+  colour shift, motion trails, a second view blended over the top, and a
+  Camera button (3D views look around; every view drifts, zooms and
+  rolls gently). Every
+  view is a GPU shader; see [testing notes](docs/testing.md) for CPU figures.
+  Limits: apps that use WASAPI exclusive mode (some DAWs and audiophile players)
+  bypass the Windows mixer, so their sound cannot be shown while they hold the
+  device; protected audio paths that block loopback show nothing; the
+  loudness follows the Windows output after its volume, so a muted or very low
+  output shows a flat line (auto level helps with quiet sound). The sound is
+  analysed as it arrives and never recorded, stored or sent anywhere.
 - Saves **layouts** (web panels, widgets and their sizes) by name from EdgeDock
   controls and switches with one tap. A layout can switch on by itself while a
   chosen program runs, such as a game, and EdgeDock returns to the previous
@@ -132,6 +166,9 @@ it up. Once a place is chosen, only its coordinates (rounded to about 10
 metres) are sent, while the clock is on screen, and forecasts are reused for 15
 minutes. Nothing is sent before you search.
 
+The Waveform widget listens to the PC's sound (or the input you chose) only while
+it is on screen, and only to draw it: nothing is recorded, stored or sent.
+
 No EdgeDock account, telemetry or cloud backend. Your chosen web page still
 connects to its own server as it would in a browser. Settings and browser data
 stay in your Windows user profile; do not include them in bug reports.
@@ -143,7 +180,8 @@ kiosk browser.
 ## Development
 
 [Technology decisions](docs/technology.md) · [Contributing](CONTRIBUTING.md) ·
-[Developing widgets](docs/widget-development.md) · [MIT licence](LICENSE)
+[Developing widgets](docs/widget-development.md) · [MIT licence](LICENSE) ·
+[Third-party notices](THIRD-PARTY-NOTICES.md)
 
 Useful next steps after trying the prototype: saved page shortcuts and a
 signed installer. These are ideas, not
