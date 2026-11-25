@@ -159,6 +159,10 @@
       <ComboBox x:Name="WeatherPlaceSelector" Header="Weather for" HorizontalAlignment="Stretch" MinHeight="52"
                 AutomationProperties.Name="Place shown in the weather"/>
       <ToggleSwitch x:Name="FahrenheitToggle" Header="Show temperatures in °F" AutomationProperties.Name="Show temperatures in Fahrenheit"/>
+      <TextBlock Text="Waveform" FontSize="18" FontWeight="SemiBold"/>
+      <TextBlock Text="The Waveform widget listens to the PC's sound (or an input you choose) only while it is on screen. Nothing is recorded, stored or sent."
+                 TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
+      <controls:WaveformEditor x:Name="WaveformEditor"/>
       <TextBlock Text="Startup" FontSize="18" FontWeight="SemiBold"/>
       <ToggleSwitch x:Name="StartupToggle" Header="Start EdgeDock when I sign in" AutomationProperties.Name="Start EdgeDock when I sign in"/>
       <TextBlock Text="EdgeDock reopens on the screen it was last on, in full screen if you left it that way. If that screen is switched off, EdgeDock steps aside and returns when it comes back."

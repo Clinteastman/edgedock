@@ -63,6 +63,7 @@ public sealed partial class MainWindow : Window
     private bool _persistingSave;
     private WeatherLocation? _weatherLocation;
     private bool _fahrenheit;
+    private WaveformSettings _waveform = WaveformSettings.Default;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly SemaphoreSlim _webPanelGate = new(1, 1);
     private bool _closing;
@@ -137,7 +138,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         _messageHookCallback = MessageHookCallback;
-        _registry = WidgetRegistry.CreateBuiltIns(() => _launchers, () => new ClockOptions(_weatherLocation, _fahrenheit));
+        _registry = WidgetRegistry.CreateBuiltIns(() => _launchers, () => new ClockOptions(_weatherLocation, _fahrenheit), () => _waveform, SaveWaveform);
         InitializeComponent();
         RegisterDividerHandlers(WebDivider);
         RegisterDividerHandlers(GroupDivider);
@@ -207,6 +208,7 @@ public sealed partial class MainWindow : Window
         _brightnessRestore = settings.PendingBrightness;
         _weatherLocation = settings.Weather;
         _fahrenheit = settings.Fahrenheit;
+        _waveform = settings.Waveform ?? WaveformSettings.Default;
         // Settings opened before loading finished shows empty lists: fill them now, at once,
         // or a Save would delete the saved ones. Edits made after this point are kept.
         if (SettingsPanel.Visibility == Visibility.Visible) UpdateSettingsControls(reloadDrafts: true);
@@ -622,7 +624,9 @@ public sealed partial class MainWindow : Window
             SuppressedProfileIds: suppressedIds,
             SuppressedSince: SinceFor(suppressedIds),
             Weather: WeatherPlaceSelector.SelectedItem is ComboBoxItem { Tag: WeatherLocation place } ? place : null,
-            Fahrenheit: FahrenheitToggle.IsOn));
+            Fahrenheit: FahrenheitToggle.IsOn,
+            // The widget's own slider settings are kept: the Settings page does not edit them.
+            Waveform: WaveformEditor.Read() with { Tweaks = _waveform.Tweaks }));
         // From here the save is committed: Cancel and closing Settings wait for it.
         _persistingSave = true;
         if (!await PersistAsync(settings)) return;
@@ -659,12 +663,22 @@ public sealed partial class MainWindow : Window
         }
         _weatherLocation = settings.Weather;
         _fahrenheit = settings.Fahrenheit;
+        _waveform = settings.Waveform ?? WaveformSettings.Default;
         BuildWidgetSlots();
         ApplyMediaLayout();
         await BuildWebPanelsAsync();
         ApplyMediaLayout();
         SettingsPanel.Visibility = Visibility.Collapsed;
         UrlErrorText.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>The waveform's touch bar changed its view or look: keep it and save it.</summary>
+    private async void SaveWaveform(WaveformSettings waveform)
+    {
+        _waveform = waveform;
+        await _profileGate.WaitAsync();
+        try { await PersistAsync(CurrentSettings(), alreadyApplied: true); }
+        finally { _profileGate.Release(); }
     }
 
     private async Task<bool> PersistAsync(EdgeDockSettings settings, bool alreadyApplied = false)
@@ -736,7 +750,8 @@ public sealed partial class MainWindow : Window
         PendingBrightness: _brightnessRestore,
         Launchers: _launchers,
         Weather: _weatherLocation,
-        Fahrenheit: _fahrenheit);
+        Fahrenheit: _fahrenheit,
+        Waveform: _waveform);
 
     private void ApplyBackdrop()
     {
@@ -772,6 +787,7 @@ public sealed partial class MainWindow : Window
         {
             WebCardEditor.LoadCards(_webCards);
             LauncherEditor.LoadItems(_launchers);
+            WaveformEditor.Load(_waveform);
         }
         // An isolated test profile must not rewrite the real sign-in entry.
         StartupToggle.IsEnabled = !SettingsStore.IsIsolatedProfile;

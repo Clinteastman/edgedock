@@ -22,6 +22,15 @@ pinned in the project and global.json; use those rather than preview SDKs.
   widgets; separately installed packages and an online catalogue are future work.
 - PC master volume/mute uses Windows Core Audio on the default multimedia render
   endpoint. It does not require Home Assistant, a cloud account or administrator access.
+- The Waveform widget captures with WASAPI loopback (raw Core Audio COM, no audio
+  library) on its own thread and draws with Win2D (`Microsoft.Graphics.Win2D`)
+  plus Direct2D pixel shaders written in C# with ComputeSharp
+  (`ComputeSharp.D2D1.WinUI`, MIT). Shaders compile when EdgeDock is built, so no
+  shader compiler runs on the user's PC. ComputeSharp needs the Windows 10.0.22621
+  SDK as the target framework (the minimum Windows version stays 10.0.19041) and
+  unsafe code enabled for its source generator. A `CanvasControl` is invalidated
+  from `CompositionTarget.Rendering`; `CanvasAnimatedControl` was dropped because
+  pausing it left its frame loop spinning a full core (a known Win2D bug).
 
 WPF remains a sound mature option, but WinUI fits a new Windows-native project.
 Tauri is useful for cross-platform web applications, but would add a second
