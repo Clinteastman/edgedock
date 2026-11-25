@@ -61,6 +61,36 @@
   running, and exclusive-mode apps (expected: a status line saying the device
   is in use).
 
+## Keep focus on the main screen (10 October 2026)
+
+- Debug x64 build: zero warnings/errors.
+- Runtime check pending. The first automated attempt was invalid: the
+  comparison app's window covered EdgeDock, so neither build received the
+  clicks. The corrected test (mouse click and injected touch tap on a widget
+  with Notepad active, then a click on the web area) needs the user's
+  permission to drive the screen.
+- After review (build only): while EdgeDock is inactive, pointer-driven XAML
+  focus changes inside the widgets are cancelled, because focusing a slider or
+  button would otherwise give the window focus anyway. Tab focus is unchanged.
+  The pending runtime test must include tapping a slider and a button.
+- 24 November 2026, after merging main (build only): Debug x64 build, zero
+  warnings/errors; 84 console checks pass. The focus guard now uses the
+  thread-wide focus event, so it also refuses focus moving into popups a
+  widget opened (media source menu, audio output list), and taps inside such a
+  popup do not activate EdgeDock. Popups from Settings or the controls drawer
+  are not affected. The blank screen activates normally, like the other
+  overlays. New widgets since 10 October (launcher, PC activity, clock and
+  weather, audio sliders) sit in the widget panel and are covered; layout
+  buttons are in the controls drawer and activate normally. Runtime check
+  still pending, and must also open the media source menu and the audio output
+  list with Notepad active. Not known yet: whether WinUI draws these popups in
+  their own window, which the activation guard (main window only) would not see.
+- 25 November 2026, after merging the Waveform widget (build only): 126
+  console checks pass. The widget's bar, view grid and tweak sliders are inside
+  the widget panel, so the guard covers them; its editor is in Settings, which
+  takes focus as normal. The runtime check must also tap the Waveform bar
+  buttons and a tweak slider with Notepad active.
+
 ## Layout profiles (10 October 2026)
 
 - Debug x64 build: zero warnings/errors. 55 console checks pass, including
