@@ -85,6 +85,11 @@
   still pending, and must also open the media source menu and the audio output
   list with Notepad active. Not known yet: whether WinUI draws these popups in
   their own window, which the activation guard (main window only) would not see.
+- 25 November 2026, after merging the Waveform widget (build only): 126
+  console checks pass. The widget's bar, view grid and tweak sliders are inside
+  the widget panel, so the guard covers them; its editor is in Settings, which
+  takes focus as normal. The runtime check must also tap the Waveform bar
+  buttons and a tweak slider with Notepad active.
 
 ## Layout profiles (10 October 2026)
 
